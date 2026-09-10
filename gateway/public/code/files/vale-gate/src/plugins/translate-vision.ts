@@ -191,11 +191,32 @@ export async function describeImage(
   ];
   const miniReq = { model: visionModel, max_tokens: 1500, messages: [{ role: "user", content }] };
 
-  if (route.type === "passthrough") {
-    // or/ (openrouter) or ds/ (deepseek) vision model — Anthropic passthrough
-    const bearerKey =
-      route.kind === "openrouter" ? ukeys.OPENROUTER_API_KEY : ukeys.DEEPSEEK_API_KEY;
-    if (!bearerKey) return "(图片描述失败：视觉模型后端未配置)";
+  // Vision backends by route kind. VISION_MODEL is operator-configurable, so
+  // this table must cover every channel it can name. Before this table the
+  // code hardcoded "or/ → OpenRouter key, EVERY other passthrough channel →
+  // DeepSeek key" and sent the OpenCode key for anything translate-shaped:
+  // with VISION_MODEL=cm/... that shipped the user's OpenCode Go key to
+  // Command Code (wrong credential to a third party) and the describe always
+  // failed. shape picks the response reader:
+  //   anthropic — upstream speaks /v1/messages (content[] text blocks);
+  //   openai    — upstream speaks /v1/chat/completions (choices[0].message).
+  const VISION_BACKENDS: Record<string, { key: string; shape: "anthropic" | "openai" }> = {
+    deepseek: { key: "DEEPSEEK_API_KEY", shape: "anthropic" },
+    openrouter: { key: "OPENROUTER_API_KEY", shape: "anthropic" },
+    qwen: { key: "QWEN_API_KEY", shape: "anthropic" },
+    amd: { key: "AMD_API_KEY", shape: "anthropic" },
+    opencode: { key: "OPENCODE_GO_API_KEY", shape: "openai" },
+    commandgoat: { key: "CMD_API_KEY", shape: "openai" },
+    nvidia: { key: "NVAPI_KEY", shape: "openai" },
+    gmi: { key: "GMI_API_KEY", shape: "openai" },
+  };
+  const backend = VISION_BACKENDS[route.kind];
+  if (!backend) return "(图片描述失败：视觉模型后端不支持)";
+  const bearerKey = ukeys[backend.key];
+  if (!bearerKey) return `(图片描述失败：${backend.key} 未配置)`;
+
+  if (backend.shape === "anthropic") {
+    // Anthropic-format upstream: text lives in content[] blocks.
     const fetched = await fetchDescribeOrError(
       route.upstream,
       {
@@ -206,9 +227,7 @@ export async function describeImage(
       env,
     );
     if (typeof fetched === "string") return fetched;
-    const resp = fetched;
-    // Anthropic-format upstream: text lives in content[] blocks.
-    return finishDescribe(resp, cacheKey, env, (json) =>
+    return finishDescribe(fetched, cacheKey, env, (json) =>
       (json.content || [])
         .filter((b: any) => b.type === "text")
         .map((b: any) => b.text)
@@ -217,18 +236,17 @@ export async function describeImage(
     );
   }
 
-  // og/ vision model (opencode zen) — needs the Anthropic→OpenAI translation,
-  // which now forwards image_url parts (see toOpenAIRequest).
-  if (!ukeys.OPENCODE_GO_API_KEY) return "(图片描述失败：OPENCODE_GO_API_KEY 未配置)";
+  // OpenAI-format upstream (og/ + cm/ + nv/ + gmi/): the Anthropic→OpenAI
+  // translation forwards image_url parts (see toOpenAIRequest). Only og/ gets
+  // the zen per-conversation session header.
   const openaiReq = toOpenAIRequest(miniReq, upstreamModel);
   const fetched = await fetchDescribeOrError(
     route.upstream,
     {
       method: "POST",
       headers: {
-        Authorization: `Bearer ${ukeys.OPENCODE_GO_API_KEY}`,
+        Authorization: `Bearer ${bearerKey}`,
         "Content-Type": "application/json",
-        // zen/go per-conversation session header (see ogSession above).
         ...ogSession,
       },
       body: JSON.stringify(openaiReq),
@@ -236,9 +254,8 @@ export async function describeImage(
     env,
   );
   if (typeof fetched === "string") return fetched;
-  const resp = fetched;
   // OpenAI-format upstream: text lives in choices[0].message.content.
-  return finishDescribe(resp, cacheKey, env, (json) =>
+  return finishDescribe(fetched, cacheKey, env, (json) =>
     String(json.choices?.[0]?.message?.content || "").trim(),
   );
 }

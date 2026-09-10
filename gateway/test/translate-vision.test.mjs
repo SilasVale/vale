@@ -122,7 +122,7 @@ test("vision passthrough: missing backend key fails instead of fabricating", asy
   const e = orEnv();
   await assert.rejects(
     preprocessImages([imageMessage], e, {}, "m", "up-model", "uP"),
-    /视觉模型后端未配置/,
+    /OPENROUTER_API_KEY 未配置/,
   );
 });
 
@@ -282,7 +282,7 @@ test("describeImage: passthrough branch key + success shape", async () => {
   const src = { media_type: "image/png", data: IMG };
   assert.equal(
     await describeImage({}, {}, src, "or/some-vision-model", "u1"),
-    "(图片描述失败：视觉模型后端未配置)",
+    "(图片描述失败：OPENROUTER_API_KEY 未配置)",
     "missing passthrough key",
   );
   await withStubFetch(async () => {
@@ -319,4 +319,91 @@ test("taxonomy consistency: every marker trips the throw gate", async () => {
     ),
     /vision preprocessing failed/,
   );
+});
+
+// ── VISION_MODEL backend routing (2026-09-10) ─────────────────
+// The var names a channel; describeImage must dial THAT channel with THAT
+// channel's own user key. The pre-fix code hardcoded or/→OpenRouter and
+// everything else translate-shaped →OpenCode Go, which sent the OpenCode key
+// to Command Code whenever VISION_MODEL was a cm/ model (the deployed value
+// since the V4 vision-exp retirement) — wrong credential to a third party,
+// plus a guaranteed describe failure.
+const CMD = "cm/deepseek/deepseek-v4.1-flash";
+
+test("describeImage: cm/ vision model dials Command Code with the CMD key (never the OG key)", async () => {
+  const src = { media_type: "image/png", data: IMG };
+  assert.equal(
+    await describeImage({}, {}, src, CMD, "u1"),
+    "(图片描述失败：CMD_API_KEY 未配置)",
+    "missing cm key",
+  );
+  let seen = null;
+  await withStubFetch(async () => {
+    const desc = await describeImage(
+      {},
+      { CMD_API_KEY: "sk-cm", OPENCODE_GO_API_KEY: "sk-og" },
+      src,
+      CMD,
+      "u1",
+    );
+    assert.equal(desc, "cm saw it", "OpenAI choices[] extraction");
+  }, async (url, init) => {
+    seen = { url: String(url), auth: new Headers(init?.headers).get("authorization") };
+    return new Response(
+      JSON.stringify({ choices: [{ message: { role: "assistant", content: "cm saw it" } }] }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
+  });
+  assert.equal(seen.url, "https://api.commandcode.ai/provider/v1/chat/completions");
+  assert.equal(seen.auth, "Bearer sk-cm", "the user's CMD key, not the OpenCode key");
+});
+
+test("describeImage: ds/ vision model keeps the Anthropic shape + its own key", async () => {
+  const src = { media_type: "image/png", data: IMG };
+  assert.equal(
+    await describeImage({}, {}, src, "ds/deepseek-flash", "u1"),
+    "(图片描述失败：DEEPSEEK_API_KEY 未配置)",
+  );
+  let seen = null;
+  await withStubFetch(async () => {
+    const desc = await describeImage({}, { DEEPSEEK_API_KEY: "sk-ds" }, src, "ds/deepseek-flash", "u1");
+    assert.equal(desc, "ds saw it");
+  }, async (url, init) => {
+    seen = { url: String(url), auth: new Headers(init?.headers).get("authorization") };
+    return new Response(JSON.stringify({ content: [{ type: "text", text: "ds saw it" }] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
+  });
+  assert.equal(seen.url, "https://api.deepseek.com/anthropic/v1/messages");
+  assert.equal(seen.auth, "Bearer sk-ds");
+});
+
+test("describeImage: an unmapped backend kind fails closed (no fetch, no key guess)", async () => {
+  const { registerRoute, ROUTE_TABLE } = await import("../src/upstream.ts");
+  registerRoute("zz-vis", ({ via }) => ({
+    type: "translate",
+    kind: "zzvision",
+    stripPrefix: true,
+    upstream: via("https://example.invalid/chat", "/chat"),
+  }));
+  try {
+    let called = false;
+    await withStubFetch(async () => {
+      const desc = await describeImage(
+        {},
+        { OPENCODE_GO_API_KEY: "sk-og", CMD_API_KEY: "sk-cm", DEEPSEEK_API_KEY: "sk-ds" },
+        { media_type: "image/png", data: IMG },
+        "zz-vis/anything",
+        "u1",
+      );
+      assert.equal(desc, "(图片描述失败：视觉模型后端不支持)");
+    }, async () => {
+      called = true;
+      return new Response("{}", { status: 200 });
+    });
+    assert.equal(called, false, "unknown backend must not dial anyone");
+  } finally {
+    delete ROUTE_TABLE["zz-vis"];
+  }
 });
