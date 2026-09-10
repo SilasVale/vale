@@ -27,7 +27,40 @@ node e2e.js --token <token> --no-browser           # agent-only, no CDP
 Env: `VALE_AGENT_TOKEN` also works; `--base` overrides the agent URL;
 `VALE_PW_DIR` overrides the playwright dir (default `D:\Vale\playwright`).
 
-Exit code 0 = all selected sections passed. Full run: 48 checks
+| `governance` | round-9 of the game-design work | goal set -> the AI reads it off `terminal_list` -> gate armed -> an execute BLOCKS with its `intent`/`considered` -> approve+grant -> the granted family runs unasked -> revoke -> disarm -> **the audit trail explains all of it** |
+
+Exit code 0 = all selected sections passed. Full run: 63 checks
+
+## Which sections run where
+
+`governance` is deliberately **platform-neutral** — it uses only tool calls and
+HTTP, with no PowerShell and no path joining — so it is the one section that also
+runs against a Linux agent on loopback:
+
+```bash
+# on any box with the agent built:
+cargo build --features terminal --bin vale-agent
+# config.yaml: server.host 127.0.0.1, a free port, a device_token
+VALE_DATA_DIR=/tmp/vale-e2e/data ./target/debug/vale-agent /tmp/vale-e2e/config.yaml &
+node agent/scripts/e2e/e2e.js --token <token> --base http://127.0.0.1:<port> --only governance
+```
+
+That is how the section was developed and how the audit-trail gap below was
+found. The other sections are DEVICE-targeted by design and will partially fail
+elsewhere: `terminal` runs `Write-Output` (PowerShell), and `file`/`evidence` join
+paths with `\` under a hardcoded `C:\ProgramData\Vale\pwout`. Those failures
+are the environment, not the agent — verified by pointing `VALE_EVIDENCE_DIR` at a
+Linux directory, which moves `file` from an ENOENT abort to 6/7 with only the
+backslash join failing.
+
+## Why the trail assertions exist
+
+Every check in `governance` passed on an early build while **arming the approval
+gate left no trace in the audit trail at all** — the hold was recorded, the goal
+was recorded, and the switch that decides whether commands run unasked was
+invisible. Found only by driving a real agent end to end: each piece was
+individually correct and only the joined-up history was missing. The trail
+assertion is what turns that from a discovery into a failure.
 (mcp section covers stdio+http auto-select AND AI click interaction —
 snapshot -> browser_click {target} on the injected same-origin link
 (Learn more fallback) must drive the embedded view, proving interactions

@@ -637,6 +637,111 @@ async function sectionBrowser() {
   }
 }
 
+// ── 8. governance: goal / approval gate / grants / intent ──────────────────
+// The "game design" surface end to end: the operator states a goal, arms the
+// gate, approves a command (with a grant), and the audit trail explains WHY a
+// later command ran unasked. Section added round-9 of that work.
+//
+// The trail assertions are the point of this section. Every other check here
+// passed while ARMING THE GATE left no trace at all — found only by driving a
+// real agent, because each piece was individually correct and only the joined-up
+// history was missing.
+async function sectionGovernance() {
+  const sid = await tool('terminal_open', { kind: 'pty', rows: 24, cols: 80 });
+  check('gov: session opens', typeof sid === 'string' && sid.length > 0, 'sid=' + sid);
+
+  const ctl = async (body) => {
+    const r = await fetch(BASE + '/api/sessions/' + encodeURIComponent(sid) + '/control', {
+      method: 'POST', headers: H, body: JSON.stringify(body),
+    });
+    return { status: r.status, json: await shotsJsonParse(r) };
+  };
+
+  // --- goal: the operator states intent, the AI reads it for free ---
+  const g = await ctl({ goal: 'provision the ONU at 0/1 on VLAN 100' });
+  check('gov: goal accepted', g.status === 200 && g.json && g.json.goal === 'provision the ONU at 0/1 on VLAN 100',
+    JSON.stringify(g.json));
+  // A partial patch must not clear what it did not mention.
+  check('gov: partial patch leaves holder alone', g.json && g.json.held_by_human === null, JSON.stringify(g.json));
+
+  const rows = await tool('terminal_list', {});
+  const row = (Array.isArray(rows) ? rows : []).find((x) => x.id === sid);
+  check('gov: the AI reads the goal off terminal_list', !!row && row.goal === 'provision the ONU at 0/1 on VLAN 100',
+    row ? 'goal=' + row.goal : 'session not listed');
+
+  // --- arm the gate (twice: the repeat must not double-record) ---
+  await ctl({ approval_required: true });
+  await ctl({ approval_required: true });
+
+  // --- an execute blocks at the gate, carrying its intent ---
+  const execP = tool('terminal_execute', {
+    session_id: sid,
+    command: 'echo governed',
+    intent: 'confirm the session is responsive before changing anything',
+    considered: ['skip the check', 'reopen the session instead'],
+  }).then((r) => ({ ok: true, r }), (e) => ({ ok: false, e: String(e.message) }));
+
+  let apid = '';
+  for (let i = 0; i < 25; i++) {
+    const l = await tool('terminal_list', {});
+    const r = (Array.isArray(l) ? l : []).find((x) => x.id === sid);
+    apid = (r && r.pending_approval && r.pending_approval.id) || '';
+    if (apid) break;
+    await sleep(200);
+  }
+  check('gov: the gate publishes the pending command', !!apid, 'id=' + apid);
+
+  const decided = await (await fetch(BASE + '/api/sessions/' + encodeURIComponent(sid) + '/approval', {
+    method: 'POST', headers: H,
+    body: JSON.stringify({ id: apid, approve: true, grant: true }),
+  })).json();
+  check('gov: approve+grant decides', decided && decided.decided === true, JSON.stringify(decided));
+  check('gov: the grant is the command WORD, server-derived',
+    decided && Array.isArray(decided.approval_grants) && decided.approval_grants.includes('echo'),
+    JSON.stringify(decided && decided.approval_grants));
+
+  const exec = await execP;
+  check('gov: the approved command ran', exec.ok, exec.ok ? 'state=' + (exec.r && exec.r.state) : exec.e);
+
+  // --- the granted family does NOT ask again ---
+  const t0 = Date.now();
+  const again = await tool('terminal_execute', { session_id: sid, command: 'echo granted-sibling' });
+  const dt = Date.now() - t0;
+  check('gov: a granted sibling runs without asking', !!again && dt < 5000, dt + 'ms');
+
+  // --- revoke, then disarm ---
+  const rev = await (await fetch(BASE + '/api/sessions/' + encodeURIComponent(sid) + '/grants', {
+    method: 'POST', headers: H, body: JSON.stringify({ all: true }),
+  })).json();
+  check('gov: revoke-all empties the grants', rev && Array.isArray(rev.approval_grants) && rev.approval_grants.length === 0,
+    JSON.stringify(rev && rev.approval_grants));
+  await ctl({ approval_required: false });
+
+  // --- THE TRAIL: does it explain why a command ran unasked? ---
+  const sess = await (await fetch(BASE + '/api/sessions/' + encodeURIComponent(sid), { headers: H })).json();
+  const evs = (sess && sess.events) || [];
+  const posture = evs.filter((e) => e.kind === 'approval').map((e) => e.status + ':' + (e.text || ''));
+  check('gov: the trail records the whole approval posture',
+    posture.join(',') === 'armed:,approved:echo governed,granted:echo,revoked:,disarmed:',
+    posture.join(','));
+  const armedCount = posture.filter((p) => p === 'armed:').length;
+  check('gov: a repeated arm request is not recorded twice', armedCount === 1, 'armed x' + armedCount);
+
+  const start = evs.find((e) => e.kind === 'command/start' && e.command === 'echo governed');
+  check('gov: intent is recorded beside the command',
+    !!start && start.intent === 'confirm the session is responsive before changing anything',
+    start ? 'intent=' + start.intent : 'no command/start');
+  check('gov: the alternatives are recorded',
+    !!start && Array.isArray(start.considered) && start.considered.length === 2,
+    start ? JSON.stringify(start.considered) : 'no command/start');
+
+  const goalEv = evs.filter((e) => e.kind === 'goal');
+  check('gov: the goal statement is durable', goalEv.length === 1 && goalEv[0].text === 'provision the ONU at 0/1 on VLAN 100',
+    JSON.stringify(goalEv.map((e) => e.text)));
+
+  await tool('terminal_close', { session_id: sid });
+}
+
 (async () => {
   if (!TOKEN) { console.error('missing token: pass --token or VALE_AGENT_TOKEN'); process.exit(1); }
   const want = (s) => !ONLY || ONLY.includes(s);
@@ -648,6 +753,7 @@ async function sectionBrowser() {
     if (want('mcp') && !NO_BROWSER) await sectionMcp();
     if (want('evidence') && !NO_BROWSER) await sectionEvidence();
     if (want('browser') && !NO_BROWSER) await sectionBrowser();
+    if (want('governance')) await sectionGovernance();
   } catch (e) {
     console.error('SECTION ERROR: ' + e.message);
     results.push({ name: 'suite', pass: false, detail: e.message });

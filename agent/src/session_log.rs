@@ -280,6 +280,42 @@ impl SessionEvent {
         }
     }
 
+    /// A change to the session's APPROVAL posture — the gate armed or disarmed,
+    /// a command family allowed or taken back, or a request decided.
+    ///
+    /// This exists because the trail had a hole that only showed up when the
+    /// feature was driven for real: the HOLD was recorded, and the GOAL was
+    /// recorded, but ARMING THE GATE left no trace at all. A reader of the audit
+    /// trail therefore could not tell whether a command ran because the operator
+    /// approved it, or because the gate was never on. Those are different
+    /// histories and the evidence beat exists to tell them apart.
+    ///
+    /// `status` carries the action and `text` its subject, reusing the existing
+    /// shape rather than adding fields:
+    ///
+    ///   action `armed` / `disarmed`   subject: none
+    ///   action `granted` / `revoked`  subject: the command word ("" = all)
+    ///   action `approved` / `refused` subject: the command that was decided
+    pub fn approval(seq: u64, action: &str, subject: &str) -> Self {
+        Self {
+            seq,
+            ts: crate::unix_now(),
+            kind: "approval".into(),
+            command: None,
+            // Absent rather than empty when there is no subject, so a reader can
+            // tell "nothing to name" from "the subject was the empty string" —
+            // the same distinction the revoke-all case depends on, where "" IS
+            // the subject and means every grant.
+            text: (!subject.is_empty()).then(|| crate::text::clip(subject, 512).to_string()),
+            exit_code: None,
+            reason: None,
+            status: Some(action.to_string()),
+            duration_ms: None,
+            intent: None,
+            considered: None,
+        }
+    }
+
     /// The session's stated GOAL — what the operator asked for.
     ///
     /// Recorded in the trail for the same reason a handoff is: the live value
@@ -611,6 +647,17 @@ impl SessionLogger {
     /// handoff itself would cost the operator the keyboard.
     pub fn log_control(&self, sid: &str, holder: &str) {
         self.log(sid, SessionEvent::control(0, holder));
+    }
+
+    /// Record a change to the approval posture. Best-effort like every write here.
+    ///
+    /// Passed an explicit subject rather than reading it back off the manager:
+    /// the manager is the live state and may already have moved on (a revoke that
+    /// found nothing, a request that was decided by someone else first), while
+    /// this records what the CALLER asked for. The two agree in the normal case
+    /// and the difference is exactly what a reader wants when they disagree.
+    pub fn log_approval(&self, sid: &str, action: &str, subject: &str) {
+        self.log(sid, SessionEvent::approval(0, action, subject));
     }
 
     /// Record the session's stated goal. Best-effort like every write here.

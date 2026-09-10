@@ -833,6 +833,27 @@ async fn api_session_approval(
     // "no grant", the conservative default for a request that did not mention it.
     let grant = parse::optional_bool(&v, "grant").unwrap_or(false);
 
+    // The grants in force BEFORE, so the record can name what this decision
+    // newly allowed rather than repeating the whole list.
+    let grants_before = state
+        .terminal_mgr
+        .term_approval_grants(sid)
+        .await
+        .unwrap_or_default();
+
+    // Read the request BEFORE deciding it, because the decision clears it — and
+    // the command is what makes the record meaningful. "approved" without the
+    // command would say a yes happened without saying what to.
+    let decided_command = state
+        .terminal_mgr
+        .term_pending_approval(sid)
+        .await
+        .ok()
+        .flatten()
+        .filter(|p| p.id == id)
+        .map(|p| p.command)
+        .unwrap_or_default();
+
     let decided = state
         .terminal_mgr
         .term_decide_approval(sid, &id, approve, grant)
@@ -841,6 +862,32 @@ async fn api_session_approval(
             // A missing session is a client error: the panel can hold a stale sid.
             parse::invalid_params_response(e.to_string())
         })?;
+
+    // Only when a decision actually landed. `decided == false` means the request
+    // had already gone — recording a yes that decided nothing would be a false
+    // entry in the one log that must not contain them.
+    if decided {
+        sessions_logger().log_approval(
+            sid,
+            if approve { "approved" } else { "refused" },
+            &decided_command,
+        );
+        // A grant is a SEPARATE fact from the approval and gets its own event:
+        // "the operator said yes to this command" and "this word now runs
+        // unasked" are different statements, and a reader chasing why a later
+        // command did NOT prompt needs the second one. Only when a grant is
+        // genuinely new — re-approving an already-allowed word is not news.
+        if approve && grant {
+            let after = state
+                .terminal_mgr
+                .term_approval_grants(sid)
+                .await
+                .unwrap_or_default();
+            if let Some(added) = after.iter().find(|g| !grants_before.contains(g)) {
+                sessions_logger().log_approval(sid, "granted", added);
+            }
+        }
+    }
 
     // Report the grants now in force, so the panel renders them from the
     // decision's own response rather than waiting for its next poll — a grant the
@@ -889,7 +936,7 @@ async fn api_session_grants(
     // `all` wins when both are given: it is the strictly larger act, so honouring
     // the narrower one would quietly do less than the operator asked.
     let target = if all { None } else { grant.as_deref() };
-    state
+    let removed = state
         .terminal_mgr
         .term_revoke_grants(sid, target)
         .await
@@ -897,6 +944,12 @@ async fn api_session_grants(
             // A missing session is a client error: the panel can hold a stale sid.
             parse::invalid_params_response(e.to_string())
         })?;
+    // Taking a permission back is as much evidence as granting it. An empty
+    // subject records "all", which is why `approval()` keeps "" meaningful
+    // rather than dropping it.
+    if removed > 0 {
+        sessions_logger().log_approval(sid, "revoked", target.unwrap_or(""));
+    }
 
     let grants = state
         .terminal_mgr
@@ -1021,15 +1074,22 @@ async fn api_session_control(
         sessions_logger().log_control(sid, if h { "human" } else { "ai" });
     }
 
+    let approval_required_before = state.terminal_mgr.term_approval_required(sid).await.ok();
     let mut approval_required = None;
     if let Some(req) = approval {
-        approval_required = Some(
-            state
-                .terminal_mgr
-                .term_set_approval_required(sid, req)
-                .await
-                .map_err(not_found)?,
-        );
+        let now = state
+            .terminal_mgr
+            .term_set_approval_required(sid, req)
+            .await
+            .map_err(not_found)?;
+        // ARMING THE GATE IS EVIDENCE. Recorded only when the mode actually
+        // CHANGED: a panel that re-sends the same value on every poll would
+        // otherwise bury the one transition that matters under a wall of
+        // no-ops. The trail is read by a person, and a person wants events.
+        if Some(now) != approval_required_before {
+            sessions_logger().log_approval(sid, if now { "armed" } else { "disarmed" }, "");
+        }
+        approval_required = Some(now);
     }
 
     let mut goal_out = None;
@@ -2277,6 +2337,215 @@ mod tests {
                 "{p} must reject an anonymous caller pre-dispatch"
             );
         }
+    }
+
+    /// THE APPROVAL POSTURE IS EVIDENCE — the gap that only a REAL RUN exposed.
+    ///
+    /// Every unit test passed while arming the gate left no trace at all: the
+    /// hold was recorded, the goal was recorded, and the single most
+    /// consequential switch in the feature — the one that decides whether
+    /// commands run unasked — was invisible. A reader could not tell whether a
+    /// command ran because the operator approved it or because the gate was never
+    /// on, which is precisely the question the evidence beat exists to answer.
+    ///
+    /// This drives the REAL routes in order and then reads the trail, because the
+    /// defect was not in any one piece: the manager stored the mode correctly, the
+    /// route returned it correctly, and only the joined-up history was missing.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn the_approval_posture_is_recorded_in_the_trail() {
+        let (st, cfg_path) = state_with_cfg("approval-audit", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        let ctl = |body: &'static str| {
+            let st = st.clone();
+            let sid = sid.clone();
+            async move {
+                handle_request(
+                    req_with_json("POST", &format!("/api/sessions/{sid}/control"), body),
+                    st,
+                )
+                .await
+            }
+        };
+
+        // Arm, then arm AGAIN — the second must not add a second event, or a
+        // panel polling this route would bury the transition it exists to show.
+        assert_eq!(
+            ctl(r#"{"approval_required":true}"#).await.status(),
+            StatusCode::OK
+        );
+        assert_eq!(
+            ctl(r#"{"approval_required":true}"#).await.status(),
+            StatusCode::OK
+        );
+
+        // Approve a request WITH a grant, through the real routes.
+        let exec = {
+            let st2 = st.clone();
+            let sid2 = sid.clone();
+            tokio::spawn(async move {
+                handle_request(
+                    req_with_json(
+                        "POST",
+                        "/api/tools/terminal_execute",
+                        &format!(r#"{{"session_id":"{sid2}","command":"echo audited"}}"#),
+                    ),
+                    st2,
+                )
+                .await
+            })
+        };
+        let id = {
+            let st3 = st.clone();
+            let sid3 = sid.clone();
+            tokio::time::timeout(std::time::Duration::from_secs(5), async move {
+                loop {
+                    if let Some(p) = st3.terminal_mgr.term_pending_approval(&sid3).await.unwrap() {
+                        break p.id;
+                    }
+                    tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+                }
+            })
+            .await
+            .expect("the gate must prompt")
+        };
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/approval"),
+                &format!(r#"{{"id":"{id}","approve":true,"grant":true}}"#),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let _ = exec.await;
+
+        // Revoke, then disarm.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/grants"),
+                r#"{"all":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            ctl(r#"{"approval_required":false}"#).await.status(),
+            StatusCode::OK
+        );
+
+        // And the trail tells the whole story, in order.
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let posture: Vec<(String, String)> = events
+            .iter()
+            .filter(|e| e["kind"] == "approval")
+            .map(|e| {
+                (
+                    e["status"].as_str().unwrap_or("").to_string(),
+                    e["text"].as_str().unwrap_or("").to_string(),
+                )
+            })
+            .collect();
+        assert_eq!(
+            posture,
+            vec![
+                ("armed".to_string(), String::new()),
+                ("approved".to_string(), "echo audited".to_string()),
+                ("granted".to_string(), "echo".to_string()),
+                ("revoked".to_string(), String::new()),
+                ("disarmed".to_string(), String::new()),
+            ],
+            "the trail must explain WHY a command ran unasked: arming, the decision, \
+             what it newly allowed, and taking it back. Note `armed` appears ONCE \
+             despite two identical requests."
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// A decision that decided NOTHING is not recorded as a decision.
+    ///
+    /// The stale-id case: an operator clicks "run it" a moment after the request
+    /// expired. The route answers honestly (`decided: false`), and the trail must
+    /// not gain a yes for a command nobody authorised — a false entry in the one
+    /// log that has to be trustworthy.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_decision_that_decided_nothing_leaves_no_record() {
+        let (st, cfg_path) = state_with_cfg("approval-noop", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/approval"),
+                r#"{"id":"ap-does-not-exist","approve":true,"grant":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(json_body(resp).await["decided"], false);
+
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        assert!(
+            !events.iter().any(|e| e["kind"] == "approval"),
+            "nothing was decided, so nothing may be recorded: {:?}",
+            events
+                .iter()
+                .filter(|e| e["kind"] == "approval")
+                .collect::<Vec<_>>()
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
     }
 
     /// THE INTENT LAYER, end to end: reasoning posted to the TOOL surface comes
