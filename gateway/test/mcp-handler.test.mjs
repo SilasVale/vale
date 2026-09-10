@@ -271,6 +271,75 @@ test("contract: every registered tool is device-served or bridge-synthetic", asy
   }
 });
 
+// The gateway advertises its OWN inputSchema for every device-direct tool and
+// relays args verbatim, so a parameter the DEVICE accepts but the gateway does
+// not advertise is invisible to a console client: it cannot discover it, and a
+// schema-validating client would refuse to send it. That is the same shape as
+// round-54's missing-tool drift, one level down — the tool exists, the parameter
+// does not.
+//
+// Found by reading rather than by a gate: `terminal_execute` gained `intent` and
+// `considered` on the device and reached a console client as undocumented extras.
+// This test is what turns that from a discovery into a failure.
+test("contract: the gateway advertises every parameter the device accepts", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const byName = new Map(allMcpTools().map((t) => [t.name, t]));
+
+  // Parameters the GATEWAY owns rather than relaying: routing metadata the
+  // device never sees (identical to the existing `delete body.device` in mcp.ts).
+  const GATEWAY_ONLY = new Set(["device"]);
+  // Deliberate renames applied in callTerminalToolOnce, mirrored here so the
+  // comparison is about what the DEVICE receives.
+  const RENAMES = { terminal_execute: { input: "command" } };
+
+  const problems = [];
+  for (const t of deviceTools()) {
+    if (!(t.name in Object.fromEntries(byName))) continue;
+    if (NOT_EXPOSED[t.name]) continue;
+    const tool = byName.get(t.name);
+    const advertised = new Set(Object.keys(tool.inputSchema.properties || {}));
+    for (const name of Object.keys(RENAMES[t.name] || {})) advertised.add(RENAMES[t.name][name]);
+    for (const p of t.params || []) {
+      if (GATEWAY_ONLY.has(p)) continue;
+      if (!advertised.has(p)) problems.push(`${t.name}.${p}`);
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `the device accepts parameters the console MCP schema does not advertise, so no ` +
+      `console client can discover or send them: ${problems.join(", ")}`,
+  );
+});
+
+test("contract: no advertised parameter is a name the device would reject", async () => {
+  // The other direction. An advertised parameter the device does not accept is
+  // worse than a missing one: the client is TOLD it may send something that is
+  // silently dropped.
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const byName = new Map(allMcpTools().map((t) => [t.name, t]));
+  const RENAMES = { terminal_execute: { input: "command" } };
+  const GATEWAY_ONLY = new Set(["device"]);
+
+  const problems = [];
+  for (const t of deviceTools()) {
+    const tool = byName.get(t.name);
+    if (!tool || NOT_EXPOSED[t.name]) continue;
+    const accepted = new Set(t.params || []);
+    for (const p of Object.keys(tool.inputSchema.properties || {})) {
+      if (GATEWAY_ONLY.has(p)) continue;
+      const deviceName = (RENAMES[t.name] || {})[p] || p;
+      if (!accepted.has(deviceName)) problems.push(`${t.name}.${p}`);
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    `the console MCP schema advertises parameters the device does not accept, so a ` +
+      `client would be told it may send them and they would be dropped: ${problems.join(", ")}`,
+  );
+});
+
 test("contract: the relay pair is registered, routed and self-documenting", async () => {
   const { allMcpTools } = await import("../src/mcp-tools.ts");
   const { isDeviceDirectTool } = await import("../src/mcp.ts");

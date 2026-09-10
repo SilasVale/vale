@@ -91,6 +91,16 @@ const TERMINAL_TOOLS: McpTool[] = [
           type: "integer",
           description: "(serial) Stop bits 1 or 2. Overrides the target string.",
         },
+        key_path: {
+          type: "string",
+          description:
+            "(ssh) Path to a private key file. When set, public-key auth is used; password (if any) is the key passphrase.",
+        },
+        auto_reconnect: {
+          type: "boolean",
+          description:
+            "(serial) Auto-reconnect when the port disappears (unplug / device reboot): the session stays open and re-opens the SAME port with the SAME framing when it reappears. Default false.",
+        },
       },
       required: ["kind"],
     },
@@ -124,6 +134,22 @@ const TERMINAL_TOOLS: McpTool[] = [
           type: "integer",
           description:
             "(fallback) Quiet period in ms before considering output complete. Default 200.",
+        },
+        run_in_background: {
+          type: "boolean",
+          description:
+            "(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false.",
+        },
+        intent: {
+          type: "string",
+          description:
+            "Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself.",
+        },
+        considered: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something.",
         },
       },
       required: ["session_id", "input"],
@@ -208,6 +234,11 @@ const TERMINAL_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        limit: {
+          type: "integer",
+          description:
+            "Max entries to return (default 20; live sessions are always included).",
+        },
       },
       required: [],
     },
@@ -331,6 +362,8 @@ const TERMINAL_TOOLS: McpTool[] = [
       properties: {
         ...DEVICE_PARAM,
         id: { type: "string" },
+        rows: { type: "integer", description: "Override the saved row count." },
+        cols: { type: "integer", description: "Override the saved column count." },
       },
       required: ["id"],
     },
