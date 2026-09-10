@@ -321,4 +321,64 @@ mod bootstrap_tests {
         assert_eq!(std::fs::read(&path).unwrap(), b"nested");
         std::fs::remove_dir_all(&d).ok();
     }
+
+    /// The embedded default and `Config::default()` DISAGREE about `platform.*`
+    /// — deliberately, and now visibly (SOLID R127).
+    ///
+    /// MEASURED through the real production path (`load_or_create`, which is
+    /// what a fresh install runs): the embedded config.yaml yields
+    /// `console_url = Some("https://api.saisi.online")` and
+    /// `download_url = Some("https://agent.saisi.online")`. `Config::default()`
+    /// yields `None` for both.
+    ///
+    /// THE CONSEQUENCE THAT MATTERS: the test suite builds on
+    /// `Config::default()`, so it exercises the LOCAL-only configuration, while
+    /// a fresh install is cloud-configured (agent_update enabled, page_view
+    /// remote enabled, device self-registration running every cycle). Every
+    /// test of the "no console configured → explicit error" degradation path is
+    /// therefore testing a state production does not START in — it reaches it
+    /// only when someone deletes the two keys.
+    ///
+    /// That is fine as long as it is KNOWN. This pin fixes the fact so neither
+    /// side can drift silently: if the embedded file stops setting them, or
+    /// `Config::default()` starts setting them, the difference in what the
+    /// suite covers is a decision instead of an accident.
+    #[test]
+    fn embedded_default_sets_platform_while_config_default_does_not() {
+        let d = std::env::temp_dir().join(format!("vale-cfgpin-{}", std::process::id()));
+        let _ = std::fs::create_dir_all(&d);
+        let p = d.join("config.yaml");
+        let _ = std::fs::remove_file(&p);
+        let (fresh, _) = load_or_create(&p, NOOP).expect("fresh install must succeed");
+
+        assert_eq!(
+            fresh.platform.console_url.as_deref(),
+            Some("https://api.saisi.online"),
+            "the fresh-install config no longer sets console_url. If that is \
+             intended (local-by-default), update this pin AND the config.yaml \
+             comment AND the note on PlatformConfig — and note that the \
+             degradation-path tests now cover the production default."
+        );
+        assert_eq!(
+            fresh.platform.download_url.as_deref(),
+            Some("https://agent.saisi.online"),
+            "the fresh-install config no longer sets download_url"
+        );
+
+        let dflt = vale_agent_core::Config::default();
+        assert!(
+            dflt.platform.console_url.is_none() && dflt.platform.download_url.is_none(),
+            "Config::default() now SETS a platform endpoint — it is the \
+             local-only configuration the suite builds on; if it becomes \
+             cloud-configured, tests stop covering the unset state"
+        );
+
+        // The two must remain DIFFERENT, which is the whole point of the pin.
+        assert_ne!(
+            fresh.platform.console_url, dflt.platform.console_url,
+            "if the two defaults ever agree, this pin has lost its subject — \
+             delete it and say so in the ledger"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
 }

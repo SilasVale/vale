@@ -10,10 +10,26 @@ serial:
   default_baud_rate: 115200
   default_timeout_ms: 1000
 
-# Deployment endpoints (saisi decouple): BOTH ARE OPTIONAL. A purely local
-# install (terminal + memory + MCP) can leave them unset — cloud-dependent
-# tools (agent_update, page_view remote pages, device self-register) then
-# degrade with explicit errors. Set them when a console/update channel exists.
+# Deployment endpoints. BOTH ARE OPTIONAL, and THIS FILE SETS BOTH — so a
+# fresh install is NOT the "no console configured" state. Understand the two
+# before editing:
+#
+#   * SET (what this file does): agent_update can fetch a release,
+#     page_view can read remote console pages, and the device self-registers
+#     with the console every cycle (main.rs's registration loop).
+#   * UNSET (delete the two keys): every cloud-dependent tool degrades with an
+#     explicit error, and self_register_plan returns None, i.e. the device
+#     never sends anything anywhere. This is the state `vale setup`'s
+#     "PURE LOCAL install" describes.
+#
+# ⚠️ `Config::default()` (vale-command-core) leaves both UNSET, while the file
+# below leaves both SET — so a test built on `Config::default()` exercises a
+# DIFFERENT platform configuration than a fresh install receives. That
+# divergence is deliberate (tests must be able to reach the unset state without
+# touching the filesystem) and is PINNED by
+# `embedded_default_sets_platform_while_config_default_does_not` in
+# bootstrap.rs, so changing either side is a visible decision rather than a
+# silent drift in what the test suite covers.
 platform:
   console_url: "https://api.saisi.online"
   download_url: "https://agent.saisi.online"

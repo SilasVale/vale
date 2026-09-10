@@ -21,6 +21,14 @@ pub struct Config {
 /// installing with non-default domains). Only the two bases are stored: the
 /// update manifest is always `{download_url}/api/version` — consumers derive
 /// it, so the two can never drift.
+///
+/// ⚠️ `#[derive(Default)]` here leaves both `None`, while the agent's EMBEDDED
+/// config.yaml (the file a fresh install actually receives) sets both to the
+/// saisi endpoints. So `Config::default()` is the LOCAL-only configuration and
+/// is what the test suite builds on; it is deliberately NOT the fresh-install
+/// configuration. Pinned by
+/// `embedded_default_sets_platform_while_config_default_does_not` in the
+/// agent's bootstrap.rs.
 #[derive(Debug, Clone, Serialize, Deserialize, Default)]
 #[serde(default)]
 pub struct PlatformConfig {
