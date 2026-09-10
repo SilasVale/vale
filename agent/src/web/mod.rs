@@ -431,6 +431,44 @@ async fn handle_panel_home(
 /// holding one across an `await` makes this future non-`Send` and breaks the
 /// Tower service it is called from. `&Method`, `&str` and `&HeaderMap` all
 /// are, so the signature is `Send` by construction.
+/// Authenticate, reserve an SSE viewer slot, and build the stream response —
+/// the three steps `/api/events` and `/api/events/term` share.
+///
+/// WHY THIS EXISTS: the two branches in `route_pre_dispatch` were
+/// byte-identical apart from which stream function they returned, so every
+/// future change to the streaming path had to be made TWICE and could be made
+/// once. There is now a single place where an SSE slot is acquired.
+///
+/// ⚠️ THE GUARD DOES NOT OUTLIVE THIS FUNCTION — that is the CURRENT,
+/// PINNED behaviour, not an oversight introduced here. `_guard` is a local and
+/// returning drops it, so the slot is released when the response is
+/// CONSTRUCTED rather than when the connection ends; the 64-viewer cap
+/// therefore bounds simultaneous construction, not simultaneous streams.
+/// Consolidating did NOT change that: the drop still happens at exactly the
+/// same point in the request's life. Fixing it (the guard must be owned by the
+/// RESPONSE) is a client-visible change reserved for sign-off, and this
+/// function is now the ONE place that fix has to touch. Behaviour pinned by
+/// `sse_viewer_cap_is_not_held_for_the_connection_lifetime`; recipe and the
+/// leak trap in docs/solid-program.md -> Open threads.
+async fn sse_route_response<F, Fut>(
+    headers: &axum::http::HeaderMap,
+    state: &Arc<AppState>,
+    stream: F,
+) -> Response
+where
+    F: FnOnce(Arc<AppState>) -> Fut,
+    Fut: std::future::Future<Output = Response>,
+{
+    if let Err(resp) = check_auth(headers, state) {
+        return *resp;
+    }
+    let _guard = match acquire_sse_guard() {
+        Ok(g) => g,
+        Err(resp) => return *resp,
+    };
+    stream(state.clone()).await
+}
+
 async fn route_pre_dispatch(
     method: &Method,
     path: &str,
@@ -440,37 +478,12 @@ async fn route_pre_dispatch(
 ) -> Option<Response> {
     // SSE event stream — streaming, handled before body parsing.
     if *method == Method::GET && path == "/api/events" {
-        if let Err(resp) = check_auth(headers, state) {
-            return Some(*resp);
-        }
-        // stage-n SSE audit LOW intended to bound concurrent SSE connections
-        // so a flood of viewers can't exhaust tasks/memory. IT DOES NOT — the
-        // slot is taken and then dropped at the `return` below, because
-        // `_guard` is a LOCAL of this function and the response outlives it.
-        // The cap therefore bounds simultaneous *construction*, not
-        // simultaneous connections: measured, 70 responses can be opened and
-        // held with ZERO refusals. Documented as-is rather than described as
-        // working, and pinned by
-        // `sse_viewer_cap_is_not_held_for_the_connection_lifetime`, which
-        // carries the fix recipe. See docs/solid-program.md -> Open threads.
-        let _guard = match acquire_sse_guard() {
-            Ok(g) => g,
-            Err(resp) => return Some(*resp),
-        };
-        return Some(sse_stream(state.clone()).await);
+        return Some(sse_route_response(headers, state, sse_stream).await);
     }
 
     // SSE terminal byte stream — streamed TermOutput JSON frames.
     if *method == Method::GET && path == "/api/events/term" {
-        if let Err(resp) = check_auth(headers, state) {
-            return Some(*resp);
-        }
-        // Same unheld-cap caveat as /api/events above.
-        let _guard = match acquire_sse_guard() {
-            Ok(g) => g,
-            Err(resp) => return Some(*resp),
-        };
-        return Some(sse_term_stream(state.clone()).await);
+        return Some(sse_route_response(headers, state, sse_term_stream).await);
     }
 
     // round-152: AI browser evidence stream — list + fetch screenshots from
@@ -2715,5 +2728,94 @@ mod tests {
         // about held connections, not about sequential construction.
         assert_eq!(held.len(), opened);
         drop(held);
+    }
+
+    /// Every streaming route must acquire its SSE slot through the ONE shared
+    /// path (SOLID R125).
+    ///
+    /// `sse_route_response` exists so the `_guard` lifetime question has a
+    /// single answer. Before the extraction the two branches were
+    /// byte-identical apart from their stream function, which meant the
+    /// sign-off-pending fix (the guard must be owned by the RESPONSE, not by
+    /// the function that builds it — see the ledger's Open threads) would have
+    /// had to be applied twice, correctly, in two places. This test keeps that
+    /// from regressing: it fails if a streaming route is answered WITHOUT the
+    /// shared helper, or if the helper itself stops acquiring a slot.
+    ///
+    /// It is a SOURCE SCAN, and its limits are stated rather than implied: it
+    /// checks shape, not behaviour. The behavioural half is
+    /// `sse_viewer_cap_is_not_held_for_the_connection_lifetime` above plus the
+    /// auth/stream tests in this module.
+    #[test]
+    fn streaming_routes_share_one_slot_acquisition_point() {
+        const SRC: &str = include_str!("mod.rs");
+        // Strip comments before counting. A naive scan counts MENTIONS, and
+        // `acquire_sse_guard` is named in this file's docs (including this very
+        // test) — the same false-positive trap the boot-surface and module-map
+        // gates hit. Only CODE lines may count.
+        // Two false-positive sources, both hit while writing this:
+        //   * `///` doc comments MENTION the helper by name (including, as it
+        //     happens, the comment two screens up);
+        //   * this test's own string literals contain "acquire_sse_guard()".
+        // So: drop the test module, then strip line comments.
+        let production = match SRC.find("#[cfg(test)]") {
+            Some(i) => &SRC[..i],
+            None => SRC,
+        };
+        let code: String = production
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        // The helper is the only place a guard is acquired...
+        let acquisitions = code.matches("acquire_sse_guard()").count();
+        assert_eq!(
+            acquisitions, 1,
+            "acquire_sse_guard() must be CALLED in exactly ONE place (the shared \
+             helper), found {acquisitions}. If a streaming route grew its own \
+             acquisition, the pending guard-lifetime fix now has to be applied \
+             twice — and the two copies will drift."
+        );
+        // ...and that one place is the helper, not some other function that
+        // happens to be first in the file.
+        let helper_body = code
+            .split("async fn sse_route_response")
+            .nth(1)
+            .and_then(|rest| rest.split("async fn route_pre_dispatch").next())
+            .expect("sse_route_response must still exist");
+        assert!(
+            helper_body.contains("acquire_sse_guard()"),
+            "the ONE acquisition is not inside sse_route_response"
+        );
+        // ...and both streaming routes go through it.
+        for (path, routed) in [
+            (
+                "/api/events",
+                "sse_route_response(headers, state, sse_stream)",
+            ),
+            (
+                "/api/events/term",
+                "sse_route_response(headers, state, sse_term_stream)",
+            ),
+        ] {
+            assert!(
+                SRC.contains(routed),
+                "{path} must be answered through the shared helper \
+                 (`{routed}`); answering it inline re-opens the two-place fix"
+            );
+        }
+        // AUTH IS NOT RE-CHECKED HERE, deliberately. The obvious assertion —
+        // "the helper body mentions check_auth" — does NOT discriminate: a
+        // mutant that replaces the call with `let _ = check_auth(...)` still
+        // contains the string and still passes, which I verified by applying
+        // it. Keeping a check that cannot fail would be worse than none.
+        //
+        // Authentication of this path is covered BEHAVIOURALLY, which is
+        // stronger: `term_sse_requires_auth` below fails under exactly that
+        // mutant (verified), and `route_pre_dispatch`'s own auth coverage
+        // (R102's route walk) covers the rest.
     }
 }
