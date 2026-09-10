@@ -81,11 +81,17 @@ describe("DesktopShell", () => {
     expect(document.querySelectorAll(".desktop-new .btn-ghost").length).toBe(0);
   });
 
-  it("shows connection dot state from sseState", () => {
+  it("shows the device state from sseState (and never a false IDLE)", () => {
+    // The dot carries the DEVICE state now (off / idle / working), not just
+    // connectivity — see useDeviceActivity. A dropped stream must not read as a
+    // healthy idle machine, so "down" has its own state rather than merely
+    // lacking the ok class.
     const { container } = render(<DesktopShell {...baseProps} />);
-    expect(container.querySelector(".desktop-rail-status.ok")).toBeTruthy();
+    const dot = () => container.querySelector(".desktop-rail-status")!.getAttribute("data-state");
+    expect(dot()).toBe("idle");
     const { container: c2 } = render(<DesktopShell {...baseProps} sseState="down" />);
-    expect(c2.querySelector(".desktop-rail-status.ok")).toBeNull();
+    const dot2 = () => c2.querySelector(".desktop-rail-status")!.getAttribute("data-state");
+    expect(dot2()).toBe("off");
   });
 
   it("renders the SSH connection modal when connModal is set (regression: desktop shell had no ConnModal mount — SSH/Serial buttons were dead)", () => {

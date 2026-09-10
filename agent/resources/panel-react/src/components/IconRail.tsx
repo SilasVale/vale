@@ -1,8 +1,15 @@
 // IconRail — shared by both densities: brand mark on top, 5 page icons,
 // connection dot pinned to the foot. Uses the unified ui/Icon set.
+//
+// The foot dot reports the DEVICE state, not just connectivity: offline (no
+// agent), idle (connected, nothing happening), working (activity within the
+// last few seconds — see useDeviceActivity). Both densities render the same
+// three states, because "is this machine busy" is a property of the machine and
+// not of which shell is showing it.
 import { useState } from "react";
 import { Icon, BrandMark, type IconName } from "../ui/Icon";
 import { getTheme, toggleTheme } from "../lib/theme";
+import { useDeviceActivity } from "../hooks/useDeviceActivity";
 import type { Page } from "./Shell";
 
 const PAGE_ICONS: Record<Page, IconName> = {
@@ -23,6 +30,13 @@ export function IconRail({ page, onPageChange, connected, desktop }: {
   const [theme, setThemeState] = useState(getTheme());
   const themeBtnClass = desktop ? "desktop-rail-btn" : "rail-btn";
   const flipTheme = () => setThemeState(toggleTheme());
+  const working = useDeviceActivity();
+  const state = !connected ? "off" : working ? "working" : "idle";
+  const label = !connected
+    ? "disconnected"
+    : working
+      ? "device is working"
+      : "device is idle";
   return (
     <>
       {desktop ? (
@@ -55,14 +69,17 @@ export function IconRail({ page, onPageChange, connected, desktop }: {
       </button>
       {desktop ? (
         <>
-          <div className={`desktop-rail-status ${connected ? "ok" : ""}`} title={connected ? "agent connected" : "connecting"}>
+          {/* data-state drives the colour in CSS (off / idle / working) — the
+              same three-value vocabulary the panel dot uses, so the two
+              densities cannot drift apart. */}
+          <div className="desktop-rail-status" data-state={state} title={label}>
             <span className="dot" />
           </div>
         </>
       ) : (
         <div className="rail-spacer" />
       )}
-      {!desktop && <div className={`rail-dot${connected ? " on" : ""}`} title={connected ? "connected" : "disconnected"} />}
+      {!desktop && <div className="rail-dot" data-state={state} title={label} />}
     </>
   );
 }

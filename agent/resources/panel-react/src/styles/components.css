@@ -46,13 +46,29 @@
 .rail-btn:hover { background: var(--chrome-hover); color: var(--chrome-ink); }
 .rail-btn.active { background: var(--chrome-active-bg); color: var(--chrome-active-ink); }
 .rail-spacer { flex: 1; }
+/* Device state at the rail foot — three states, and the WORKING one is the
+   point: before this the rail could only say connected/disconnected, so all the
+   work the AI did in a terminal was invisible at the device level. Same
+   three-value vocabulary as .desktop-rail-status below (data-state), so the two
+   densities cannot drift.
+
+   "working" reuses the running state's colour and halo from the discrete state
+   palette, because it means the same thing — something is in progress. The
+   colour is NOT the only channel: idle is a filled dot, working carries the
+   halo, offline is dimmed. That matters for the same reason it does on the
+   command dots — prefers-reduced-motion removes the transition below. */
 .rail-dot {
   width: 8px; height: 8px;
   border-radius: 50%;
   background: var(--chrome-ink-faint);
-  transition: background 0.2s ease;
+  transition: background 0.2s ease, box-shadow 0.2s ease;
 }
-.rail-dot.on { background: var(--success); box-shadow: 0 0 6px rgba(47, 191, 113, 0.7); }
+.rail-dot[data-state="idle"] { background: var(--success); }
+.rail-dot[data-state="working"] {
+  background: var(--state-running);
+  box-shadow: 0 0 0 2.5px var(--state-running-soft);
+}
+.rail-dot[data-state="off"] { background: var(--chrome-ink-faint); }
 .rail-brand {
   width: 30px; height: 30px;
   margin-bottom: 10px;
@@ -112,12 +128,23 @@
 .desktop-rail-status .dot {
   width: 9px; height: 9px;
   border-radius: 50%;
+  /* Unreachable is the warn colour: the agent is still starting or the shell
+     lost its transport. Kept as the base so a missing data-state degrades to
+     "not sure" rather than to a confident green. */
   background: var(--warn);
   box-shadow: 0 0 6px rgba(180, 83, 9, 0.7);
 }
-.desktop-rail-status.ok .dot {
+.desktop-rail-status[data-state="idle"] .dot {
   background: var(--success);
   box-shadow: 0 0 6px rgba(47, 191, 113, 0.7);
+}
+/* Working: the running state's colour + halo, matching .rail-dot so the two
+   densities read identically. Halo rather than glow-on-green because "working"
+   and "idle" must stay distinguishable without animation (see the state
+   palette note in tokens.css). */
+.desktop-rail-status[data-state="working"] .dot {
+  background: var(--state-running);
+  box-shadow: 0 0 0 2.5px var(--state-running-soft);
 }
 
 /* ---------- sidebar / context rail ---------- */

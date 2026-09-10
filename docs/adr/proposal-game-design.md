@@ -220,7 +220,7 @@ and it is the user's to answer, not the author's to assume.
 | Onboarding (§4.1, the biggest hole) | **done** — `ConnectCard.tsx`, 8 tests, 3 mutants caught (`91359f85`) |
 | A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
 | Unified activity signal (§4.2) | not started |
-| Device-level activity signal + device state (§4.2–4.3) | not started — and §4.2 was RE-SCOPED after the Law 3 correction: the merged signal is new and device-scoped, not a re-wiring of the browser pulse |
+| Device-level activity signal + device state (§4.2–4.3) | **done** — `useDeviceActivity.ts` merges terminal + browser activity into one device signal, rendered as off/idle/working on the rail foot in BOTH densities; 2 mutants caught. §4.2 was re-scoped first (see the Law 3 correction): the merged signal is new and device-scoped, NOT a re-wiring of the browser pulse |
 | Path view (post-hoc record) | prototype only, on branch `prototype/control-path` |
 | Control plane (Law 2's mechanism) | proposal only (`proposal-control-path.md`) |
 
