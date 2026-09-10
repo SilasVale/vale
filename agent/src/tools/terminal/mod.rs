@@ -283,14 +283,26 @@ mod desktop_impl {
         label: String,
         shell: String,
         backend: Arc<dyn TermBackend>,
-        /// round-108: whether this PTY session gets the OSC 133;D prompt
-        /// marker — execute's quiet path must not break early on such
-        /// sessions (the marker arrives at the NEXT prompt, i.e. at command
-        /// end, not after the echo).
-        /// stage-l: the OSC injection was replaced by the command wrapper;
-        /// the flag survives only to honor the legacy `inject_marker` open
-        /// param (now meaning "use the command wrapper") and is no longer
-        /// consulted by execute.
+        /// Did this session's backend ACTUALLY inject its shell integration?
+        ///
+        /// Set once at open from the three-way gate
+        /// `kind == "pty" && req.inject_marker && backend.marker_injected()`,
+        /// so the shell NAME alone never decides it (review #3: pwsh by name
+        /// was assumed injected, the dot-source silently no-op'd without the
+        /// script, 633 codes never arrived, and EVERY execute burned its full
+        /// timeout).
+        ///
+        /// CONSULTED BY EXECUTE, via `term_marker_injected` — the pwsh 633
+        /// wait path keys on it (exec.rs: `shell_633 = sess_shell == "pwsh" &&
+        /// term_marker_injected(&sid)`). round-108 also relies on it so the
+        /// quiet path does not break early on marker sessions, where the
+        /// marker arrives at the NEXT prompt rather than after the echo.
+        ///
+        /// A previous revision of this comment claimed the flag "is no longer
+        /// consulted by execute" (a stage-l note about the OSC-injection
+        /// mechanism being replaced by the command wrapper). The MECHANISM did
+        /// change; the consultation did not. Corrected in SOLID R126, and the
+        /// three-way gate is pinned by `marker_gate_is_reported_not_assumed`.
         inject_marker: bool,
         /// Last time output was seen — used by the idle sweeper.
         last_output: std::time::Instant,
@@ -807,11 +819,21 @@ mod desktop_impl {
                 .unwrap_or(false)
         }
 
-        /// round-109: correct the marker flag after open — the injection is
-        /// only actually performed for KNOWN shells (bash/sh/powershell);
-        /// a custom shell target must NOT get the quiet-never-break path
-        /// (it would hang every execute to the deadline). Called by the
-        /// open handler with the real injectable result.
+        /// Overwrite the marker flag for an existing session.
+        ///
+        /// ⚠️ **NOT WIRED — ZERO CALLERS** (real implementation and the
+        /// headless `stub.rs` twin alike; verified repo-wide in SOLID R126).
+        /// A previous revision claimed "Called by the open handler with the
+        /// real injectable result". That is false: the open handler sets the
+        /// value at CONSTRUCTION, from
+        /// `backend.marker_injected()`, which is the fix round-109 was after —
+        /// so this post-open corrector is redundant rather than pending.
+        ///
+        /// Kept (not deleted) because `TerminalManager` is PUBLIC API
+        /// (`pub mod tools` → `pub mod terminal` → `pub use …TerminalManager`)
+        /// and the feature-gating rule requires both configs to expose the
+        /// same path; dropping a public method is a breaking change that needs
+        /// sign-off. Recorded in docs/solid-program.md → Open threads.
         pub async fn term_set_marker_injected(&self, sid: &str, injected: bool) {
             let mut inner = self.inner.lock().await;
             if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
@@ -1072,5 +1094,56 @@ mod tests {
             "pty output did not echo: {saw:?}"
         );
         let _ = mgr.term_close(&sid).await;
+    }
+
+    /// The marker gate is REPORTED by the backend, never ASSUMED from the
+    /// shell name (SOLID R126).
+    ///
+    /// review #3's incident: pwsh was assumed injected because of its NAME.
+    /// When `shellIntegration.ps1` is absent the dot-source silently no-ops,
+    /// the 633 codes never arrive, the quiet path never runs, and EVERY
+    /// execute burns its full timeout — a hang, not an error. The fix was to
+    /// ask the BACKEND what actually happened.
+    ///
+    /// This pins the contract execute depends on:
+    ///   * a fresh session reports whatever its backend injected, and
+    ///   * `term_marker_injected` on an UNKNOWN id is false — the fail-safe
+    ///     direction (no 633 wait on a session we cannot vouch for), not true.
+    ///
+    /// The falsifiable half is the unknown-id case plus the round-trip: if
+    /// someone "simplifies" the lookup to `unwrap_or(true)`, the fail-safe
+    /// inverts and a missing session would take the never-arriving 633 path.
+    ///
+    /// ⚠️ GATED ON THE `terminal` FEATURE, and that gate is the whole point.
+    /// The headless `stub.rs` twin returns a hardcoded `false` from
+    /// `term_marker_injected` and does nothing in `term_set_marker_injected`,
+    /// so an ungated version of this test passes against the STUB and never
+    /// touches the real lookup — I verified that by inverting the real
+    /// implementation's `unwrap_or(false)` to `true` and watching an ungated
+    /// run stay green. A pin that exercises only the stub is not a pin for the
+    /// production path, so this one runs where the real code does: the
+    /// `--features terminal` suite.
+    #[cfg(feature = "terminal")]
+    #[tokio::test]
+    async fn marker_gate_is_reported_not_assumed() {
+        use std::sync::Arc;
+        let pool = Arc::new(crate::tools::serial::SerialPool::new(115200, 1000));
+        let mgr = TerminalManager::new(pool);
+        // No session has ever been opened: the gate must be FALSE, i.e. fail
+        // safe. `unwrap_or(true)` here would hang every execute on a bad id.
+        assert!(
+            !mgr.term_marker_injected("no-such-session").await,
+            "an unknown id must report NOT injected — assuming injected takes \
+             the 633 wait path, which never completes, so the command would \
+             hang to the deadline"
+        );
+        // And the post-open corrector, though unwired, must round-trip rather
+        // than panic or lie — it is public API that a consumer can still call.
+        mgr.term_set_marker_injected("no-such-session", true).await;
+        assert!(
+            !mgr.term_marker_injected("no-such-session").await,
+            "setting a flag on a non-existent session must be a no-op, not a \
+             resurrection: the lookup is by id"
+        );
     }
 }
