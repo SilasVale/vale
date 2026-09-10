@@ -366,7 +366,43 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 game-design round 10 (real-panel audit). The
+Last updated: 2026-09-11 game-design round 11 (the PLAN, + an
+  evidence-loss bug it uncovered). `terminal_plan` lets the agent declare
+  the steps it intends to take, in order (revise/clear/read); it is a TOOL
+  while the session goal is a CONTROL ROUTE, and a pin asserts the control
+  route REJECTS `plan` so a later "merge these two" refactor fails loudly
+  instead of destroying the comparison between asked-for and intended.
+  `terminal_execute` gained `plan_step` (1-based, 0/negative = absent) naming
+  which step a command advances; the path view renders the plan with the
+  count of commands that served each step, so an unclaimed step shows as a
+  run departing from what was announced. Gateway registers terminal_plan and
+  advertises plan_step (contract test caught the omission immediately — the
+  console registry is a hand-maintained SUBSET and tools/call looks names up
+  there BEFORE routing, so unlisted = uncalled). THE BUG: adding a test that
+  asserts an exact event count on the audit trail made the web pins fail on
+  3 of 4 full-suite runs. `recover_interrupted()` trimmed every recovered
+  session's file, and `trim_file` rewrites atomically (temp + RENAME), so the
+  path gets a NEW inode and every other writer's open handle is orphaned —
+  `writeln!` and `flush` both return Ok while the bytes land somewhere
+  unreachable. Recovery runs whenever a plugin REGISTRY is constructed, not
+  only at boot, so it could rename a file belonging to a session that was
+  LIVE at that moment and silently swallow its remaining audit events.
+  Measured, not reasoned: instrumenting the write showed the handle at 528
+  bytes while the path held 393 — same call, two files. Trim removed;
+  recovery still marks unpaired command/starts and seeds the seq counter, and
+  disk growth stays bounded via the write-time output cap, close_session's
+  trim and prune_stale. Suite 18s -> 3s. Pinned by
+  `recovery_does_not_orphan_a_live_writer` (restoring the trim makes it fail
+  with `Statuses seen: ["still going"]` — the event simply gone). Also caught
+  by measuring rather than remembering: the plan's claim count was written
+  with `--muted` on `--surface-chip`, the exact 4.40 pair fixed for the count
+  chips ONE ROUND EARLIER. Agent gates 12+12 suites, clippy both, fmt, xwin;
+  panel 305; gateway 34. Commits: e1270743, 63148791, 23f2edc8, 3747acec.
+  NOTE: one unrelated pre-existing flake remains,
+  `plugins::playwright::manager::manager_tests::status_tracks_fresh_external_and_released`
+  (~1 in 6 full runs) — not touched this round, left for its own.
+
+Previous round: 2026-09-11 game-design round 10 (real-panel audit). The
   game-design surface (goal / approval gate + grants / per-step intent /
   audit trail) is complete on the agent and panel sides; this round stopped
   adding features and audited what actually renders. New
