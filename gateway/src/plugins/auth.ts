@@ -743,7 +743,11 @@ export async function testKey(env: any, name: string, key: string): Promise<Resp
   } catch (e: any) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
   }
-  return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  // Reachable only for an allowlisted name with no probe arm (meTestKeys
+  // gates unknown names earlier): a distinct message so the drift reads as
+  // drift, not as a caller typo. Round-60: the probe-coverage gate fails
+  // first at test time; this is the runtime backstop.
+  return jsonError(400, `No probe for key name: ${name}`, "invalid_request");
 }
 
 export default {

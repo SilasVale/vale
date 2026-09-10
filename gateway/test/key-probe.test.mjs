@@ -2,8 +2,10 @@
 // additively; handlers untouched). The console's key-test buttons dial a
 // different upstream per provider; a wrong URL/auth mapping fails only
 // live. The keystone pin is COMPLETENESS: every USER_KEY_NAMES entry must
-// resolve to a Response (a 9th key added to the allowlist without a probe
-// arm would make testKey return undefined and crash the dispatch).
+// resolve to a real probe Response (Round-60 correction: the fallthrough
+// is a graceful 400 "No probe", not undefined — the COMPLETENESS test
+// locks the Response contract; the probe-coverage gate in health.test.mjs
+// is what fails first on drift).
 // Upstream traffic runs against the shared withFetch stub — zero network.
 import test from "node:test";
 import assert from "node:assert/strict";
