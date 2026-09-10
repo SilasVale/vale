@@ -133,5 +133,10 @@ Gateway +89 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 �
   unifying means migrating all agent call sites with device verification —
   needs product sign-off, never a silent program edit. Bitflags/cpufeatures
   transitive dupes likewise untouched (upstream-owned).
+- gmi retry asymmetry (R77 consolidation finding): chat/count arms retry gmi
+  bursts, messages-native does not (`gmiBursty: false` locks the current
+  table exactly). Burst-shedding is server behavior, not pricing — but
+  changing retries affects cost/latency, so the question stays OPEN for the
+  owner rather than being "fixed" by the program. See retryPolicyFor.
 - Panel-react, hardware-gated backends, Electron main: covered or
   deliberately untestable — see round notes, not revisit-worthy.
