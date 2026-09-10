@@ -256,6 +256,60 @@ pub(super) fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 
 // ── Execute ──────────────────────────────────────
 
+/// Session-mode result cap (1 MB tail). The old code grew `result` to the
+/// command's TOTAL output; `yes` at 1 MB/s for the 3600 s deadline OOM'd the
+/// agent (round-105). The tail is kept — it is what the model needs — and
+/// `truncated` tells the caller bytes were dropped.
+pub(super) const MAX_SESSION_BYTES: usize = 1_048_576;
+
+/// Append terminal output to a capped result buffer, keeping the TAIL.
+///
+/// This is the session wait loop's single choke point for result growth, and
+/// every rule in it exists because its absence wedged the session busy flag
+/// forever (the panic aborts the loop past `term_release_execute`):
+///
+/// * **Cap the incoming chunk itself** (round-113). A burst between two 50 ms
+///   polls can arrive as ONE chunk bigger than the cap. Trimming only on the
+///   *next* append let that chunk through in full.
+/// * **`floor_char_boundary` bounds the window, not the slice start.** After
+///   trimming `s` to `max`, `s.len() - keep` may land mid-character on a CJK
+///   or emoji flood — `&s[start..]` then PANICS (review #1, same class as the
+///   round-106 drain below). Walk forward to the next boundary.
+/// * **`String::drain` panics on a non-boundary too** (round-106). Output is
+///   lossy-converted arbitrary bytes, so walk the drop index BACK to a
+///   boundary before draining.
+///
+/// Walking back (rather than forward, as the slice start does) is deliberate:
+/// the drop index is clamped to `result.len()` and walking back can only
+/// shrink the drain, so the buffer never exceeds `max` by more than one
+/// character's worth of bytes.
+///
+/// Pure — no session, clock or buffer dependency — so all three incident
+/// rules are unit-pinned without a real shell.
+pub(super) fn bounded_append(result: &mut String, truncated: &mut bool, s: &str, max: usize) {
+    let mut s = s;
+    if s.len() > max {
+        *truncated = true;
+        let keep = s.floor_char_boundary(max);
+        let mut start = s.len() - keep;
+        while start < s.len() && !s.is_char_boundary(start) {
+            start += 1;
+        }
+        s = &s[start..];
+    }
+    if result.len() + s.len() > max {
+        *truncated = true;
+        let drop = result.len() + s.len() - max;
+        let drop = drop.min(result.len());
+        let mut bound = drop;
+        while bound > 0 && !result.is_char_boundary(bound) {
+            bound -= 1;
+        }
+        result.drain(..bound);
+    }
+    result.push_str(s);
+}
+
 /// Local shell mode with enforced timeout (tokio::process) — a separate
 /// module-level fn so the tool_execute closure stays a router between the
 /// session wait-loop and this path. Self-contained: spawn (own process
@@ -930,52 +984,9 @@ pub(super) fn tool_execute(
                     // quiet path. The marker_injected flag is no longer
                     // consulted — `wrap_shell` is the only driver.
                     let mut result = String::new();
-                    // round-105: cap the session-mode result like the local
-                    // mode (1 MB tail) — the old code grew to the command's
-                    // TOTAL output; `yes` at 1MB/s for the 3600s deadline
-                    // OOM'd the agent. The tail is kept (most useful to the
-                    // model); `truncated` is set so the caller knows.
-                    const MAX_SESSION_BYTES: usize = 1_048_576;
-                    let append_result = |result: &mut String, truncated: &mut bool, s: &str| {
-                        // round-113: a SINGLE chunk larger than the cap (a
-                        // burst between 50ms polls, up to the whole buffer)
-                        // used to bypass the guard — it was pushed in full
-                        // and only trimmed on the NEXT append. Trim `s`
-                        // itself first.
-                        let mut s = s;
-                        if s.len() > MAX_SESSION_BYTES {
-                            *truncated = true;
-                            let keep = s.floor_char_boundary(MAX_SESSION_BYTES);
-                            // floor bounds the WINDOW size, not the slice
-                            // start: s.len()-keep can land mid-char on a CJK
-                            // flood and PANIC inside the wait loop — past
-                            // term_release_execute, wedging the session busy
-                            // flag forever (review #1; same class as the
-                            // round-106 drain fix). Walk forward to safety.
-                            let mut start = s.len() - keep;
-                            while start < s.len() && !s.is_char_boundary(start) {
-                                start += 1;
-                            }
-                            s = &s[start..];
-                        }
-                        if result.len() + s.len() > MAX_SESSION_BYTES {
-                            *truncated = true;
-                            let drop = result.len() + s.len() - MAX_SESSION_BYTES;
-                            let drop = drop.min(result.len());
-                            // round-106: String::drain panics on a non-char
-                            // boundary — terminal output is arbitrary bytes
-                            // (lossy-converted), so a multi-byte flood
-                            // (CJK/emoji) panicked inside the wait loop and
-                            // wedged the session busy flag forever. Walk
-                            // back to a char boundary before draining.
-                            let mut bound = drop;
-                            while bound > 0 && !result.is_char_boundary(bound) {
-                                bound -= 1;
-                            }
-                            result.drain(..bound);
-                        }
-                        result.push_str(s);
-                    };
+                    // Result-cap rules (chunk trim + char-boundary safety)
+                    // live in bounded_append — every call site below passes
+                    // MAX_SESSION_BYTES.
                     // Marker scanner state: the wrapper's plain-text markers
                     // (`<marker>_S` / `<marker>_E:<code>`) may span chunks, so
                     // the un-finalized tail stays pending until it cannot be a
@@ -1040,7 +1051,7 @@ pub(super) fn tool_execute(
                                 // itself is invisible on the terminal).
                                 while let Some(f) = crate::tools::terminal::shell_integration::find_finished(&pending) {
                                     if f.end > 0 {
-                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..f.end]));
+                                        bounded_append(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..f.end]), MAX_SESSION_BYTES);
                                     }
                                     pending.drain(..f.end);
                                     marker_code = f.exit_code;
@@ -1052,7 +1063,7 @@ pub(super) fn tool_execute(
                                 // + quiet fallback.
                                 while let Some((start, end, code)) = find_prompt_marker(&pending) {
                                     if start > 0 {
-                                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..start]));
+                                        bounded_append(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..start]), MAX_SESSION_BYTES);
                                     }
                                     pending.drain(..end);
                                     marker_code = Some(code);
@@ -1069,7 +1080,7 @@ pub(super) fn tool_execute(
                             // lost, then append the rest.
                             let keep = pending.len().saturating_sub(64);
                             if keep > 0 {
-                                append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
+                                bounded_append(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]), MAX_SESSION_BYTES);
                                 pending.drain(..keep);
                             }
                             quiet_since = None;
@@ -1127,7 +1138,7 @@ pub(super) fn tool_execute(
                     // ENTIRE output; marker-less SSH/serial always).
                     if !pending.is_empty() {
                         let keep = pending.len();
-                        append_result(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]));
+                        bounded_append(&mut result, &mut truncated, &String::from_utf8_lossy(&pending[..keep]), MAX_SESSION_BYTES);
                         pending.clear();
                     }
                     // Audit trail: command ended, with the shell's exit code
@@ -1172,7 +1183,7 @@ pub(super) fn tool_execute(
 
 #[cfg(test)]
 mod tests {
-    use super::{find_prompt_marker, poll_output_chunk, tail_append};
+    use super::{bounded_append, find_prompt_marker, poll_output_chunk, tail_append};
     use crate::plugins::terminal::SessionBuf;
     use crate::plugins::terminal::SessionStore;
     use std::sync::{Arc, Mutex};
@@ -1328,5 +1339,112 @@ mod tests {
         let (s, e, code) = find_prompt_marker(data).unwrap();
         assert_eq!(code, 7);
         assert_eq!(&data[s..e], b"\x1b]133;D;7\x07");
+    }
+
+    // ── bounded_append (session-mode result cap) ─────────────
+    //
+    // Every assertion here corresponds to an incident that wedged the
+    // session busy flag forever, so each one is a regression gate, not a
+    // style preference.
+
+    #[test]
+    fn bounded_append_under_cap_is_a_plain_append() {
+        let mut out = String::from("head|");
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, "tail", 64);
+        assert_eq!(out, "head|tail");
+        assert!(!truncated, "no bytes were dropped");
+    }
+
+    #[test]
+    fn bounded_append_on_overflow_keeps_the_newest_bytes() {
+        // 10 + 6 = 16 against max=12 → drop exactly 4, so the buffer lands ON
+        // the cap: the oldest bytes go and the incoming tail is kept whole.
+        let mut out = String::from("aaaaaaaaaa"); // 10
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, "bbbbbb", 12);
+        assert!(truncated, "dropping bytes must be reported");
+        assert_eq!(out, "aaaaaabbbbbb", "the OLDEST bytes go, the tail stays");
+        assert_eq!(out.len(), 12, "the drain reclaims exactly the overflow");
+    }
+
+    #[test]
+    fn bounded_append_trims_an_oversized_single_chunk() {
+        // round-113: one burst between two 50ms polls can exceed the cap.
+        // Trimming only on the NEXT append let it through in full.
+        let mut out = String::new();
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, &"x".repeat(100), 10);
+        assert!(truncated);
+        assert_eq!(out.len(), 10, "the chunk itself is capped");
+        assert_eq!(out, "x".repeat(10));
+    }
+
+    #[test]
+    fn bounded_append_chunk_trim_never_slices_mid_character() {
+        // review #1: after floor_char_boundary(max), `s.len() - keep` can land
+        // mid-character; `&s[start..]` then panicked INSIDE the wait loop,
+        // past term_release_execute. "a汉" repeats to 16 bytes with boundaries
+        // at 0,1,4,5,8,9,12,13,16 — max=10 gives keep=9, start=7 (NOT a
+        // boundary), so the walk-forward is what prevents the panic.
+        let s = "a汉a汉a汉a汉";
+        assert_eq!(s.len(), 16);
+        assert!(
+            !s.is_char_boundary(7),
+            "the fixture must reproduce the hazard"
+        );
+        let mut out = String::new();
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, s, 10);
+        assert!(truncated);
+        assert!(
+            s.ends_with(&out),
+            "the kept window is a suffix of the chunk"
+        );
+        assert!(
+            out.is_char_boundary(out.len()),
+            "valid UTF-8, not a torn char"
+        );
+        assert_eq!(out, "a汉a汉");
+    }
+
+    #[test]
+    fn bounded_append_drain_never_cuts_mid_character() {
+        // round-106: String::drain panics on a non-boundary; output is
+        // lossy-converted arbitrary bytes, so a CJK flood panicked the loop.
+        // drop = 16 + 4 - 10 = 10, and 10 is NOT a boundary of the 16-byte
+        // buffer (boundaries 0,1,4,5,8,9,12,13,16) — the walk back to 9 is
+        // what prevents the panic.
+        let mut out = String::from("a汉a汉a汉a汉");
+        assert_eq!(out.len(), 16);
+        assert!(
+            !out.is_char_boundary(10),
+            "the fixture must reproduce the hazard"
+        );
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, "tail", 10);
+        assert!(truncated);
+        assert!(out.ends_with("tail"));
+        assert!(out.len() >= 4, "draining must not eat the whole buffer");
+    }
+
+    #[test]
+    fn bounded_append_drain_is_clamped_to_the_buffer() {
+        // The drop index is clamped to result.len(): an incoming chunk larger
+        // than `max` must not underflow or drain past the end.
+        let mut out = String::from("abc");
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, &"z".repeat(50), 4);
+        assert!(truncated);
+        assert_eq!(out, "zzzz", "old buffer dropped, cap respected");
+    }
+
+    #[test]
+    fn bounded_append_survives_an_exact_fit() {
+        let mut out = String::from("abcd");
+        let mut truncated = false;
+        bounded_append(&mut out, &mut truncated, "efgh", 8);
+        assert_eq!(out, "abcdefgh");
+        assert!(!truncated, "exactly max is not an overflow");
     }
 }

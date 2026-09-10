@@ -132,7 +132,7 @@ correctness is.
 | 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | `4648be01` |
 | 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | `28c7c71f` |
 | 99 | agent update | DRY/SRP/tests | update BUSY MARKER owned: the path was spelled out twice (a Rust PathBuf join in `agent_update` + two hand-written literals in the generated PowerShell swap script) and the acquire/reclaim decision sat inline in the 300-line handler closure with ZERO coverage despite three recorded incidents. Now `BUSY_MARKER_REL` → `busy_marker_path()` (acquirer) + `busy_marker_ps()` (swap script) from ONE definition, and the decision is `acquire_busy_marker(path, stale_after)` (atomic `create_new`; reclaim the stale marker at most once so a locked marker cannot spin). Mutation-proven: dropping the reclaim-once flag HANGS the suite (timeout exit 124), and changing either the relpath or the join shape fails the drift contract | +4 | `24341e1b` |
-
+| 100 | agent terminal exec | SRP/tests | session-mode result cap extracted from the `tool_execute` wait loop into pure `bounded_append(result, truncated, s, max)`: the closure carried THREE panic/wedge incidents (round-105 OOM, round-113 oversized-chunk bypass, round-106 + review-#1 char-boundary panics that abort the loop PAST `term_release_execute` and wedge the session busy flag forever) with ZERO coverage. Both walks mutation-proven: removing the chunk-trim walk-forward panics with `start byte index 7 is not a char boundary; it is inside '汉'`, removing the drain walk-back panics in `String::drain` | +7 | (this commit: the ledger row cannot name its own final hash) |
 > **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
 > after R97 (an R97 editing accident — R56 already has its row in sequence at
 > line 92) is removed. Also, the R97-recounted agent gate total (409) was
@@ -151,7 +151,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +94 · agent lib +30 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +37 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
@@ -189,3 +189,8 @@ Gateway +94 · agent lib +30 · core +7 · CLI +4 · relay +54 · extension +9 �
   `acquire_busy_marker`/`busy_marker_path`) rather than split the I/O.
   R99 harvested the update side's decision core; what remains there is the
   staging + swap-script body, which is Windows-only by construction.
+  R100 harvested `tool_execute`'s result-cap decision core (`bounded_append`);
+  what remains in that closure is the wait-loop state machine itself, whose
+  rules (eviction jump, idle-confirm scaling, settle-drain, marker scan) are
+  entangled with live session state and the 50 ms poll cadence — auditing
+  those needs a fake-clock harness, not more extraction.

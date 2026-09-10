@@ -338,7 +338,23 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R99 — the update BUSY MARKER is now
+Last updated: 2026-09-10 SOLID-R100 — the session-mode result cap is now a
+  pure, tested unit. `bounded_append(result, truncated, s, max)` was the
+  `append_result` closure inside the 622-line `tool_execute` wait loop, and it
+  carried THREE incidents with zero coverage: round-105 (uncapped result
+  growth OOM'd the agent on `yes`), round-113 (one oversized chunk bypassed
+  the cap until the next append), and two char-boundary panics (round-106
+  `String::drain`, review-#1 slice start) that abort the loop PAST
+  `term_release_execute` — wedging the session busy flag forever. Now pure and
+  unit-pinned by 7 tests; both boundary walks are mutation-proven (removing
+  the walk-forward panics `start byte index 7 is not a char boundary ... inside
+  '汉'`; removing the walk-back panics in `String::drain`). The wait-loop state
+  machine stays inline deliberately — its rules read live session state and
+  the 50 ms poll cadence. Agent gates 432 feat-gated / 424 default green,
+  clippy -D warnings clean both configs, fmt clean, xwin check OK.
+  Program ledger: docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R99 — the update BUSY MARKER is now
   one defined thing. Its path was spelled out twice (a Rust PathBuf join in
   `agent_update` + two hand-written string literals inside the generated
   PowerShell swap script), and the acquire/reclaim decision sat inline in the
