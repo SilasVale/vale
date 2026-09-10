@@ -889,8 +889,11 @@ const commands = {
         }
     },
     status() {
-        const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq vale-agent*"], {
-            shell: true,
+        // NOT via shell: `shell: true` concatenates argv into one cmd.exe string,
+        // so the unquoted filter "IMAGENAME eq …" was split at its spaces, tasklist
+        // rejected it, and this ALWAYS printed STOPPED even with the agent running.
+        // (IMAGENAME also takes no wildcard — the old `vale-agent*` never matched.)
+        const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq vale-agent.exe"], {
             encoding: "utf8",
         }).stdout || "";
         console.log(out.includes("vale-agent") ? "status: RUNNING" : "status: STOPPED");
@@ -1403,7 +1406,9 @@ const commands = {
                     console.log("  to enable public access: `vale tunnel install`");
                     return;
                 }
-                const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], { shell: true, encoding: "utf8" }).stdout || "";
+                // No shell:true — see status(): an unquoted filter through cmd.exe is
+                // split at its spaces, so this reported STOPPED while cloudflared ran.
+                const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], { encoding: "utf8" }).stdout || "";
                 console.log(out.toLowerCase().includes("cloudflared") ? "tunnel: RUNNING" : "tunnel: STOPPED");
                 console.log("  binary:", cf);
                 console.log("  config:", cfg);

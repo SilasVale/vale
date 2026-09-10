@@ -250,8 +250,14 @@ pub(crate) fn self_heal() {
             }
         }
     }
-    let cfg_str = install_dir
-        .join("config.yaml")
+    // Layout v2 (ADR 0008): the config lives in etc\ — never the install
+    // root. This used to be a hardcoded root join, so EVERY self-heal
+    // re-registered the boot task against <install>\config.yaml; the next
+    // boot then loaded — and, when absent, bootstrap CREATED — a phantom root
+    // config with a fresh token, the device self-registered a SECOND identity,
+    // and every subsequent register 409'd against its own console record.
+    // Path resolution goes through paths.rs, always.
+    let cfg_str = vale_agent::paths::config_file()
         .to_string_lossy()
         .into_owned();
 
@@ -466,10 +472,11 @@ fn run_service(_args: Vec<std::ffi::OsString>) {
         .nth(1)
         .map(PathBuf::from)
         .or_else(|| {
-            // Zero current_exe() guessing outside paths.rs — exe_dir() is the
-            // same resolution, centralized.
-            let dir = vale_agent::paths::exe_dir();
-            (!dir.as_os_str().is_empty()).then(|| dir.join("config.yaml"))
+            // Layout v2: fall back to the canonical etc\config.yaml — NOT the
+            // install root (a root join here is what produced the ADR 0008
+            // phantom config the self-heal path above used to create).
+            let cfg = vale_agent::paths::config_file();
+            (!cfg.as_os_str().is_empty()).then_some(cfg)
         })
         .unwrap_or_else(|| PathBuf::from("config.yaml"));
 
