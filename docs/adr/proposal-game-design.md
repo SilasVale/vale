@@ -70,30 +70,46 @@ both cases the reason was a conflation rather than a missing capability:
   `terminal_list` — a call every client already makes, carrying fields it already
   parses. No new tool, no protocol change, nothing asked of any client.
 
-The genuinely separate piece is the **intent layer**, and my previous note about
-it was wrong in the same way the dispatch note was. It said the intent layer
-"cannot be approximated agent-side, because the data does not exist until a client
-writes it". That is true of the DATA and false of the SURFACE — and I had used the
-first to justify not building the second. A willing client had nowhere to put its
-reasoning.
+The **intent layer** is now built, in both its halves, and the way it got built is
+worth recording because the same misreading blocked it twice.
 
-So the surface now exists: `terminal_execute` takes optional `intent` (why this
-command) and `considered` (the alternatives), both recorded on the command's audit
-event, shown on the path, and carried into saved recipes.
+The first note here said the intent layer "cannot be approximated agent-side,
+because the data does not exist until a client writes it". True of the DATA, false
+of the SURFACE — and the first was used to justify not building the second. So a
+willing client had nowhere to put its reasoning. That produced the per-step half:
 
-What remains is genuinely different in kind, and is now stated so it cannot be
-confused with the above: an AI's own PLAN — the sequence of steps and its
-reasoning about the sequence — as opposed to per-step reasoning supplied at the
-moment each step runs. The path shows what happened, what it was for, and (when
-the client says) why each step and what it passed over. It does not yet show the
-plan as a plan.
+  * `terminal_execute` takes `intent` (why this command) and `considered` (the
+    alternatives passed over), recorded on the command's audit event, shown on the
+    path, and carried into saved recipes.
+
+The second half — the PLAN as a plan — is now built too:
+
+  * `terminal_plan` lets the agent declare the steps it intends to take, in order,
+    and revise or clear them. `terminal_execute`'s `plan_step` names which step a
+    command advances. The path renders the plan with the number of commands that
+    served each step, so an unclaimed step shows as a run departing from what was
+    announced.
+
+WHO DECLARES WHICH is the distinction the whole thing rests on: the GOAL is the
+operator's (a control route), the PLAN is the agent's (a tool). A pin asserts the
+control route REJECTS `plan`, so a later refactor that merges the two surfaces
+"for convenience" fails loudly rather than quietly destroying the comparison
+between what was asked for and what was intended.
+
+So the three layers of §2.1's diagram now all exist, and the honest statement of
+the remaining limit is much narrower than it was: the plan is a SEQUENCE the agent
+declares, not a tree of alternatives it explored. A reader sees which steps were
+planned and which commands served them; they do not see the agent weighing two
+courses and choosing one — that would need per-step branching, and `considered`
+only records it for the commands that ran.
 
 ### 2.1 The structural gap the loop exposes
 
 ```
-what the operator means      GOAL      "get this ONU provisioned"   <- now STORED
-what the AI decides          PLAN      per-step: <- now STORED (intent/considered)
-                                       as a plan: <- still NOWHERE
+what the operator means      GOAL      "get this ONU provisioned"   <- STORED
+what the AI decides          PLAN      declared sequence            <- STORED
+                                       per-step intent + rejected   <- STORED
+                                       branches considered          <- STORED
 what Vale records            TOOL CALL 49 primitives, all of them
 ```
 
@@ -103,13 +119,16 @@ summary from the audit trail; and a recipe saves a walked path for reuse. What i
 still missing is the middle row — the AI's own PLAN — which is the intent layer
 and cannot be approximated agent-side.
 
-**That middle row is what "the path" was always pointing at**, and the honest
-statement of where it stands is now: the path view shows what HAPPENED, what it was
-FOR, and — when the client sends one — WHY each step and what it passed over. What
-it still cannot show is the plan AS a plan: the intended sequence, and the agent's
-reasoning about the sequence rather than about one step. E2's observation still
-holds — `terminal_jobs` proves the job shape is buildable — but a plan is not a
-shape problem; it is data only a client can supply.
+**All three rows now exist**, which is what "the path" was always pointing at. A
+reader of a finished session sees what HAPPENED (the commands and their states),
+what it was FOR (the operator's goal), what was INTENDED (the agent's plan), why
+each step (its intent), and what was passed over (the alternatives) — plus which
+planned steps nobody carried out.
+
+What is still absent is narrower than a whole layer: the plan is a SEQUENCE, not a
+TREE. The agent declares the steps it will take; it does not record weighing two
+courses and choosing one. `considered` covers that at the level of commands that
+ran, not of steps that were never attempted.
 
 ## 2.2 What running it for real found that the tests did not
 
