@@ -4,7 +4,8 @@
  * round-340 — the extension's browser-control half was deleted round-262;
  * what remains is the tokenless code-server link rewriter in extension/.)
  *
- * Extracted VERBATIM from gateway/src/index.js (handleConsole) — the bodies
+ * Extracted VERBATIM from the gateway front door (gateway/src/index.ts;
+ * index.js at extraction time) via handleConsole — the bodies
  * of every handler and helper below are byte-for-byte the inline blocks that
  * used to live in the dispatcher, including their comments. Zero logic
  * change: each handler re-derives path/method from (request, env, url) and
