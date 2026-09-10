@@ -338,7 +338,29 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R110 — the BOOT PATH's "never fatal"
+Last updated: 2026-09-10 SOLID-R111 — append-only JSONL hygiene has one
+  owner. Found with a normalized 5-line cross-file clone detector rather than
+  by reading files one at a time: the crash-safety rules for append-only
+  line-oriented files were duplicated in `session_log.rs` and
+  `plugins/memory/store.rs`, and — the tell — BOTH sites documented the same
+  incident in prose: an empty file needs a version header, and a crash
+  mid-`writeln` leaves a fragment without its trailing newline that the next
+  append FUSES onto. In the audit trail the fused pair once swallowed the
+  "interrupted" recovery marker, so a command that crashed read back as
+  FINISHED. Now `src/jsonl.rs` (`prepare_append`, `has_torn_tail`). Two
+  things stay caller-owned on purpose: the header payload (uuid+createdAt for
+  a session, type+version for the memory store) and the OPEN HANDLE — an
+  append-mode file cannot be read back, so each caller opens its own way
+  (one wraps it in a BufWriter, one writes through the File) and passes it in.
+  Mutation-proven: dropping the repair from the shared unit fails the new
+  tests AND both consumers' pre-existing incident pins
+  (`append_repairs_a_torn_final_line`, `torn_final_fragment_is_repaired_before_next_append`),
+  which is what makes this a real consolidation rather than a hopeful one.
+  Agent gates 472 feat-gated / 465 default green, clippy -D warnings clean
+  both configs, fmt clean, xwin check OK. Program ledger:
+  docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R110 — the BOOT PATH's "never fatal"
   promise is now a gate, not prose. `migrate_layout_v2()` runs FIRST in
   `main()`, BEFORE tracing is initialised — so a panic there is a device that
   never starts and leaves NO log at all (the 1.2.223 dark-device class). It

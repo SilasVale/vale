@@ -249,34 +249,14 @@ impl MemoryStore {
             Ok(f) => f,
             Err(_) => return,
         };
-        let len = f.metadata().map(|m| m.len()).unwrap_or(0);
-        if len == 0 {
-            // Fresh (empty) file: version header first.
-            let _ = writeln!(
-                f,
-                "{}",
-                serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION })
-            );
-        } else {
-            // Torn-write guard: a crash mid-writeln can leave a fragment
-            // without the trailing newline; the NEXT append would fuse onto it
-            // and silently destroy that record on every future load. Detect
-            // the missing terminator and start a fresh line.
-            use std::io::{Read, Seek, SeekFrom};
-            let tail_bad = std::fs::OpenOptions::new()
-                .read(true)
-                .open(&path)
-                .and_then(|mut r| {
-                    r.seek(SeekFrom::End(-1))?;
-                    let mut b = [0u8; 1];
-                    r.read_exact(&mut b)?;
-                    Ok(b[0] != b'\n')
-                })
-                .unwrap_or(false);
-            if tail_bad {
-                let _ = f.write_all(b"\n");
-            }
-        }
+        // Crash-safety rules (version header on a fresh file, torn-final-line
+        // repair) are owned by crate::jsonl — see its header for the
+        // fused-record incident that motivated them.
+        let _ = crate::jsonl::prepare_append(
+            &mut f,
+            &path,
+            &serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION }),
+        );
         let _ = writeln!(f, "{line}");
     }
 

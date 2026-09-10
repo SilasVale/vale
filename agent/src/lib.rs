@@ -85,6 +85,9 @@ pub mod tunnel_ctl {
 /// all live in this crate.
 pub(crate) mod evidence;
 pub mod filelog;
+/// Internal-only (no embedding consumer): append-only JSONL hygiene shared by
+/// the audit trail and the memory store (SOLID R111).
+pub(crate) mod jsonl;
 pub mod mcp;
 pub mod metrics;
 pub mod paths;

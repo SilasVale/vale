@@ -272,53 +272,23 @@ impl SessionLogger {
                 .append(true)
                 .open(&path)
             {
-                Ok(file) => {
-                    // audit round: a crash mid-writeln can leave a fragment
-                    // WITHOUT the trailing newline (lines past the 8 KiB
-                    // BufWriter split their physical writes). The next append
-                    // FUSES onto it — both events become unparseable, and the
-                    // fused pair once swallowed the "interrupted" recovery
-                    // marker (crashed command looked FINISHED). Terminate the
-                    // fragment before appending anything.
-                    let tail_bad = file
-                        .metadata()
-                        .ok()
-                        .filter(|m| m.len() > 0)
-                        .and_then(|_m| {
-                            use std::io::{Read, Seek, SeekFrom};
-                            std::fs::OpenOptions::new()
-                                .read(true)
-                                .open(&path)
-                                .and_then(|mut r| {
-                                    r.seek(SeekFrom::End(-1))?;
-                                    let mut b = [0u8; 1];
-                                    r.read_exact(&mut b)?;
-                                    Ok(b[0] != b'\n')
-                                })
-                                .ok()
-                        })
-                        .unwrap_or(false);
-                    let mut w = std::io::BufWriter::new(file);
-                    if tail_bad {
-                        let _ = w.write_all(b"\n");
-                    }
-                    // New file → write the version header FIRST (round-56).
-                    if w.get_ref()
-                        .metadata()
-                        .map(|m| m.len() == 0)
-                        .unwrap_or(false)
-                    {
-                        let _ = writeln!(
-                            w,
-                            "{}",
-                            serde_json::json!({
-                                "type": "session", "version": 1, "id": sid,
-                                "createdAt": std::time::SystemTime::now()
-                                    .duration_since(std::time::UNIX_EPOCH)
-                                    .map(|d| d.as_secs()).unwrap_or(0),
-                            })
-                        );
-                    }
+                Ok(mut file) => {
+                    // Crash-safety rules (torn final line + version header on a
+                    // fresh file) are owned by crate::jsonl — see its header
+                    // for the fused-record incident that motivated them.
+                    // Prepared on the raw File BEFORE the BufWriter wraps it, so
+                    // nothing is buffered yet.
+                    let _ = crate::jsonl::prepare_append(
+                        &mut file,
+                        &path,
+                        &serde_json::json!({
+                            "type": "session", "version": 1, "id": sid,
+                            "createdAt": std::time::SystemTime::now()
+                                .duration_since(std::time::UNIX_EPOCH)
+                                .map(|d| d.as_secs()).unwrap_or(0),
+                        }),
+                    );
+                    let w = std::io::BufWriter::new(file);
                     f.insert(sid.to_string(), w);
                 }
                 Err(_) => {
