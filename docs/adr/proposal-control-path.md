@@ -146,6 +146,21 @@ returns later queries path state and receives the decision.
 This is the floor for "掌握": **the operator is never blocked by the AI's
 absence.**
 
+**PARTLY BUILT.** The durability half shipped: every handoff is appended to the
+session's audit trail as a `control` event (`status: "human" | "ai"`), so the
+decision survives the request that made it and a later reader — human or AI —
+can see it. What is NOT built is the half this section's second sentence
+describes: the AI does not QUERY path state for a decision. It learns of a hold
+by being refused, which is sufficient while the hold is live and useless once it
+is not (a hold is released on agent restart by design, so an AI returning after
+a crash sees the audit event and the in-memory state disagree).
+
+Note the deliberate asymmetry, because it looks like an inconsistency: the AUDIT
+EVENT is durable while the HOLD is not. That is the safe pairing. A durable hold
+would survive a crash and leave a device nobody can drive; a non-durable record
+would erase the fact that a person intervened, which is the thing an audit trail
+exists to keep.
+
 ### D5 — `human_in_control` is its own error code
 
 When the operator holds the keyboard, an AI attempt must be rejected with a

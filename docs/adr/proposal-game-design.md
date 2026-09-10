@@ -50,7 +50,7 @@ re-litigated.
 | 1 **Dispatch** | accept a quest | the operator states a goal | **MISSING** — E1: no goal-level tool exists |
 | 2 **Advance** | the character walks | `terminal_execute` bounded wait + `run_in_background` | **DONE** |
 | 3 **Gate** | choose at a fork | pause at a capability boundary for approval | **MISSING** — see `proposal-control-path.md` |
-| 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots | **DONE** |
+| 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots; the audit trail also records **who was driving** (`control` events), so a reader can tell an AI-driven window from a human-driven one | **DONE** (`4fabdacd`, surfaced in the path view by `807567cc`) |
 | 5 **Take over** | grab the controller | an explicit hold: the AI is refused with `human_in_control` while a person owns the session, and hands back on request | **DONE** — the hold is real, visible in `terminal_list`, and one click in both densities (`fd1013c0`, `f0f06fa8`) |
 | 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
