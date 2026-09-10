@@ -21,11 +21,6 @@
   const resolvedCache = new Map();
   const RX_TTL_MS = 5 * 60 * 1000;
 
-  // A trailing :NN line number is part of the match (split off by the
-  // caller into bare + lineNo for the tooltip).
-  const PATH_RX =
-    /(?:(?:\/[A-Za-z0-9_.~-]+)+|(?:[A-Za-z0-9_.~-]+\/)+[A-Za-z0-9_.-]+|[A-Za-z0-9_.-]+\.(?:tsx?|mjs|cjs|jsx|rs|c|h|cpp|hpp|json|ya?ml|toml|md|sh|py|css|scss|html|sql|ini|conf|lock))(?::\d+)?/g;
-
   async function loadCfg() {
     try {
       const st = await chrome.storage.local.get(["studioOrigin", "studioLinksEnabled"]);
@@ -38,21 +33,15 @@
   }
 
   /** Resolve a raw path mention to a folder URL under the workspace base.
-   *  Absolute paths map directly; relative paths are joined onto the base.
-   *  Best-effort by design: code-server opens the folder even when a file
-   *  in the mention does not exist. */
+   *  Cache wrapper around the shared pure resolveDir (SOLID Round-96) —
+   *  cache lifetime belongs to the page, the mapping is pinned in
+   *  shared.js. Absolute paths map directly; relative paths are joined
+   *  onto the base. Best-effort by design: code-server opens the folder
+   *  even when a file in the mention does not exist. */
   function resolve(raw) {
     const hit = resolvedCache.get(raw);
     if (hit && Date.now() - hit.at < RX_TTL_MS) return hit.dir;
-    let dir;
-    if (raw.startsWith("/")) {
-      dir = raw.includes(".") && !raw.endsWith("/") ? raw.slice(0, raw.lastIndexOf("/")) : raw;
-    } else {
-      const base = "/home/zhengsaisi";
-      dir = `${base}/${raw.replace(/\/+$/, "")}`;
-      if (/\.[A-Za-z0-9]+$/.test(dir)) dir = dir.slice(0, dir.lastIndexOf("/"));
-    }
-    dir = dir.replace(/\/+$/, "") || "/";
+    const dir = resolveDir(raw);
     resolvedCache.set(raw, { dir, at: Date.now() });
     if (resolvedCache.size > 500) {
       const cutoff = Date.now() - RX_TTL_MS;
@@ -62,9 +51,8 @@
   }
 
   function deepUrl(dir, line) {
-    // code-server opens folders: /?folder=<abs>. The line number cannot be
-    // addressed via URL (VS Code web limitation) — it rides in the tooltip.
-    return `${cfg.origin}/?folder=${encodeURIComponent(dir)}`;
+    // Shared (SOLID Round-96): the line rides in the tooltip, not the URL.
+    return studioFolderUrl(cfg.origin, dir);
   }
 
   function makeLink(text, dir, line) {
@@ -100,17 +88,8 @@
 
     for (const node of targets) {
       const text = node.nodeValue;
-      PATH_RX.lastIndex = 0;
-      const jobs = [];
-      let m;
-      while ((m = PATH_RX.exec(text))) {
-        const raw = m[0];
-        if (raw.length < 4) continue;
-        if (!raw.includes("/") && !raw.slice(1).includes(".")) continue;
-        const cm = raw.match(/:(\d+)$/);
-        const bare = cm ? raw.slice(0, raw.length - cm[0].length) : raw;
-        jobs.push({ raw, bare, lineNo: cm ? Number(cm[1]) : 0, index: m.index });
-      }
+      // Shared matcher (SOLID Round-96): match → {raw, bare, lineNo, index}.
+      const jobs = extractPathJobs(text);
       if (!jobs.length) {
         node.parentElement?.setAttribute("data-vs-processed", "1");
         continue;
