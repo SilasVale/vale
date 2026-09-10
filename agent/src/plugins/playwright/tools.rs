@@ -203,9 +203,7 @@ fn tool_browser_run_script() -> ToolDef {
                 };
                 let trunc = |s: String| {
                     if s.len() <= 131072 { return s; }
-                    let mut end = 131072;
-                    while !s.is_char_boundary(end) { end -= 1; }
-                    format!("{}…[truncated]", &s[..end])
+                    format!("{}…[truncated]", crate::text::clip(&s, 131072))
                 };
                 let after: Vec<String> = std::fs::read_dir(&out_dir)
                     .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".png") && !before.contains(&e.file_name().to_string_lossy().to_string())).map(|e| e.file_name().to_string_lossy().to_string()).collect())

@@ -253,8 +253,7 @@ pub(super) fn tool_diag_write(diag: &DiagStore) -> ToolDef {
                 // body limit × 200 ring entries = 200MB retained. Cap a
                 // line — at a CHAR boundary (the R110 &line[..4096] panicked
                 // when byte 4096 fell mid-UTF-8, the R106-H1 class).
-                let bound = line.floor_char_boundary(4096);
-                let capped = if line.len() > bound { &line[..bound] } else { &line };
+                let capped = crate::text::clip(&line, 4096);
                 let mut d = recover_guard(&diag);
                 d.push(format!("{} {capped}", chrono_timestamp()));
                 Ok(json!("ok"))

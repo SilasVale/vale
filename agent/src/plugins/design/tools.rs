@@ -219,11 +219,7 @@ pub fn page_view(console_url: Option<String>, download_url: Option<String>) -> T
                 // char-boundary-safe truncation: slicing a String at a fixed byte
                 // index PANICS when it lands inside a multi-byte UTF-8 char.
                 let text = if truncated {
-                    let mut end = MAX_PAGE_BYTES;
-                    while end > 0 && !redacted.is_char_boundary(end) {
-                        end -= 1;
-                    }
-                    &redacted[..end]
+                    crate::text::clip(&redacted, MAX_PAGE_BYTES)
                 } else {
                     &redacted[..]
                 };

@@ -253,7 +253,7 @@ async fn rpc_ref_http(
             // mid-call. (SESSION is a TOKIO mutex — no poisoning; the guard
             // simply drops on unwind — but the panic still killed the tool
             // call.) Boundary-safe now.
-            &text[..text.floor_char_boundary(text.len().min(80))]
+            crate::text::clip(&text, 80)
         ));
     }
     if !status.is_success() {
@@ -344,11 +344,12 @@ fn check_envelope(v: Value, id: Option<u64>) -> Result<Value, DeviceError> {
 }
 
 fn truncate(s: &str, n: usize) -> String {
-    // char-boundary-safe (remote payloads slice here too — audit HIGH #1)
+    // char-boundary-safe (remote payloads slice here too — audit HIGH #1).
+    // The boundary decision lives in crate::text (SOLID R105).
     if s.len() <= n {
         s.to_string()
     } else {
-        format!("{}…", &s[..s.floor_char_boundary(n)])
+        format!("{}…", crate::text::clip(s, n))
     }
 }
 
@@ -580,11 +581,7 @@ fn mcp_action_summary(tool: &str, args: &serde_json::Value) -> String {
         .unwrap_or_default();
     let s = format!("{tool} {a}");
     if s.len() > 200 {
-        let mut e = 200;
-        while e > 0 && !s.is_char_boundary(e) {
-            e -= 1;
-        }
-        format!("{}…", &s[..e])
+        format!("{}…", crate::text::clip(&s, 200))
     } else {
         s
     }

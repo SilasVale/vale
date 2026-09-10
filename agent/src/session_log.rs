@@ -412,7 +412,7 @@ impl SessionLogger {
         // forever (trim counts LINES) and forced a multi-MB read_line at
         // close. Cap identically (char-boundary-safe).
         let command = if command.len() > 4096 {
-            let cut = command.floor_char_boundary(4096);
+            let cut = crate::text::boundary_at_or_below(command, 4096);
             format!(
                 "{}…[truncated {} bytes]",
                 &command[..cut],
@@ -432,7 +432,7 @@ impl SessionLogger {
         // 4096 via U+FFFD replacement chars) — the panic killed the drainer
         // and wedged the session. floor_char_boundary keeps the slice valid.
         let text = if text.len() > 4096 {
-            let cut = text.floor_char_boundary(4096);
+            let cut = crate::text::boundary_at_or_below(&text, 4096);
             format!("{}…[truncated {} bytes]", &text[..cut], text.len() - cut)
         } else {
             text

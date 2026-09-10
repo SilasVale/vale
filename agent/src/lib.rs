@@ -91,6 +91,9 @@ pub mod paths;
 pub mod plugins;
 pub mod session_log;
 pub mod state;
+/// Internal-only (no embedding consumer): byte-budget text clipping, shared by
+/// the plugins + the audit trail (SOLID R105).
+pub(crate) mod text;
 pub mod tools;
 pub mod tunnel;
 pub mod web;

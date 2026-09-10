@@ -714,8 +714,9 @@ fn truncate_utf8(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
-    let cut = s.floor_char_boundary(max);
-    format!("{}…", &s[..cut])
+    // Boundary decision owned by crate::text (SOLID R105); the "…" marker is
+    // this caller's wording.
+    format!("{}…", crate::text::clip(s, max))
 }
 
 #[cfg(test)]

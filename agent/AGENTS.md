@@ -338,7 +338,26 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R104 — the settings request bodies have an
+Last updated: 2026-09-10 SOLID-R105 — byte-budget text clipping has an
+  owner. "Cut this string to at most N bytes, on a UTF-8 char boundary" was
+  written out at EIGHT sites across SIX files (mcp_client ×3, session_log ×2,
+  output, playwright, design, plus memory's private helper) in two different
+  idioms — some `floor_char_boundary`, some hand-rolled
+  `while !s.is_char_boundary(end) { end -= 1 }`. The crate has paid for the
+  naive version at least three times: round-68 (`&text[..4096]` panicked the
+  drainer and WEDGED THE SESSION), rounds 110/111 (same class in the diag
+  writer), and an audit-HIGH slice of a REMOTE-controlled response body at
+  byte 80. Now `src/text.rs` owns it: `boundary_at_or_below` (the index, for
+  callers that report how many bytes they dropped) and `clip` (the borrowed
+  slice). The truncation SUFFIX stays per-caller deliberately — `…` for
+  model-facing output, `…[truncated N bytes]` for the audit trail. +5 pins,
+  mutation-proven: replacing clip with a naive `&s[..max]` panics with
+  "end byte index 1 is not a char boundary; it is inside '汉'". Agent gates
+  453 feat-gated / 446 default green, clippy -D warnings clean both configs,
+  fmt clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R104 — the settings request bodies have an
   owner. `PUT /api/settings` and `POST /api/gateway/connect` had each grown
   their own copy of two concerns that belonged to nobody: the eight-line 400
   `invalid_params` envelope (built inline twice) and "an optional string
