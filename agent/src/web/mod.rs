@@ -822,21 +822,41 @@ async fn api_session_approval(
     let approve = parse::optional_bool(&v, "approve").ok_or_else(|| {
         parse::invalid_params_response("approve is required (true or false)".to_string())
     })?;
+    // "and remember this one". Deliberately a BOOLEAN and not a prefix: the
+    // prefix is derived server-side from the command the operator was SHOWN (see
+    // `term_decide_approval`), so a client cannot widen its own permissions — the
+    // most it can do is ask to remember what was already on screen. Absent means
+    // "no grant", the conservative default for a request that did not mention it.
+    let grant = parse::optional_bool(&v, "grant").unwrap_or(false);
 
     let decided = state
         .terminal_mgr
-        .term_decide_approval(sid, &id, approve)
+        .term_decide_approval(sid, &id, approve, grant)
         .await
         .map_err(|e| {
             // A missing session is a client error: the panel can hold a stale sid.
             parse::invalid_params_response(e.to_string())
         })?;
 
+    // Report the grants now in force, so the panel renders them from the
+    // decision's own response rather than waiting for its next poll — a grant the
+    // operator cannot see immediately is one they cannot judge.
+    let grants = state
+        .terminal_mgr
+        .term_approval_grants(sid)
+        .await
+        .unwrap_or_default();
+
     // `decided: false` is NOT an error at the HTTP level — the session exists and
     // the request was well formed, there was simply nothing waiting. The caller
     // distinguishes it, because "someone already answered" and "it timed out" are
     // both things the operator should be told rather than shown a success.
-    Ok(serde_json::json!({ "ok": true, "id": sid, "decided": decided }))
+    Ok(serde_json::json!({
+        "ok": true,
+        "id": sid,
+        "decided": decided,
+        "approval_grants": grants,
+    }))
 }
 
 /// Extract and validate a session id from `/api/sessions/{sid}[...]`.

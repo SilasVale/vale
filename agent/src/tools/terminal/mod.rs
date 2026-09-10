@@ -12,6 +12,18 @@
 //! one session's SSH handshake never blocks another session's write/resize.
 
 mod secrets;
+// Approval GRANTS: pure functions (no backend deps), so they compile in BOTH
+// feature configs and are testable without a PTY — which is deliberate, because
+// the grant rule is the safety-critical part of the approval gate (see its
+// header) and its tests should not depend on a real terminal existing.
+//
+// The `allow(dead_code)` is for the HEADLESS config only: the sole caller is the
+// real manager in `desktop_impl`, so under the stub the functions have no
+// non-test consumer. Gating the module instead would have been the tidier-looking
+// choice and would have silently dropped these tests from the default gate —
+// the wrong trade for the code that decides what runs unasked.
+#[cfg_attr(not(feature = "terminal"), allow(dead_code))]
+pub(crate) mod approval;
 // stage-m: OSC 633 parsing is pure byte-scanning — no backend deps, so it
 // compiles in BOTH feature configs. terminal_execute's session path
 // references it unconditionally (the feature gate lives in the backends,
@@ -69,6 +81,11 @@ pub struct TermSessionInfo {
     /// blocked.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub pending_approval: Option<PendingApprovalInfo>,
+    /// First words the operator has allowed for this session (see `approval.rs`).
+    /// Exposed so the panel can LIST them: a grant the operator cannot see is one
+    /// they cannot judge or revoke, and these decide what runs unasked.
+    #[serde(default)]
+    pub approval_grants: Vec<String>,
 }
 
 /// A command waiting for an operator decision. `expires_in_ms` is derived at read
@@ -357,6 +374,10 @@ mod desktop_impl {
         approval_required: bool,
         /// The in-flight request, if an execute is currently blocked on one.
         pending_approval: Option<PendingApproval>,
+        /// First words allowed without asking, each derived from a command the
+        /// operator actually read and approved. In-memory, like the hold: a
+        /// restart must not carry forward a permission nobody re-confirmed.
+        approval_grants: Vec<String>,
     }
 
     /// Identifier for one approval request. Unpredictable rather than sequential on
@@ -655,6 +676,7 @@ mod desktop_impl {
                     held_by_human: false,
                     approval_required: false,
                     pending_approval: None,
+                    approval_grants: Vec::new(),
                 });
                 deferred
             };
@@ -908,6 +930,11 @@ mod desktop_impl {
                                 p.decided = Some(false);
                             }
                         }
+                        // Grants DIE with the mode. Leaving them would mean a
+                        // later re-arm inherits permissions the operator granted
+                        // in a context they have since left — and the whole point
+                        // of arming is that it is a deliberate act.
+                        s.approval_grants.clear();
                     }
                     Ok(s.approval_required)
                 }
@@ -972,16 +999,71 @@ mod desktop_impl {
             sid: &str,
             id: &str,
             approve: bool,
+            grant: bool,
         ) -> Result<bool, DeviceError> {
             let mut inner = self.inner.lock().await;
             match inner.sessions.iter_mut().find(|s| s.id == sid) {
-                Some(s) => match s.pending_approval.as_mut() {
-                    Some(p) if p.id == id && p.decided.is_none() => {
-                        p.decided = Some(approve);
-                        Ok(true)
+                Some(s) => {
+                    // The grant is derived HERE, from the command the operator
+                    // was SHOWN — never from a value the caller supplied. A
+                    // client therefore cannot widen its own permissions: the
+                    // most it can do is say "and remember this", and the
+                    // remembered thing is whatever was on screen.
+                    let derived = if approve && grant {
+                        s.pending_approval
+                            .as_ref()
+                            .filter(|p| p.id == id && p.decided.is_none())
+                            .and_then(|p| approval::grant_for(&p.command))
+                    } else {
+                        None
+                    };
+                    if let Some(g) = derived {
+                        if !s.approval_grants.iter().any(|x| x == &g) {
+                            s.approval_grants.push(g);
+                        }
                     }
-                    _ => Ok(false),
-                },
+                    match s.pending_approval.as_mut() {
+                        Some(p) if p.id == id && p.decided.is_none() => {
+                            p.decided = Some(approve);
+                            Ok(true)
+                        }
+                        _ => Ok(false),
+                    }
+                }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// First words currently allowed without asking, for this session.
+        pub async fn term_approval_grants(&self, sid: &str) -> Result<Vec<String>, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.approval_grants.clone()),
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Revoke one grant, or all of them (`grant == None`). Returns how many
+        /// were removed, so a caller can tell "revoked" from "there was nothing".
+        pub async fn term_revoke_grants(
+            &self,
+            sid: &str,
+            grant: Option<&str>,
+        ) -> Result<usize, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    let before = s.approval_grants.len();
+                    match grant {
+                        Some(g) => s.approval_grants.retain(|x| x != g),
+                        None => s.approval_grants.clear(),
+                    }
+                    Ok(before - s.approval_grants.len())
+                }
                 None => Err(DeviceError::SessionNotFound {
                     id: sid.to_string(),
                 }),
@@ -1008,6 +1090,17 @@ mod desktop_impl {
             {
                 let mut inner = self.inner.lock().await;
                 match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                    // A GRANTED command never becomes a request. Skipping the
+                    // registration (rather than registering and immediately
+                    // deciding) is what keeps the panel from flickering a prompt
+                    // for something already allowed.
+                    Some(s)
+                        if s.approval_grants
+                            .iter()
+                            .any(|g| approval::grant_matches(g, command)) =>
+                    {
+                        return Ok(true);
+                    }
                     Some(s) => {
                         // At most one request per session: the execute lock
                         // already serialises executes, so a second registration
@@ -1143,6 +1236,7 @@ mod desktop_impl {
                     held_by_human: s.held_by_human,
                     approval_required: s.approval_required,
                     pending_approval: live_pending(s),
+                    approval_grants: s.approval_grants.clone(),
                 })
                 .collect()
         }
@@ -1165,6 +1259,7 @@ mod desktop_impl {
                     held_by_human: s.held_by_human,
                     approval_required: s.approval_required,
                     pending_approval: live_pending(s),
+                    approval_grants: s.approval_grants.clone(),
                 })
         }
 
@@ -1440,6 +1535,25 @@ mod tests {
         .0
     }
 
+    /// Wait (bounded) for an approval request to appear, then return it.
+    ///
+    /// BOTH properties matter. Bounded: the registration happens on a SPAWNED
+    /// task, so a bare `loop {}` here would hang the suite forever if a
+    /// regression stopped registering — a timeout fails loudly instead. And it
+    /// must WAIT at all: checking `term_pending_approval` straight after
+    /// `tokio::spawn` is a race, and three of these tests failed on exactly that
+    /// before this helper existed.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    async fn wait_pending(mgr: &std::sync::Arc<TerminalManager>, sid: &str) -> PendingApprovalInfo {
+        for _ in 0..250 {
+            if let Some(p) = mgr.term_pending_approval(sid).await.unwrap() {
+                return p;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
+        panic!("no approval request appeared within 5s — the gate did not register one");
+    }
+
     #[cfg(all(feature = "terminal", not(target_os = "windows")))]
     fn control_mgr() -> std::sync::Arc<TerminalManager> {
         std::sync::Arc::new(TerminalManager::new(std::sync::Arc::new(
@@ -1618,13 +1732,11 @@ mod tests {
                     .await
             });
             // Wait for the request to appear, then decide it.
-            let id = loop {
-                if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
-                    break p.id;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            };
-            assert!(mgr.term_decide_approval(&sid, &id, true).await.unwrap());
+            let id = wait_pending(&mgr, &sid).await.id;
+            assert!(mgr
+                .term_decide_approval(&sid, &id, true, false)
+                .await
+                .unwrap());
             assert!(
                 waiter.await.unwrap().unwrap(),
                 "an approved command proceeds"
@@ -1637,13 +1749,11 @@ mod tests {
             let sid2 = sid.clone();
             let waiter =
                 tokio::spawn(async move { mgr2.term_await_approval(&sid2, "save", 5_000).await });
-            let id = loop {
-                if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
-                    break p.id;
-                }
-                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-            };
-            assert!(mgr.term_decide_approval(&sid, &id, false).await.unwrap());
+            let id = wait_pending(&mgr, &sid).await.id;
+            assert!(mgr
+                .term_decide_approval(&sid, &id, false, false)
+                .await
+                .unwrap());
             let err = waiter.await.unwrap().unwrap_err();
             assert_eq!(
                 err.code(),
@@ -1684,7 +1794,9 @@ mod tests {
         assert!(mgr.term_info(&sid).await.unwrap().approval_required);
 
         let id = seen.id.clone();
-        mgr.term_decide_approval(&sid, &id, true).await.unwrap();
+        mgr.term_decide_approval(&sid, &id, true, false)
+            .await
+            .unwrap();
         waiter.await.unwrap().unwrap();
 
         // Answered: the prompt must not linger.
@@ -1714,24 +1826,19 @@ mod tests {
         let sid2 = sid.clone();
         let waiter =
             tokio::spawn(async move { mgr2.term_await_approval(&sid2, "real", 5_000).await });
-        let live = loop {
-            if let Some(p) = mgr.term_pending_approval(&sid).await.unwrap() {
-                break p;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        };
+        let live = wait_pending(&mgr, &sid).await;
 
         assert!(
-            !mgr.term_decide_approval(&sid, "ap-0-0", true)
+            !mgr.term_decide_approval(&sid, "ap-0-0", true, false)
                 .await
                 .unwrap(),
             "an id that does not match the live request must decide NOTHING"
         );
         // ...and the live request is still waiting, so the stale answer did not
         // silently consume it.
-        assert!(mgr.term_pending_approval(&sid).await.unwrap().is_some());
+        wait_pending(&mgr, &sid).await;
 
-        mgr.term_decide_approval(&sid, &live.id, true)
+        mgr.term_decide_approval(&sid, &live.id, true, false)
             .await
             .unwrap();
         waiter.await.unwrap().unwrap();
@@ -1754,12 +1861,7 @@ mod tests {
         let sid2 = sid.clone();
         let waiter =
             tokio::spawn(async move { mgr2.term_await_approval(&sid2, "pending", 10_000).await });
-        loop {
-            if mgr.term_pending_approval(&sid).await.unwrap().is_some() {
-                break;
-            }
-            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
-        }
+        wait_pending(&mgr, &sid).await;
 
         assert!(!mgr.term_set_approval_required(&sid, false).await.unwrap());
         let err = tokio::time::timeout(std::time::Duration::from_secs(3), waiter)
@@ -1768,6 +1870,255 @@ mod tests {
             .unwrap()
             .unwrap_err();
         assert_eq!(err.code(), "approval_denied");
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A GRANTED command runs without asking — and only a granted one does.
+    ///
+    /// The whole point of the grant. Note it is asserted on the WAIT, not on a
+    /// flag: `term_await_approval` returning `Ok(true)` immediately is what makes
+    /// the execute path proceed, so that is the observable the operator
+    /// experiences.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_granted_command_does_not_ask_again() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        // Approve `display version` WITH a grant.
+        {
+            let mgr2 = mgr.clone();
+            let sid2 = sid.clone();
+            let waiter = tokio::spawn(async move {
+                mgr2.term_await_approval(&sid2, "display version", 5_000)
+                    .await
+            });
+            let id = wait_pending(&mgr, &sid).await.id;
+            assert!(mgr
+                .term_decide_approval(&sid, &id, true, true)
+                .await
+                .unwrap());
+            assert!(waiter.await.unwrap().unwrap());
+        }
+        assert_eq!(
+            mgr.term_approval_grants(&sid).await.unwrap(),
+            vec!["display".to_string()]
+        );
+
+        // A sibling command in the same family: NO wait, no prompt.
+        let t = std::time::Instant::now();
+        assert!(
+            mgr.term_await_approval(&sid, "display ont info 0 1", 60_000)
+                .await
+                .unwrap(),
+            "a granted family must run without asking"
+        );
+        assert!(
+            t.elapsed() < std::time::Duration::from_secs(1),
+            "it must not have waited at all"
+        );
+        assert!(
+            mgr.term_pending_approval(&sid).await.unwrap().is_none(),
+            "no request may be registered for a granted command"
+        );
+
+        // A DIFFERENT first word still asks.
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter =
+            tokio::spawn(async move { mgr2.term_await_approval(&sid2, "vlan 100", 400).await });
+        wait_pending(&mgr, &sid).await;
+        let err = waiter.await.unwrap().unwrap_err();
+        assert_eq!(
+            err.code(),
+            "approval_timeout",
+            "an ungranted command still asks"
+        );
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A grant NEVER covers a command that chains — the injection property,
+    /// asserted through the manager rather than only on the pure function.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_grant_does_not_cover_a_chained_command() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        {
+            let mgr2 = mgr.clone();
+            let sid2 = sid.clone();
+            let waiter = tokio::spawn(async move {
+                mgr2.term_await_approval(&sid2, "display version", 5_000)
+                    .await
+            });
+            let id = wait_pending(&mgr, &sid).await.id;
+            mgr.term_decide_approval(&sid, &id, true, true)
+                .await
+                .unwrap();
+            waiter.await.unwrap().unwrap();
+        }
+
+        // Same first word, but it also does something else. It MUST ask.
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter = tokio::spawn(async move {
+            mgr2.term_await_approval(&sid2, "display version && rm -rf /", 400)
+                .await
+        });
+        // Bounded wait, not a bare check: the registration happens on a spawned
+        // task, so asserting immediately is a race (it was, and it failed).
+        wait_pending(&mgr, &sid).await;
+        waiter.await.unwrap().unwrap_err();
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// The grant is derived from the SHOWN command, never from caller input.
+    ///
+    /// This is what stops a client widening its own permissions: it can only say
+    /// "remember this", and `this` is whatever the operator had on screen.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_grant_cannot_be_widened_by_the_caller() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        // The operator is shown a harmless command.
+        let waiter = tokio::spawn(async move {
+            mgr2.term_await_approval(&sid2, "display version", 5_000)
+                .await
+        });
+        let id = wait_pending(&mgr, &sid).await.id;
+        mgr.term_decide_approval(&sid, &id, true, true)
+            .await
+            .unwrap();
+        waiter.await.unwrap().unwrap();
+
+        // Whatever the caller might have wanted, the only grant is the shown
+        // command's first word.
+        assert_eq!(
+            mgr.term_approval_grants(&sid).await.unwrap(),
+            vec!["display".to_string()]
+        );
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A NON-grantable command approves ONCE, creating no grant.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn approving_a_chained_command_grants_nothing() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter = tokio::spawn(async move {
+            mgr2.term_await_approval(&sid2, "vlan 100 && save", 5_000)
+                .await
+        });
+        let id = wait_pending(&mgr, &sid).await.id;
+        // The operator says "run it" AND "remember this" — but there is nothing
+        // safe to remember.
+        assert!(mgr
+            .term_decide_approval(&sid, &id, true, true)
+            .await
+            .unwrap());
+        assert!(waiter.await.unwrap().unwrap());
+        assert!(
+            mgr.term_approval_grants(&sid).await.unwrap().is_empty(),
+            "a command whose first word does not describe it must not produce a grant"
+        );
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// Disarming clears every grant — re-arming is a fresh decision.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn disarming_the_gate_forgets_every_grant() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter = tokio::spawn(async move {
+            mgr2.term_await_approval(&sid2, "display version", 5_000)
+                .await
+        });
+        let id = wait_pending(&mgr, &sid).await.id;
+        mgr.term_decide_approval(&sid, &id, true, true)
+            .await
+            .unwrap();
+        waiter.await.unwrap().unwrap();
+        assert_eq!(mgr.term_approval_grants(&sid).await.unwrap().len(), 1);
+
+        mgr.term_set_approval_required(&sid, false).await.unwrap();
+        assert!(
+            mgr.term_approval_grants(&sid).await.unwrap().is_empty(),
+            "grants must die with the mode: a later re-arm would otherwise inherit \
+             permissions the operator granted in a context they have left"
+        );
+
+        // Re-arm: the same command asks again.
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+        let mgr2 = mgr.clone();
+        let sid2 = sid.clone();
+        let waiter = tokio::spawn(async move {
+            mgr2.term_await_approval(&sid2, "display version", 400)
+                .await
+        });
+        wait_pending(&mgr, &sid).await;
+        waiter.await.unwrap().unwrap_err();
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// Revocation, singular and total.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn grants_can_be_revoked() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        for cmd in ["display version", "show version"] {
+            let mgr2 = mgr.clone();
+            let sid2 = sid.clone();
+            let c = cmd.to_string();
+            let waiter =
+                tokio::spawn(async move { mgr2.term_await_approval(&sid2, &c, 5_000).await });
+            let id = wait_pending(&mgr, &sid).await.id;
+            mgr.term_decide_approval(&sid, &id, true, true)
+                .await
+                .unwrap();
+            waiter.await.unwrap().unwrap();
+        }
+        let mut g = mgr.term_approval_grants(&sid).await.unwrap();
+        g.sort();
+        assert_eq!(g, vec!["display".to_string(), "show".to_string()]);
+
+        assert_eq!(
+            mgr.term_revoke_grants(&sid, Some("display")).await.unwrap(),
+            1
+        );
+        assert_eq!(
+            mgr.term_approval_grants(&sid).await.unwrap(),
+            vec!["show".to_string()]
+        );
+        // Revoking something absent is not an error — it reports "nothing".
+        assert_eq!(
+            mgr.term_revoke_grants(&sid, Some("display")).await.unwrap(),
+            0
+        );
+        assert_eq!(mgr.term_revoke_grants(&sid, None).await.unwrap(), 1);
+        assert!(mgr.term_approval_grants(&sid).await.unwrap().is_empty());
 
         mgr.term_close(&sid).await.ok();
     }

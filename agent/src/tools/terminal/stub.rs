@@ -95,7 +95,18 @@ impl TerminalManager {
         _sid: &str,
         _id: &str,
         _approve: bool,
+        _grant: bool,
     ) -> Result<bool, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_approval_grants(&self, _sid: &str) -> Result<Vec<String>, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_revoke_grants(
+        &self,
+        _sid: &str,
+        _grant: Option<&str>,
+    ) -> Result<usize, DeviceError> {
         Err(disabled_err())
     }
     pub async fn term_await_approval(
