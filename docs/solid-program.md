@@ -87,7 +87,8 @@ correctness is.
 | 52 | gateway tooling | OCP | probe key table + `probeEnvKeyName`; cm channel pin | +2 | `63cabb39` |
 | 53 | gateway consistency | tests | OCP tables × registries cross-checks (route/key/probe) | +3 | `626654bc` |
 | 54 | gateway proxy | dead-code | prune 14 dead rewrite-table entries to live paths | +1 net | `96f12de7` |
-| 55 | docs | docs | count reconciliation (see note) + ledger R51–55 | — | (this commit: the ledger row cannot name its own final hash) |
+| 55 | docs | docs | count reconciliation (see note) + ledger R51–55 | — | `60d2a25b` |
+| 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
 > overstated gateway pins (+85/+89/+90 across R50/R53/R54 reports) by
@@ -108,5 +109,9 @@ Gateway +82 · agent lib +12 · core +7 · CLI +4 · relay +49 · extension +4 �
 - `SessionUserStore` is default-only (minimal test seam, correct as-is).
 - `testKey` provider chain stays an if-chain (arms differ too much to table).
 - `api` capability bag stays (removal = churn without gain).
+- reqwest 0.12 (direct) + 0.13 (via rmcp) dual HTTP stacks stay (R46 audit):
+  unifying means migrating all agent call sites with device verification —
+  needs product sign-off, never a silent program edit. Bitflags/cpufeatures
+  transitive dupes likewise untouched (upstream-owned).
 - Panel-react, hardware-gated backends, Electron main: covered or
   deliberately untestable — see round notes, not revisit-worthy.
