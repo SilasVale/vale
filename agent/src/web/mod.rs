@@ -2548,6 +2548,219 @@ mod tests {
         let _ = std::fs::remove_file(cfg_path);
     }
 
+    /// THE PLAN, end to end: the agent declares it through the TOOL surface, the
+    /// operator's view of the session carries it, a command claims a step, and the
+    /// trail records both.
+    ///
+    /// The plan is the AGENT's statement (a tool), the goal is the OPERATOR's (a
+    /// control route) — this drives both and shows they land in different places,
+    /// which is the distinction the whole feature rests on.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_declared_plan_reaches_the_session_the_trail_and_the_command() {
+        let (st, cfg_path) = state_with_cfg("plan-e2e", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        let call = |body: serde_json::Value| {
+            let st = st.clone();
+            async move {
+                handle_request(
+                    req_with_json("POST", "/api/tools/terminal_plan", &body.to_string()),
+                    st,
+                )
+                .await
+            }
+        };
+
+        // (a) Omitted `plan` READS without changing anything.
+        let resp = call(serde_json::json!({ "session_id": sid })).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(resp).await["result"]["plan"]
+                .as_array()
+                .map(|a| a.len()),
+            Some(0)
+        );
+
+        // (b) Declaring it.
+        let resp = call(serde_json::json!({
+            "session_id": sid,
+            "plan": ["check the ONU is online", "create VLAN 100", "save the config"],
+        }))
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["result"]["plan"].as_array().map(|a| a.len()), Some(3));
+        assert_eq!(v["result"]["revised"], true);
+
+        // The operator sees it on the session, next to the goal.
+        let listed = handle_request(
+            req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN),
+            st.clone(),
+        )
+        .await;
+        let body = json_body(listed).await;
+        let row = body["result"]
+            .as_array()
+            .and_then(|a| a.iter().find(|r| r["id"] == sid.as_str()))
+            .cloned()
+            .expect("session listed");
+        assert_eq!(
+            row["plan"].as_array().map(|a| a.len()),
+            Some(3),
+            "plan on session info"
+        );
+
+        // (c) A command CLAIMS a step, and the trail links the two.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &serde_json::json!({
+                    "session_id": sid,
+                    "command": "echo vlan 100",
+                    "intent": "carry out step two",
+                    "plan_step": 2,
+                })
+                .to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+
+        let plan_ev = events
+            .iter()
+            .find(|e| e["kind"] == "plan")
+            .expect("the declaration is recorded");
+        assert_eq!(
+            plan_ev["status"].as_str(),
+            Some("3"),
+            "the step count is recorded"
+        );
+        assert_eq!(
+            plan_ev["text"].as_str(),
+            Some("1. check the ONU is online\n2. create VLAN 100\n3. save the config"),
+            "the plan is recorded numbered, so a reader sees the sequence"
+        );
+
+        let start = events
+            .iter()
+            .find(|e| e["kind"] == "command/start" && e["command"] == "echo vlan 100")
+            .expect("the command is recorded");
+        assert_eq!(
+            start["plan_step"].as_u64(),
+            Some(2),
+            "the command must say WHICH step it served — without this, 'the plan \
+             was followed' is unfalsifiable"
+        );
+
+        // (d) An empty array CLEARS it, and the clear is recorded as a plan event
+        // with NO text — a withdrawn plan must not read as a blank one.
+        let resp = call(serde_json::json!({ "session_id": sid, "plan": [] })).await;
+        assert_eq!(
+            json_body(resp).await["result"]["plan"]
+                .as_array()
+                .map(|a| a.len()),
+            Some(0)
+        );
+
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let plans: Vec<&serde_json::Value> =
+            events.iter().filter(|e| e["kind"] == "plan").collect();
+        assert_eq!(plans.len(), 2, "the clear is recorded too");
+        assert!(
+            plans[1].get("text").is_none(),
+            "a cleared plan carries no text"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// THE GOAL IS THE OPERATOR'S, THE PLAN IS THE AGENT'S — they live on
+    /// different surfaces, and a request cannot move one through the other.
+    ///
+    /// Worth pinning because it is the kind of distinction a later refactor
+    /// collapses for convenience ("both are just session state, put them on the
+    /// same route"), and the result would be an operator-declared plan or an
+    /// agent-declared goal — either of which destroys the comparison between what
+    /// was asked for and what was intended.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn the_control_route_cannot_declare_a_plan() {
+        let (st, cfg_path) = state_with_cfg("plan-split", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        // The operator's route rejects the agent's field rather than ignoring it.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"plan":["sneak a plan in"]}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::BAD_REQUEST,
+            "the control route takes holder/approval_required/goal — a silently \
+             ignored `plan` would look like it worked"
+        );
+        assert!(
+            st.terminal_mgr.term_plan(&sid).await.unwrap().is_empty(),
+            "and nothing may have been stored"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
     /// THE INTENT LAYER, end to end: reasoning posted to the TOOL surface comes
     /// back out of the audit trail beside the command it explains.
     ///

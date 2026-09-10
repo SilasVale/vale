@@ -115,6 +115,19 @@ impl TerminalManager {
     pub async fn term_goal(&self, _sid: &str) -> Result<Option<String>, DeviceError> {
         Err(disabled_err())
     }
+    /// Headless twins of the plan surface. Same `disabled_err()` discipline: a
+    /// headless build must not report a plan it never stored, because an operator
+    /// would then judge a run against steps nobody declared.
+    pub async fn term_set_plan(
+        &self,
+        _sid: &str,
+        _plan: &[String],
+    ) -> Result<Vec<String>, DeviceError> {
+        Err(disabled_err())
+    }
+    pub async fn term_plan(&self, _sid: &str) -> Result<Vec<String>, DeviceError> {
+        Err(disabled_err())
+    }
     pub async fn term_revoke_grants(
         &self,
         _sid: &str,

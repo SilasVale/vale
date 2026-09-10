@@ -421,9 +421,10 @@ mod tests {
     fn tool_count_and_names() {
         let tools = plugin().tools();
         let names: Vec<&str> = tools.iter().map(|t| t.name.as_str()).collect();
-        // 26: 17 terminal_* + secret_* ×2 (canonical + legacy) + sftp ×2
-        // (canonical + legacy) + terminal_env + terminal_jobs + saved/connect/forget.
-        assert_eq!(tools.len(), 26);
+        // 27: 18 terminal_* + secret_* ×2 (canonical + legacy) + sftp ×2
+        // (canonical + legacy) + terminal_env + terminal_jobs + terminal_plan
+        // + saved/connect/forget.
+        assert_eq!(tools.len(), 27);
         for expected in [
             "terminal_open",
             "terminal_write",
@@ -438,6 +439,7 @@ mod tests {
             "terminal_history",
             "terminal_diag_write",
             "terminal_diag_read",
+            "terminal_plan",
             "secret_set",
             "secret_get",
             "secret_delete",

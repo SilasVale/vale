@@ -62,6 +62,7 @@ pub(super) fn build(
     let mut tools = vec![
         sessions::tool_open(&ctx),
         exec::tool_jobs(&ctx.jobs),
+        exec::tool_plan(&ctx),
         sessions::tool_write(&ctx.terminal_mgr),
         sessions::tool_close(&ctx),
         sessions::tool_list(&ctx.terminal_mgr),

@@ -264,6 +264,7 @@
       "command",
       "considered",
       "intent",
+      "plan_step",
       "quiet_ms",
       "run_in_background",
       "session_id",
@@ -316,6 +317,14 @@
       "rows",
       "stop_bits",
       "target"
+    ],
+    "plugin": "terminal"
+  },
+  {
+    "name": "terminal_plan",
+    "params": [
+      "plan",
+      "session_id"
     ],
     "plugin": "terminal"
   },

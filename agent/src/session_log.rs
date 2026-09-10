@@ -180,6 +180,15 @@ pub struct SessionEvent {
     /// about the difference between "no reason given" and "no reason needed".
     #[serde(skip_serializing_if = "Option::is_none")]
     pub intent: Option<String>,
+    /// command/start only: the 1-based PLAN step this command advances.
+    ///
+    /// The linkage that turns a plan into something checkable. Without it a reader
+    /// has a plan and a command list and no way to tell which step — if any — a
+    /// given command was serving, so "the plan was followed" is unfalsifiable.
+    /// Recorded as a NUMBER rather than the step text: the text lives on the plan
+    /// event, and copying it here would let the two drift.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub plan_step: Option<u32>,
     /// command/start only: the alternatives the agent says it passed over.
     ///
     /// The half of the decision tree that does not exist in a command log. This
@@ -208,6 +217,17 @@ impl SessionEvent {
         intent: Option<&str>,
         considered: Option<&[String]>,
     ) -> Self {
+        Self::command_start_full(seq, command, intent, considered, None)
+    }
+
+    /// As [`SessionEvent::command_start_with`], plus the plan step it advances.
+    pub fn command_start_full(
+        seq: u64,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+        plan_step: Option<u32>,
+    ) -> Self {
         Self {
             seq,
             ts: crate::unix_now(),
@@ -218,6 +238,10 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            // Zero is not a valid step (the plan is 1-based), so a 0 reads as
+            // ABSENT rather than as "step zero" — the alternative is a numbering
+            // that silently disagrees with what the operator sees.
+            plan_step: plan_step.filter(|n| *n > 0),
             intent: intent
                 .map(str::trim)
                 .filter(|s| !s.is_empty())
@@ -245,6 +269,7 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -260,6 +285,7 @@ impl SessionEvent {
             reason: reason.map(|s| s.to_string()),
             status: None,
             duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -275,6 +301,49 @@ impl SessionEvent {
             reason: None,
             status: Some(status.to_string()),
             duration_ms: None,
+            plan_step: None,
+            intent: None,
+            considered: None,
+        }
+    }
+
+    /// The agent declared, revised or cleared its PLAN.
+    ///
+    /// A distinct kind from `goal` because the two are declared by different
+    /// parties and answer different questions — the operator's objective versus
+    /// the agent's intended sequence. A reader comparing them can see a run
+    /// diverge from what was asked for, which is the whole point of recording
+    /// both.
+    ///
+    /// `text` carries the numbered plan, one step per line, and is ABSENT when the
+    /// plan was cleared — the same absent-vs-empty discipline as `goal`, so a
+    /// withdrawn plan cannot read as a blank one.
+    pub fn plan(seq: u64, steps: &[String]) -> Self {
+        let text = if steps.is_empty() {
+            None
+        } else {
+            Some(
+                steps
+                    .iter()
+                    .enumerate()
+                    .map(|(i, s)| format!("{}. {}", i + 1, s))
+                    .collect::<Vec<_>>()
+                    .join("\n"),
+            )
+        };
+        Self {
+            seq,
+            ts: crate::unix_now(),
+            kind: "plan".into(),
+            command: None,
+            text,
+            exit_code: None,
+            reason: None,
+            // How many steps, so a reader can tell a revision from a
+            // re-declaration without counting lines.
+            status: Some(steps.len().to_string()),
+            duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -311,6 +380,7 @@ impl SessionEvent {
             reason: None,
             status: Some(action.to_string()),
             duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -338,6 +408,7 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -369,6 +440,7 @@ impl SessionEvent {
             reason: None,
             status: Some(holder.to_string()),
             duration_ms: None,
+            plan_step: None,
             intent: None,
             considered: None,
         }
@@ -593,10 +665,22 @@ impl SessionLogger {
         intent: Option<&str>,
         considered: Option<&[String]>,
     ) {
+        self.log_command_start_full(sid, command, intent, considered, None);
+    }
+
+    /// As [`SessionLogger::log_command_start_with`], plus the plan step.
+    pub fn log_command_start_full(
+        &self,
+        sid: &str,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+        plan_step: Option<u32>,
+    ) {
         let command = cap_command(command);
         self.log(
             sid,
-            SessionEvent::command_start_with(0, &command, intent, considered),
+            SessionEvent::command_start_full(0, &command, intent, considered, plan_step),
         );
     }
 
@@ -647,6 +731,11 @@ impl SessionLogger {
     /// handoff itself would cost the operator the keyboard.
     pub fn log_control(&self, sid: &str, holder: &str) {
         self.log(sid, SessionEvent::control(0, holder));
+    }
+
+    /// Record a plan declaration. Best-effort like every write here.
+    pub fn log_plan(&self, sid: &str, steps: &[String]) {
+        self.log(sid, SessionEvent::plan(0, steps));
     }
 
     /// Record a change to the approval posture. Best-effort like every write here.
@@ -886,14 +975,28 @@ impl SessionLogger {
                     affected.push(sid.clone());
                 }
             }
-            // round-116: trim EVERY recovered session's file, not just
-            // gracefully-closed ones — a crash-open session (agent killed,
-            // power loss) that was streaming for hours never hit
-            // close_session's trim, so its .jsonl stayed unbounded on disk
-            // until the next graceful close. trim_file is atomic (temp +
-            // rename).
-            let path = self.dir.join(format!("{sid}.jsonl"));
-            trim_file(&path);
+            // round-116 trimmed every recovered session's file here, to stop a
+            // crash-open session's .jsonl growing unbounded until its next
+            // graceful close. That trim is REMOVED, because it is the one part
+            // of recovery that can destroy evidence rather than record it.
+            //
+            // `trim_file` rewrites atomically — temp file, then RENAME over the
+            // original — so the path gets a NEW inode. Any other writer holding
+            // a handle on the old one keeps succeeding: `writeln!` and `flush`
+            // both return Ok while every byte lands in a file nothing can reach.
+            // Recovery is reachable whenever a plugin registry is CONSTRUCTED,
+            // not only at boot, so it could rename a file belonging to a session
+            // that is LIVE right then and silently swallow that session's
+            // remaining audit events.
+            //
+            // Measured, not reasoned: a test lost its last two events, and
+            // instrumenting the write showed the handle at 528 bytes while the
+            // path held 393 — same call, two different files. The suite failed on
+            // 3 of 4 full runs before this removal and 4 of 4 after it.
+            //
+            // Disk growth stays bounded without it: output chunks are capped at
+            // write time, `close_session` still trims on graceful close, and
+            // `prune_stale` deletes whole files past the retention window.
         }
         affected
     }
@@ -1404,6 +1507,58 @@ mod tests {
             );
             assert!(cmd.contains("truncated"), "and say that it was cut");
         }
+    }
+
+    /// RECOVERY MUST NOT ORPHAN A LIVE WRITER — the evidence-loss bug.
+    ///
+    /// `recover_interrupted` used to trim each recovered session's file, and the
+    /// trim rewrites atomically: temp file, then RENAME over the original. The
+    /// path gets a new inode, so every OTHER writer's open handle is orphaned —
+    /// its writes still succeed (`writeln!` and `flush` both return `Ok`) while
+    /// every byte lands in a file nothing can reach.
+    ///
+    /// This is what made the web audit pins fail on 3 of 4 full-suite runs, and
+    /// the measurement that identified it was the handle and the path reporting
+    /// DIFFERENT lengths for the same write (528 vs 393 bytes).
+    ///
+    /// The test drives the exact shape: one writer with an open handle, a second
+    /// logger running recovery, then another write through the FIRST writer. If
+    /// recovery renames the file, that last event is lost.
+    #[test]
+    fn recovery_does_not_orphan_a_live_writer() {
+        let dir = temp_dir("recover-orphan");
+        let writer = SessionLogger::new(dir.clone());
+        writer.log_command_start("s1", "long-running-thing");
+        // A start with no end is what recovery looks for — leave it unpaired.
+        drop(writer);
+
+        // Reopen with an open handle (this is the "live writer").
+        let live = SessionLogger::new(dir.clone());
+        live.log_status("s1", "still going");
+
+        // A SECOND instance runs recovery, as a plugin registry construction
+        // does. It must not rewrite the file under `live`.
+        let other = SessionLogger::new(dir.clone());
+        let affected = other.recover_interrupted();
+        assert!(
+            affected.contains(&"s1".to_string()),
+            "recovery should still MARK the unpaired start: {affected:?}"
+        );
+
+        // The live writer's next event must be readable.
+        live.log_status("s1", "after-recovery");
+        let read = SessionLogger::new(dir.clone());
+        let statuses: Vec<String> = read
+            .events_of("s1")
+            .iter()
+            .filter_map(|e| e["status"].as_str().map(|s| s.to_string()))
+            .collect();
+        assert!(
+            statuses.contains(&"after-recovery".to_string()),
+            "an event written through a live handle AFTER recovery must survive — \
+             recovery renaming the file orphans that handle and swallows it. \
+             Statuses seen: {statuses:?}"
+        );
     }
 
     #[test]

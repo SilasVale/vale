@@ -95,6 +95,16 @@ pub struct TermSessionInfo {
     /// finds it on the first `terminal_list`.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub goal: Option<String>,
+    /// The agent's own PLAN for this session: the steps it intends to take, in
+    /// order. Empty when it has not declared one.
+    ///
+    /// Distinct from `goal` in WHO declares it and in what it answers. The goal is
+    /// the OPERATOR's intent ("provision the ONU") and answers *what is this for*;
+    /// the plan is the AGENT's intent and answers *what does it mean to do*. A
+    /// reader who has both can see a run diverge — the plan says five steps, the
+    /// path shows three of them plus two nobody announced.
+    #[serde(default)]
+    pub plan: Vec<String>,
 }
 
 /// A command waiting for an operator decision. `expires_in_ms` is derived at read
@@ -393,6 +403,10 @@ mod desktop_impl {
         /// handoff, and for the same reason: the live value is coordination, the
         /// record is history.
         goal: Option<String>,
+        /// The agent's declared plan, in order. Same live/durable split as the
+        /// goal: the list lives here, each DECLARATION is appended to the trail so
+        /// a reader can see it was revised rather than only what it ended up as.
+        plan: Vec<String>,
     }
 
     /// Identifier for one approval request. Unpredictable rather than sequential on
@@ -458,6 +472,14 @@ mod desktop_impl {
     /// is echoed on every `terminal_list` and every audit read, so this bound is
     /// what keeps a chatty client from inflating both.
     const GOAL_MAX_BYTES: usize = 512;
+
+    /// Most plan steps we keep. A plan is a sequence a person reads to decide
+    /// whether to let a run continue, so it has to stay short enough to READ —
+    /// past a couple of dozen steps it is a transcript, not a plan.
+    const PLAN_MAX_STEPS: usize = 24;
+    /// Longest single step label, in bytes. A step is a line, not a paragraph:
+    /// the reasoning belongs in the command's `intent`.
+    const PLAN_STEP_MAX_BYTES: usize = 200;
 
     /// Poll cadence while waiting for a decision.
     const APPROVAL_POLL_MS: u64 = 200;
@@ -701,6 +723,7 @@ mod desktop_impl {
                     pending_approval: None,
                     approval_grants: Vec::new(),
                     goal: None,
+                    plan: Vec::new(),
                 });
                 deferred
             };
@@ -996,6 +1019,59 @@ mod desktop_impl {
                     s.goal = value.clone();
                     Ok(value)
                 }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// Declare, replace or clear the agent's PLAN for this session.
+        ///
+        /// Pass an empty slice to CLEAR it. Returns the plan now in force, so a
+        /// caller renders the stored value rather than its own request — the
+        /// stored one has been trimmed, capped and had blank steps dropped.
+        ///
+        /// The plan is the AGENT's statement, which is why it lives on the tool
+        /// surface rather than the operator's control route: the operator declares
+        /// what the session is FOR (`goal`), the agent declares what it means to
+        /// DO. Keeping those apart is what lets a reader notice the two diverging.
+        ///
+        /// Replacing wholesale, rather than add/remove/reorder: a plan is read as
+        /// a whole, and a partial edit API would invite a state where nothing
+        /// holds the sequence together. A revision is a new statement, and each
+        /// one is recorded.
+        pub async fn term_set_plan(
+            &self,
+            sid: &str,
+            plan: &[String],
+        ) -> Result<Vec<String>, DeviceError> {
+            let value: Vec<String> = plan
+                .iter()
+                .map(|s| s.trim())
+                // Blank steps are DROPPED, not stored as empty entries: a
+                // numbering with holes in it reads as a missing step rather than
+                // as a stray blank.
+                .filter(|s| !s.is_empty())
+                .take(PLAN_MAX_STEPS)
+                .map(|s| crate::text::clip(s, PLAN_STEP_MAX_BYTES).to_string())
+                .collect();
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    s.plan = value.clone();
+                    Ok(value)
+                }
+                None => Err(DeviceError::SessionNotFound {
+                    id: sid.to_string(),
+                }),
+            }
+        }
+
+        /// The session's current plan, in order.
+        pub async fn term_plan(&self, sid: &str) -> Result<Vec<String>, DeviceError> {
+            let inner = self.inner.lock().await;
+            match inner.sessions.iter().find(|s| s.id == sid) {
+                Some(s) => Ok(s.plan.clone()),
                 None => Err(DeviceError::SessionNotFound {
                     id: sid.to_string(),
                 }),
@@ -1307,6 +1383,7 @@ mod desktop_impl {
                     pending_approval: live_pending(s),
                     approval_grants: s.approval_grants.clone(),
                     goal: s.goal.clone(),
+                    plan: s.plan.clone(),
                 })
                 .collect()
         }
@@ -1331,6 +1408,7 @@ mod desktop_impl {
                     pending_approval: live_pending(s),
                     approval_grants: s.approval_grants.clone(),
                     goal: s.goal.clone(),
+                    plan: s.plan.clone(),
                 })
         }
 
@@ -2292,6 +2370,130 @@ mod tests {
         );
         assert_eq!(
             mgr.term_goal("no-such-sid").await.unwrap_err().code(),
+            "session_not_found"
+        );
+    }
+
+    /// A plan is declared, REVISED, cleared, and visible to whoever lists sessions.
+    ///
+    /// Revision is the case that matters and the one a naive API gets wrong: a
+    /// plan is not a log of intentions, it is the current statement of them. A run
+    /// whose plan changed for good reason must be able to say so without the old
+    /// plan lingering as if it still held.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_plan_is_declared_revised_and_cleared() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        assert!(
+            mgr.term_plan(&sid).await.unwrap().is_empty(),
+            "no plan initially"
+        );
+
+        let first = vec![
+            "check the ONU is online".to_string(),
+            "create VLAN 100".to_string(),
+            "save the config".to_string(),
+        ];
+        assert_eq!(mgr.term_set_plan(&sid, &first).await.unwrap(), first);
+        // The AI reads it off the list it already polls, like the goal.
+        assert_eq!(
+            mgr.term_info(&sid).await.unwrap().plan,
+            first,
+            "the plan must be visible on session info"
+        );
+
+        // REVISED: the middle step is dropped after the check made it unnecessary.
+        let revised = vec![
+            "check the ONU is online".to_string(),
+            "save the config".to_string(),
+        ];
+        assert_eq!(mgr.term_set_plan(&sid, &revised).await.unwrap(), revised);
+        assert_eq!(mgr.term_plan(&sid).await.unwrap(), revised);
+        assert_eq!(
+            mgr.term_info(&sid).await.unwrap().plan.len(),
+            2,
+            "a revision REPLACES; the old steps must not linger"
+        );
+
+        // CLEARED by an empty list.
+        assert!(mgr.term_set_plan(&sid, &[]).await.unwrap().is_empty());
+        assert!(mgr.term_plan(&sid).await.unwrap().is_empty());
+        assert!(mgr.term_info(&sid).await.unwrap().plan.is_empty());
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// A plan is CAPPED and its steps clipped on char boundaries.
+    ///
+    /// Both are remote-input bounds: this arrives from a client and rides every
+    /// `terminal_list`. The boundary part matters for the same reason it does
+    /// everywhere else in this crate — a naive byte cut panics, and this crate has
+    /// paid for that three times.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_plan_is_capped_and_boundary_safe() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+
+        // 40 steps offered, each 3-byte chars so a byte cut lands mid-character.
+        let many: Vec<String> = (0..40)
+            .map(|i| format!("{}汉", "步".repeat(100 + i)))
+            .collect();
+        let stored = mgr.term_set_plan(&sid, &many).await.unwrap();
+        assert_eq!(stored.len(), 24, "the step count is capped");
+        for step in &stored {
+            assert!(
+                step.len() <= 200,
+                "each step is capped (got {})",
+                step.len()
+            );
+            // Proven to end on a boundary by round-tripping as whole characters.
+            assert_eq!(
+                step.chars().count() * 3,
+                step.len(),
+                "a step must not be cut inside a character"
+            );
+        }
+
+        // BLANK steps are dropped rather than stored as empty entries: a
+        // numbering with holes in it reads as a missing step.
+        let with_blanks = vec![
+            "one".to_string(),
+            "   ".to_string(),
+            "".to_string(),
+            "two".to_string(),
+        ];
+        assert_eq!(
+            mgr.term_set_plan(&sid, &with_blanks).await.unwrap(),
+            vec!["one".to_string(), "two".to_string()]
+        );
+        // And surrounding whitespace is trimmed.
+        assert_eq!(
+            mgr.term_set_plan(&sid, &["  spaced  ".to_string()])
+                .await
+                .unwrap(),
+            vec!["spaced".to_string()]
+        );
+
+        mgr.term_close(&sid).await.ok();
+    }
+
+    /// An unknown session is an error, never a silent success.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_plan_on_an_unknown_session_is_an_error() {
+        let mgr = control_mgr();
+        assert_eq!(
+            mgr.term_set_plan("no-such-sid", &["x".to_string()])
+                .await
+                .unwrap_err()
+                .code(),
+            "session_not_found"
+        );
+        assert_eq!(
+            mgr.term_plan("no-such-sid").await.unwrap_err().code(),
             "session_not_found"
         );
     }
