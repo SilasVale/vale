@@ -187,6 +187,11 @@ src/
   metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
   filelog.rs       size-rotating tracing writer -> DataDir\logs\agent.log (layout v2)
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
+  evidence.rs      the pwout AI-evidence feed (crate-private, SOLID R98):
+                   actions.jsonl append/newest-first read, shot listing,
+                   basename guard, `browser-actions-changed` push. ONE owner
+                   for both producers (playwright browser_run_script +
+                   mcp-client tools) and the /api/browser/* readers.
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    managers own their locks internally (inside AppState only

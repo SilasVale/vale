@@ -190,6 +190,11 @@ src/
   metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
   filelog.rs       size-rotating tracing writer -> DataDir\logs\agent.log (layout v2)
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
+  evidence.rs      the pwout AI-evidence feed (crate-private, SOLID R98):
+                   actions.jsonl append/newest-first read, shot listing,
+                   basename guard, `browser-actions-changed` push. ONE owner
+                   for both producers (playwright browser_run_script +
+                   mcp-client tools) and the /api/browser/* readers.
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    managers own their locks internally (inside AppState only
@@ -333,7 +338,19 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-09 round-556 — current release **1.2.307 LIVE on d1
+Last updated: 2026-09-10 SOLID-R98 (`28c7c71f`) — the pwout AI-evidence feed
+  is now ONE owned module (`src/evidence.rs`, crate-private): actions.jsonl
+  append + newest-first read, shot listing, basename guard and the
+  `browser-actions-changed` push, replacing two inline producers (playwright
+  `browser_run_script` + a mcp-client private helper), a mcp-client-private
+  bus OnceLock and a hand-mirrored reader in web/mod.rs. The evidence dir is
+  a PARAMETER now, so the contract is unit-tested against a temp dir (+9
+  pins) while paths.rs keeps resolving it. Behavior unchanged; agent gates
+  375 feat-gated / 368 default lib green, clippy -D warnings clean both
+  configs, fmt clean, xwin check OK. Program ledger: docs/solid-program.md.
+  Release/d1 state below is unchanged by this round (no device rollout).
+
+Last release round: 2026-09-09 round-556 — current release **1.2.307 LIVE on d1
   (package.json + CDN version.json + GitHub release; last-5-per-minor prune
   active; Windows self-contained installer ValeAgent-Setup.exe on the CDN)**;
   e2e suite 47 checks; all matrices green. Rounds 273-317 in this log; the

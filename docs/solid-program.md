@@ -130,7 +130,7 @@ correctness is.
 | 95 | audits | verify | dep drift check + build.sh/CI wiring verification | — | — |
 | 96 | extension | SRP/tests | studio-links pure core to shared + path pins | +5 | `3a1346dc` |
 | 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | `4648be01` |
-| 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | (this commit: the ledger row cannot name its own final hash) |
+| 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | `28c7c71f` |
 
 > **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
 > after R97 (an R97 editing accident — R56 already has its row in sequence at
