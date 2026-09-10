@@ -9,6 +9,7 @@ import { Icon } from "../ui/Icon";
 import { TerminalPane } from "./TerminalPane";
 import { TrajectoryView } from "./TrajectoryView";
 import { PathView } from "./PathView";
+import { SessionControl } from "./SessionControl";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
 import type { CommandEvent } from "../hooks/useCommandEvents";
@@ -30,6 +31,8 @@ interface Props {
   onClose: (sid: string) => void;
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
+  /** Hand the session's keyboard to a person / back to the AI. */
+  onSetControl: (sid: string, human: boolean) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
   token: string;
@@ -42,7 +45,7 @@ interface Props {
 }
 
 export function TerminalWorkspace({
-  sessions, activeSid, onActivate, onClose, onExport, onViewChange,
+  sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
   registerWrite, cmdEvents, token, density, sseState,
   controlledView, onControlledViewChange,
 }: Props) {
@@ -57,6 +60,16 @@ export function TerminalWorkspace({
   // The active session record — used to stamp a saved recipe with what the
   // commands were actually run against (shell kind + label).
   const activeSession = sessions.find((s) => s.sid === activeSid);
+
+  // Control handoff — rendered in BOTH densities from this one place, because
+  // both render this workspace and a per-density copy is how the two drifted
+  // before (R131). Hidden until a session is active: there is nothing to hold.
+  const control = activeSession && !activeSession.closed ? (
+    <SessionControl
+      held={!!activeSession.heldByHuman}
+      onSet={(human) => onSetControl(activeSession.sid, human)}
+    />
+  ) : null;
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
 
   // stage-n: refit terminals after the drawer finishes its enter/exit
@@ -106,6 +119,7 @@ export function TerminalWorkspace({
           {/* Desktop density: session tabs + New menu live in the header card
               (DesktopShell) — this workspace renders ONLY the terminal area.
               The trajectory/terminal view switch is a header button. */}
+          <div className="desktop-term-bar">{control}</div>
           <div id="desktop-term-container" className={trajOpen || pathOpen ? "hidden" : undefined}>
             {pathOpen && activeSid ? (
               <PathView
@@ -140,6 +154,7 @@ export function TerminalWorkspace({
               view={sessionView}
               onViewChange={changeView}
             />
+            {control}
             <button
               id="cmd-toggle"
               className={detailsOpen ? "active" : ""}

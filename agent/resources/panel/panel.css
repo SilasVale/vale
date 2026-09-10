@@ -619,6 +619,52 @@ code {
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .view-switch-btn:hover { color: var(--chrome-ink); }
+/* ── Session control handoff (agent §D5) ──
+   Sits with the session toolbar in both densities. The dot carries the state
+   through the SAME shape channel as the rest of the panel (human = filled
+   accent, ai = hollow) so the indicator survives prefers-reduced-motion. */
+#session-control {
+  display: inline-flex;
+  align-items: center;
+  gap: 6px;
+  font: 600 11px var(--font);
+  line-height: 1;
+  padding: 5px 10px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  color: var(--chrome-ink-dim);
+  cursor: pointer;
+  white-space: nowrap;
+}
+#session-control:hover:not(:disabled) { color: var(--ink); border-color: var(--faint); }
+#session-control:disabled { opacity: 0.55; cursor: default; }
+/* Held: this is a deliberate, consequential state — the AI is being refused —
+   so it reads as active rather than as another quiet toolbar chip. */
+#session-control.held {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  /* Readable ink, accent carried by background/border/dot. */
+  color: var(--accent-on-soft);
+}
+#session-control.failed { border-color: var(--danger); color: var(--danger); }
+#session-control .sc-dot {
+  width: 7px; height: 7px;
+  border-radius: 50%;
+}
+#session-control .sc-dot[data-state="human"] { background: var(--accent); }
+#session-control .sc-dot[data-state="ai"] {
+  background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--faint);
+}
+.desktop-term-bar {
+  flex: none;
+  display: flex;
+  align-items: center;
+  gap: 8px;
+  padding: 0 0 6px;
+}
+
 /* Active pill uses --chrome-active-ink, NOT --accent-ink directly. In light the
    two resolve identically (--chrome-active-ink IS var(--accent-ink) in :root),
    so this is byte-identical there; in dark --chrome-active-ink carries the

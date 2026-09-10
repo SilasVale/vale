@@ -24,6 +24,8 @@ interface Props {
   onClose: (sid: string) => void;
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
+  /** Hand the session's keyboard to a person / back to the AI. */
+  onSetControl: (sid: string, human: boolean) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   status: string;
@@ -85,6 +87,7 @@ export function PanelApp(props: Props) {
                 onClose={props.onClose}
                 onExport={props.onExport}
                 onViewChange={props.onViewChange}
+                onSetControl={props.onSetControl}
                 registerWrite={props.registerWrite}
                 cmdEvents={props.cmdEvents}
                 token={props.token}

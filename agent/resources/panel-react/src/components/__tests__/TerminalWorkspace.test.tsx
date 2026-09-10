@@ -22,6 +22,7 @@ const session = (over: Partial<Session & { active: boolean }> = {}) => ({
   active: true,
   openedAt: Date.now(),
   closedAt: null,
+  heldByHuman: false,
   ...over,
 });
 
@@ -32,6 +33,7 @@ const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {
   onClose: vi.fn(),
   onExport: vi.fn(),
   onViewChange: vi.fn(),
+  onSetControl: vi.fn(() => Promise.resolve(false)),
   registerWrite: vi.fn(() => Object.assign(vi.fn(), {})),
   cmdEvents: { cards: [], events: [] },
   token: "tok",

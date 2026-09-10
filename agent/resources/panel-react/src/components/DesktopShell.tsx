@@ -32,6 +32,8 @@ interface Props {
   onClose: (sid: string) => void;
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
+  /** Hand the session's keyboard to a person / back to the AI. */
+  onSetControl: (sid: string, human: boolean) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser", target?: string, extra?: Record<string, unknown>) => void;
   onConnConnect: (kind: "ssh" | "serial", target: string, extra: Record<string, unknown>) => Promise<unknown>;
@@ -53,7 +55,7 @@ const PAGE_TITLES: Record<Page, string> = {
 };
 
 export function DesktopShell({
-  sessions, activeSid, onActivate, onClose, onExport, onViewChange,
+  sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
   registerWrite, onNewSession, onConnConnect, connModal, onConnClose,
   status, sseState, token, plugins, cmdEvents,
 }: Props) {
@@ -258,6 +260,7 @@ export function DesktopShell({
                 onClose={onClose}
                 onExport={onExport}
                 onViewChange={onViewChange}
+                onSetControl={onSetControl}
                 registerWrite={registerWrite}
                 cmdEvents={cmdEvents}
                 token={token}

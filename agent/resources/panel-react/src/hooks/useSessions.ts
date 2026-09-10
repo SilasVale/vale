@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState } from "react";
-import { callTool } from "../lib/api";
+import { callApi, callTool } from "../lib/api";
 
 // Session state (migrated from panel.js) — the xterm instance + render
 // cursor live OUTSIDE React state (imperative, heavy); React tracks only the
@@ -15,6 +15,10 @@ export interface Session {
   active: boolean;
   openedAt: number;
   closedAt: number | null;
+  /** A PERSON holds this session's keyboard (control handoff). Server-owned
+   *  state mirrored here: the agent refuses `terminal_execute` while it is set,
+   *  so the panel must SHOW it or the operator cannot tell why the AI stopped. */
+  heldByHuman: boolean;
 }
 
 interface SessionRuntime {
@@ -78,7 +82,7 @@ export function useSessions(connected: boolean) {
           for (const s of list as any[]) {
             const existing = next.find((x) => x.sid === s.id);
             if (!existing) {
-              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human });
             } else if (existing.closed) {
               // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
               // whose sid reappears live. A fast AI session (open → one
@@ -86,8 +90,15 @@ export function useSessions(connected: boolean) {
               // the agent's close emit, and NOTHING ever revived it — the tab
               // sat dead forever (activate() refuses closed entries). A live
               // reappearance means the session is real: un-tombstone it.
-              const revived = { ...existing, closed: false, closedAt: null };
+              const revived = { ...existing, closed: false, closedAt: null, heldByHuman: !!s.held_by_human };
               next[next.indexOf(existing)] = revived;
+            } else if (existing.heldByHuman !== !!s.held_by_human) {
+              // The hold is server-owned and can change WITHOUT a sessions-changed
+              // event (this panel's own control button, or another client).
+              // Syncing it here is what keeps the indicator honest. Placed AFTER
+              // the revive branch on purpose: a closed tombstone whose hold
+              // differs must still be REVIVED, not merely have its flag synced.
+              next[next.indexOf(existing)] = { ...existing, heldByHuman: !!s.held_by_human };
             }
           }
           // Mark gone sessions closed (retained history shows as tombstone).
@@ -149,7 +160,7 @@ export function useSessions(connected: boolean) {
           const missing = (list as any[]).filter((s) => !prev.some((x) => x.sid === s.id));
           const next = [...prev];
           for (const s of missing) {
-            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null });
+            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human });
           }
           if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
             const liveTail = next.filter((x) => !x.closed);
@@ -187,7 +198,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false }];
       });
       setActiveSid(sid);
       return sid;
@@ -288,5 +299,30 @@ export function useSessions(connected: boolean) {
     })();
   }, [setStatusState]);
 
-  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes };
+  /** Hand the session's keyboard to a person, or back to the AI.
+   *
+   *  The agent owns this state; the response is the authority, so the local flag
+   *  is set from what the SERVER reports rather than from what was requested.
+   *  A failed call leaves the flag alone and surfaces the error — a button that
+   *  flipped optimistically would tell the operator they hold a keyboard the
+   *  agent is still driving, which is worse than showing nothing. */
+  const setControl = useCallback(async (sid: string, human: boolean) => {
+    try {
+      const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/control`, {
+        method: "POST",
+        body: JSON.stringify({ holder: human ? "human" : "ai" }),
+      });
+      const held = !!r?.held_by_human;
+      setSessions((prev) =>
+        prev.map((s) => (s.sid === sid ? { ...s, heldByHuman: held } : s)),
+      );
+      setStatusState(held ? "you have the keyboard" : "AI may drive this session");
+      return held;
+    } catch (e: any) {
+      setStatusState(`control failed: ${e?.message ?? e}`);
+      throw e;
+    }
+  }, []);
+
+  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl };
 }

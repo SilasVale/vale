@@ -19,7 +19,7 @@ vi.mock("../../lib/api", async (importOriginal) => ({
 function sessions(): Session[] {
   return [{
     sid: "s1", label: "shell", kind: "pty", closed: false, savedOnly: false,
-    active: true, openedAt: Date.now(), closedAt: null,
+    active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false,
   }];
 }
 
@@ -30,6 +30,7 @@ const baseProps = {
   onClose: vi.fn(),
   onExport: vi.fn(),
   onViewChange: vi.fn(),
+  onSetControl: vi.fn(() => Promise.resolve(false)),
   registerWrite: vi.fn(() => vi.fn()),
   plugins: { rows: [], specLoaded: false, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any,
   onNewSession: vi.fn(),
