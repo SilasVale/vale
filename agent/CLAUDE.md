@@ -348,7 +348,7 @@ the management surface.
 `/panel/` origin (Playwright route interception — no listener) with
 `window.fetch` stubbed, then measures every visible text node and asserts the
 governance elements are present. Use it after ANY panel styling change:
-emoji-free hand-built galleries verify only the CSS you were thinking about,
+hand-built galleries verify only the CSS you were thinking about,
 which is how five chrome contrast defects survived several rounds of
 "auditing". Needs `VALE_BROWSER_HELPER` to run the audit; without it the
 script emits the harness and exits 0.
