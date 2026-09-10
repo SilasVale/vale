@@ -89,21 +89,25 @@ test("wrong/missing x-api-key 401s; correct key proceeds to routing", async () =
 
 /* ---- routing + native passthrough ---- */
 
-test("deepseek-v4-flash passes through RAW to /v1/messages (Anthropic-native), no translation", async () => {
-  const { calls, respond, restore } = stubFetch();
-  try {
-    const raw = JSON.stringify({ model: "deepseek-v4-flash", messages: [{ role: "user", content: "hi" }], max_tokens: 8 });
-    respond(200, raw, { "content-type": "text/event-stream" });
-    const r = await worker.fetch(req("POST", "/v1/messages", { body: raw }), env);
-    assert.equal(r.status, 200);
-    assert.equal(calls.length, 1);
-    assert.equal(calls[0].url, UPSTREAM_NATIVE);
-    assert.equal(calls[0].init.headers["x-api-key"], "up-key");
-    assert.equal(calls[0].init.headers["anthropic-version"], "2023-06-01");
-    assert.equal(calls[0].init.body, raw, "native path must forward the request verbatim");
-    assert.equal(await r.text(), raw, "body streams through untouched");
-  } finally {
-    restore();
+test("Flash-line slugs pass through RAW to /v1/messages (Anthropic-native), no translation", async () => {
+  // deepseek-flash is the live V4.1 lane slug; deepseek-v4-flash is the
+  // retired V4 slug zen still aliases. Both take the native path.
+  for (const slug of ["deepseek-flash", "deepseek-v4-flash"]) {
+    const { calls, respond, restore } = stubFetch();
+    try {
+      const raw = JSON.stringify({ model: slug, messages: [{ role: "user", content: "hi" }], max_tokens: 8 });
+      respond(200, raw, { "content-type": "text/event-stream" });
+      const r = await worker.fetch(req("POST", "/v1/messages", { body: raw }), env);
+      assert.equal(r.status, 200);
+      assert.equal(calls.length, 1);
+      assert.equal(calls[0].url, UPSTREAM_NATIVE);
+      assert.equal(calls[0].init.headers["x-api-key"], "up-key");
+      assert.equal(calls[0].init.headers["anthropic-version"], "2023-06-01");
+      assert.equal(calls[0].init.body, raw, "native path must forward the request verbatim");
+      assert.equal(await r.text(), raw, "body streams through untouched");
+    } finally {
+      restore();
+    }
   }
 });
 

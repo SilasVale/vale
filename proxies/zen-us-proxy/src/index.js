@@ -14,7 +14,9 @@
 // proxies/README.md.
 //
 // Endpoints:
-//   - POST /v1/messages   — native Anthropic passthrough (deepseek-v4-flash),
+//   - POST /v1/messages   — native Anthropic passthrough (Flash line:
+//                           `deepseek-flash` = V4.1; the retired V4 slug still
+//                           answers upstream as an alias),
 //                           upstream key = env.OPENCODE_GO_API_KEY (x-api-key),
 //                           caller gate = CLIENT_KEY.
 //   - POST /v1/responses  — OpenAI Responses API passthrough (muse-spark

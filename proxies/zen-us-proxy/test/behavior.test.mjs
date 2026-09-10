@@ -89,7 +89,7 @@ test("/v1/messages: default-CLOSED gate, native Anthropic passthrough with anthr
 
   const { calls, respond, restore } = stubFetch();
   try {
-    const raw = JSON.stringify({ model: "deepseek-v4-flash", max_tokens: 5, messages: [] });
+    const raw = JSON.stringify({ model: "deepseek-flash", max_tokens: 5, messages: [] });
     respond(200, raw, { "content-type": "text/event-stream" });
     const r = await worker.fetch(req("POST", "/v1/messages", { body: raw }), env);
     assert.equal(r.status, 200);

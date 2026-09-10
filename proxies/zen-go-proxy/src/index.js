@@ -166,11 +166,16 @@ export default {
         return jsonError(413, "Request body too large", "invalid_request_error", cors);
       }
       const anthropicReq = await request.json();
-      const model = anthropicReq.model || "deepseek-v4-flash";
-      // deepseek-v4-flash is Anthropic-native on zen/go/v1/messages — forward
-      // the raw request (no OpenAI translation) so the response is a true
-      // Anthropic SSE stream. Other models keep the translate path below.
-      const NATIVE = new Set(["deepseek-v4-flash"]);
+      const model = anthropicReq.model || "deepseek-flash";
+      // The Flash line is Anthropic-native on zen/go/v1/messages — forward the
+      // raw request (no OpenAI translation) so the response is a true Anthropic
+      // SSE stream. Other models keep the translate path below.
+      //   - "deepseek-flash"    — the version-less lane = DeepSeek V4.1 Flash
+      //                           (the live name since 2026-09-10);
+      //   - "deepseek-v4-flash" — the retired V4 slug: zen still accepts it as
+      //                           an alias, so it stays native here (this proxy
+      //                           serves clients the gateway does not police).
+      const NATIVE = new Set(["deepseek-flash", "deepseek-v4-flash"]);
       const native = NATIVE.has(model);
       const upstream = await fetchUpstreamHeaders(
         native ? "https://opencode.ai/zen/go/v1/messages" : "https://opencode.ai/zen/go/v1/chat/completions",
