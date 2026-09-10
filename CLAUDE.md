@@ -81,7 +81,11 @@ running every downstream test gate.
   helpers, `evidence.rs` (the pwout AI-evidence feed — ONE owner for the
   actions.jsonl append/newest-first read, the shot listing, the basename guard
   and the `browser-actions-changed` push; two producers: the playwright tools
-  and the mcp-client tools), `tunnel.rs`, `session_log.rs` (durable audit
+  and the mcp-client tools), `text.rs` (byte-budget clipping on a char
+  boundary — `boundary_at_or_below`/`clip`; was hand-written at 8 sites and
+  panicked the session drainer three times), `jsonl.rs` (append-only JSONL
+  crash safety — `prepare_append`/`has_torn_tail`; shared by the audit trail
+  and the memory store), `tunnel.rs`, `session_log.rs` (durable audit
   trail, best-effort writes, 30 d retention), `lib/ratelimit`-equivalent:
   bounded subprocess runners (`runSchtasks`/`run_bounded`)
 - vale CLI: network calls go through the bounded-fetch layer (see vale.ts) —

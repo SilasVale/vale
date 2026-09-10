@@ -182,9 +182,25 @@ src/
   main.rs          server binary (config path as argv[1]); Windows service
                    mode via windows-service when launched by the SCM
   lib.rs           crate root; DEFAULT_CONFIG_YAML embedded (include_str!)
+  paths.rs         REGISTRY-FIRST path resolution (the single source of truth:
+                   `install_dir()`/`data_dir()` + the layout-v2 subdir helpers).
+                   FOUNDATION module — zero `current_exe()` guesses and zero
+                   legacy-directory probing outside it.
   bootstrap.rs     vale_command::bootstrap::load_or_create(path, fallback) —
                    create-if-missing, load, ensure_token. Single bootstrap site.
+  register.rs      pure self-register PLANNING seam (`self_register_plan`):
+                   decides whether/where to self-register, so the network call
+                   in main.rs's loop stays untested-thin (boundary review
+                   2026-09-06).
   metrics.rs       device vitals for /api/status (CPU delta + memory, kernel32)
+  tunnel.rs        cloudflared tunnel PROVISIONING for the Gateway card
+                   (rewrites tunnel.yml + signals restart via crate::tunnel_ctl).
+                   The RUNNING child is owned by main.rs's supervisor, not here.
+  winmain.rs       `#![cfg(windows)]` process plumbing: boot self-heal,
+                   kill-on-close child-reaper job, bounded helper runner, the
+                   SCM service entry, the supervised cloudflared owner. Moved
+                   verbatim from main.rs (structure refactor A7); non-Windows
+                   builds compile none of it.
   filelog.rs       size-rotating tracing writer -> DataDir\logs\agent.log (layout v2)
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   evidence.rs      the pwout AI-evidence feed (crate-private, SOLID R98):
@@ -192,6 +208,14 @@ src/
                    basename guard, `browser-actions-changed` push. ONE owner
                    for both producers (playwright browser_run_script +
                    mcp-client tools) and the /api/browser/* readers.
+  text.rs          byte-budget text clipping (crate-private, SOLID R105):
+                   `boundary_at_or_below` / `clip` — the "cut to <= N bytes on
+                   a char boundary" rule that was hand-written at 8 sites and
+                   panicked the session drainer three times.
+  jsonl.rs         append-only JSONL crash safety (crate-private, SOLID R111):
+                   `prepare_append` (version header on a fresh file, terminate
+                   a torn final line) + `has_torn_tail`. Shared by the audit
+                   trail and the memory store.
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    managers own their locks internally (inside AppState only
@@ -218,10 +242,13 @@ src/
                    at the gateway) as the WebPanel fallback service; sse.rs
                    holds the SSE streams (bounded conns, heartbeat, epoch).
   plugins/         PluginRegistry (tools cached once at register); terminal/
-                   mod.rs (plugin struct + shared helpers) + tools/ (ctx.rs
-                   shared state; per-domain builders exec/sessions/files/
+                   mod.rs (plugin struct + shared helpers) + tools/ (ctx.rs =
+                   ToolCtx, the shared runtime state builders take, plus the
+                   jobs map; per-domain builders exec/sessions/files/
                    output/secrets/connections; mod.rs owns registry assembly
-                   + the exact tool order)
+                   + the exact tool order); memory/ (store.rs = the JSONL
+                   knowledge store, whose append hygiene comes from
+                   crate::jsonl)
   tools/           terminal/ (TerminalManager + TermBackend trait; pty.rs,
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via
@@ -232,6 +259,7 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
                    consumers to them; unified 2026-09-05)
 (vale-tray/ and vale-desktop/ Tauri source deleted round-330 — both
  retired; the npm CLI + Electron shell replaced them.)
+```
 
 ## Conventions
 
