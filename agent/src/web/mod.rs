@@ -2323,4 +2323,23 @@ mod tests {
             .unwrap();
         assert_eq!(res.status(), StatusCode::OK);
     }
+
+    // SOLID Round-43: the single constant-time compare guarding every /api
+    // and /mcp route (round-116) had zero direct pins — only incidental
+    // exercise through authed-handler tests. Truth table for the gate the
+    // device token depends on.
+    #[test]
+    fn timing_safe_eq_truth_table() {
+        assert!(timing_safe_eq(b"abc", b"abc"));
+        assert!(timing_safe_eq(b"", b""));
+        assert!(!timing_safe_eq(b"abc", b"abd"), "one bit differs");
+        assert!(!timing_safe_eq(b"abc", b"ab"), "length differs (shorter)");
+        assert!(!timing_safe_eq(b"ab", b"abc"), "length differs (longer)");
+        assert!(!timing_safe_eq(b"", b"a"), "empty vs non-empty");
+        // 64-byte token shape: last byte differs.
+        let a = vec![0xABu8; 64];
+        let mut b = a.clone();
+        b[63] ^= 1;
+        assert!(!timing_safe_eq(&a, &b));
+    }
 }
