@@ -12,6 +12,7 @@ import {
   extractByokKeys,
   oxAlphaReasoningDefault,
   checkRateLimit,
+  openAIUpstreamToAnthropicResponse,
 } from "../src/plugins/translate.ts";
 
 test("detectRoute: one flag per POST shape, none otherwise", () => {
@@ -147,4 +148,87 @@ test("checkRateLimit: 4096-bucket cap evicts oldest, retains newest (both sides)
   const retained = checkRateLimit(kv, "POST", "/v1/messages", "r49-new");
   assert.ok(retained instanceof Response, "newest high-count bucket still blocked");
   assert.equal(retained.status, 429);
+});
+
+// SOLID Round-57: the stream/oneshot/error-envelope decision tree had zero
+// direct pins — only incidental exercise through live translate flows. A
+// 200-wrapped error surfacing as an empty assistant message is the silent
+// failure this tree exists to prevent. Fully deterministic: stub Responses,
+// no network.
+const chatJson = (obj) =>
+  new Response(JSON.stringify(obj), { status: 200, headers: { "content-type": "application/json" } });
+
+test("response tree: one-shot JSON translates; error envelopes 502, never empty", async () => {
+  const ok = await openAIUpstreamToAnthropicResponse(
+    chatJson({ choices: [{ message: { role: "assistant", content: "hello" } }] }),
+    {},
+    "m",
+    "m",
+  );
+  assert.equal(ok.status, 200);
+  const body = await ok.json();
+  assert.equal(body.content[0].text, "hello");
+
+  const wrapped = await openAIUpstreamToAnthropicResponse(
+    chatJson({ error: { message: "overloaded" } }),
+    {},
+    "m",
+    "m",
+  );
+  assert.equal(wrapped.status, 502);
+  assert.match((await wrapped.json()).error.message, /overloaded/);
+
+  const empty = await openAIUpstreamToAnthropicResponse(chatJson({ choices: [] }), {}, "m", "m");
+  assert.equal(empty.status, 502, "empty choices never become an empty message");
+
+  const garbage = await openAIUpstreamToAnthropicResponse(
+    new Response("not-json{{{", { status: 200, headers: { "content-type": "application/json" } }),
+    {},
+    "m",
+    "m",
+  );
+  assert.equal(garbage.status, 502);
+});
+
+test("response tree: stream:true answered with JSON becomes one-shot SSE", async () => {
+  const r = await openAIUpstreamToAnthropicResponse(
+    chatJson({ choices: [{ message: { role: "assistant", content: "streamed?" } }] }),
+    { stream: true },
+    "m",
+    "m",
+  );
+  assert.equal(r.status, 200);
+  const text = await r.text();
+  assert.match(text, /streamed\?/, "answer survives instead of an empty message");
+  assert.match(text, /data:/, "SSE framing");
+
+  const errEnvelope = await openAIUpstreamToAnthropicResponse(
+    chatJson({ error: { message: "bad key" } }),
+    { stream: true },
+    "m",
+    "m",
+  );
+  assert.equal(errEnvelope.status, 502);
+  assert.match((await errEnvelope.json()).error.message, /bad key/);
+});
+
+test("response tree: true SSE streams through translated", async () => {
+  const sseIn = [
+    'data: {"choices":[{"delta":{"content":"hel"}}]}',
+    "",
+    'data: {"choices":[{"delta":{"content":"lo"}}]}',
+    "",
+    "data: [DONE]",
+    "",
+  ].join("\n");
+  const r = await openAIUpstreamToAnthropicResponse(
+    new Response(sseIn, { status: 200, headers: { "content-type": "text/event-stream" } }),
+    { stream: true },
+    "m",
+    "m",
+  );
+  assert.equal(r.status, 200);
+  assert.match(r.headers.get("content-type") || "", /text\/event-stream/);
+  const text = await r.text();
+  assert.match(text, /data:/, "Anthropic SSE frames out");
 });

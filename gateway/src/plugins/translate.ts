@@ -76,7 +76,8 @@ const COUNT_PATH = "/v1/messages/count_tokens";
  * SSE), a stream:true request answered with a plain JSON completion
  * (wrapped as a one-shot Anthropic SSE), and a one-shot JSON completion.
  */
-async function openAIUpstreamToAnthropicResponse(
+// Exported for direct pins (SOLID Round-57; additive — call sites untouched).
+export async function openAIUpstreamToAnthropicResponse(
   upstream: Response,
   body: any,
   clientModel: string,
