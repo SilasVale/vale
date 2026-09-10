@@ -51,6 +51,7 @@ import {
   OG_FORCE_US_PROXY,
   OG_NATIVE_ANTHROPIC,
   OG_ZEN_ANTHROPIC,
+  SEARCH_CAPABLE_WIRE_MODELS,
   VERIFY_PATH,
   museResponsesExit,
   usProxyBase,
@@ -675,7 +676,18 @@ async function handleGatewayImpl(
           Array.isArray(body.tool_choice.tools) &&
           body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
     if (webSearchToolChoice && body && route.kind !== "commandgoat") {
-      const searchModel = "og/deepseek-v4-flash";
+      // A caller that already names a search-capable Flash-line model KEEPS it
+      // (2026-09-10): zen/go runs web_search natively on both wire slugs — V4's
+      // `deepseek-v4-flash` and the version-less lane `deepseek-flash` that
+      // og/deepseek-v4.1-flash remaps to (SEARCH_CAPABLE_WIRE_MODELS; live-
+      // verified on each: 200 + 4 searches). DSH's web-search provider therefore
+      // honours its configured `model` instead of being silently pinned to V4.
+      // Every other og/ model is still forced to the V4 slug: the translate-only
+      // models (minimax/mimo/kimi/glm) fabricate a query and return no
+      // web_search_tool_result (verified 2026-08-13).
+      const searchCapable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
+      const searchModel = searchCapable ? model : "og/deepseek-v4-flash";
+      const searchWireModel = searchCapable ? upstreamModel : "deepseek-v4-flash";
       // Swap when the route is NOT already the native search-capable
       // passthrough (covers the translate path AND US_PROXY=1 where the
       // flagship model would otherwise ride the broken chat/completions
@@ -684,11 +696,11 @@ async function handleGatewayImpl(
         model = searchModel;
         // eslint-disable-next-line no-useless-assignment
         effectiveModel = searchModel;
-        body.model = "deepseek-v4-flash";
-        upstreamModel = "deepseek-v4-flash";
+        body.model = searchWireModel;
+        upstreamModel = searchWireModel;
         // Rebuild rawText from the parsed body — the passthrough forwards
         // rawWithModel(rawText, upstreamModel), which overwrites the top-level
-        // model with upstreamModel; both now say deepseek-v4-flash.
+        // model with upstreamModel; both now say the same wire name.
         rawText = JSON.stringify(body);
         // round-116: the old swap set route.upstream to the RAW OG_ZEN_ANTHROPIC
         // constant — with US_PROXY=1 this silently bypassed the US exit that

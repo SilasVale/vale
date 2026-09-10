@@ -53,6 +53,23 @@ export const OG_WIRE_REMAP: Record<string, string> = {
   "deepseek-v4.1-flash": "deepseek-flash",
 };
 
+// zen/go server-side web_search capability, keyed by WIRE slug (i.e. after
+// OG_WIRE_REMAP — the search-model swap in plugins/translate.ts checks the wire
+// name). Both Flash-line slugs execute Anthropic's web_search_20250305 natively
+// and answer with server_tool_use + web_search_tool_result:
+//   - "deepseek-v4-flash" — the V4 slug (the long-standing search model);
+//   - "deepseek-flash"    — the version-less lane = V4.1, the remap target of
+//                           og/deepseek-v4.1-flash.
+// Live-verified 2026-09-10 against zen/go/v1/messages with a forced
+// tool_choice:{type:"tool",name:"web_search"}: HTTP 200 + 4 searches on each.
+// Every other og/ model on the translate path (minimax-m3, mimo-v2.5, kimi,
+// glm) fabricates a query and returns NO web_search_tool_result, so a search
+// request naming one of those still falls back to the V4 slug.
+export const SEARCH_CAPABLE_WIRE_MODELS: Set<string> = new Set([
+  "deepseek-v4-flash",
+  "deepseek-flash",
+]);
+
 // Model-level forced US egress. These og/ models are region-blocked when zen
 // is reached directly from CN clients, so requests ALWAYS ride a US exit
 // regardless of the global US_PROXY switch:

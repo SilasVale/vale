@@ -1561,6 +1561,59 @@ test("og web_search: explicit any-choice with a search tool forces the search mo
   assert.equal(sent.model, "deepseek-v4-flash");
 });
 
+// 2026-09-10: a caller that already names a search-capable Flash-line model
+// keeps it — og/deepseek-v4.1-flash remaps to the version-less lane slug
+// `deepseek-flash` (OG_WIRE_REMAP), which zen/go ALSO serves web_search on
+// natively (live-verified). DSH's web-search provider relies on this: its
+// `web-search-deepseek.model` setting now selects the searching model.
+test("og web_search: og/deepseek-v4.1-flash is honoured (lane slug, native search)", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  const res = await withFetch(async (url, init) => {
+    assert.equal(String(url), "https://opencode.ai/zen/go/v1/messages");
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "server_tool_use", name: "web_search", input: { query: "what's new" } },
+                { type: "web_search_tool_result", content: [{ type: "web_search_result", url: "https://example.com/a", title: "A" }] },
+                { type: "text", text: "search answer" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/deepseek-v4.1-flash", max_tokens: 100, stream: false,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      messages: [{ role: "user", content: "query: what's new" }],
+    }),
+  );
+  assert.equal(sent.model, "deepseek-flash");
+  assert.deepEqual(sent.tool_choice, { type: "tool", name: "web_search" });
+  assert.equal(res.status, 200);
+  const body = await res.json();
+  assert.equal(body.content.find((b) => b.type === "text").text, "search answer");
+});
+
+test("og web_search: og/deepseek-v4-flash stays on the V4 slug (no regression)", async () => {
+  const { env, token } = gwEnv();
+  let sent;
+  await withFetch(async (url, init) => {
+    sent = JSON.parse(String(init.body));
+    return new Response(JSON.stringify({
+      type: "message",
+      content: [{ type: "text", text: "search answer" }],
+      usage: { input_tokens: 10, output_tokens: 5 },
+    }), { status: 200, headers: { "content-type": "application/json" } });
+  }, () =>
+    post(env, token, {
+      model: "og/deepseek-v4-flash", max_tokens: 100, stream: false,
+      tools: [{ type: "web_search_20250305", name: "web_search" }],
+      tool_choice: { type: "tool", name: "web_search" },
+      messages: [{ role: "user", content: "query: what's new" }],
+    }),
+  );
+  assert.equal(sent.model, "deepseek-v4-flash");
+});
+
 // ── scanTopLevelModel / rawWithModel (CPU-safe model extraction) ──
 
 test("scanTopLevelModel: extracts top-level model", () => {
