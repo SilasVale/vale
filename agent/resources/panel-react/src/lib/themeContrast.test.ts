@@ -158,8 +158,10 @@ describe("recessed content surfaces", () => {
       '.plug-tag[data-state="ongoing"]',
       '.path-summary-live',
       '.path-step-tag.s-running',
-      '#session-control.held',
     ];
+    // `#session-control.held` uses the same token but is asserted by the
+    // component's OWN test — it ships in a separate change, and a pin that
+    // spans both would make each commit fail on the other's absence.
     for (const sel of sites) {
       const block = blockOf(css, sel);
       expect(
