@@ -141,10 +141,12 @@ fn poll_output_chunk(
 /// un-finalized tail; an incomplete sequence returns None and the caller
 /// keeps waiting for the next chunk.
 ///
-/// stage-l: LEGACY — the shell-injection OSC 133 marker was replaced by the
-/// Netcatty-style command wrapper (see wrap_execute_command / find_exec_marker).
+/// stage-l: LEGACY — the shell-injection OSC 133 marker was replaced, first
+/// by the Netcatty-style command wrapper (stage-l, later removed with its
+/// subsystem), now by OSC 633 shell integration (see
+/// crate::tools::terminal::shell_integration::find_finished).
 /// Kept only for the headless-stub path and backward-compat reads; new code
-/// must use find_exec_marker.
+/// must use shell_integration::find_finished.
 pub(super) fn find_prompt_marker(data: &[u8]) -> Option<(usize, usize, i32)> {
     const PREFIX: &[u8] = b"\x1b]133;D;";
     // round-100: the old code stopped at the FIRST prefix — a false
