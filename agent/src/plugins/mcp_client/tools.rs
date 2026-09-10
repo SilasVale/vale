@@ -603,51 +603,22 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     let _ = std::fs::create_dir_all(&pwout);
     let summary = mcp_action_summary(tool, args);
     let ts = crate::now_millis();
-    let line = serde_json::json!({
-        "ts": ts,
-        "duration_ms": dur_ms,
-        "exit_code": if ok { 0 } else { 1 },
-        "timed_out": false,
-        "script": format!("mcp: {summary}"),
-        "screenshots": [],
-        "stdout_tail": "",
-        "stderr_tail": "",
-    });
-    append_action_line(&line);
+    crate::evidence::append_action_line(
+        &pwout,
+        &serde_json::json!({
+            "ts": ts,
+            "duration_ms": dur_ms,
+            "exit_code": if ok { 0 } else { 1 },
+            "timed_out": false,
+            "script": format!("mcp: {summary}"),
+            "screenshots": [],
+            "stdout_tail": "",
+            "stderr_tail": "",
+        }),
+    );
     // round-252: event-driven AI-actions feed — panels refresh on this push
     // instead of polling actions.jsonl.
-    notify_actions_changed();
-}
-
-/// round-252: module-level event bus for the event-driven actions feed. Set
-/// once by McpClientPlugin (the registry owns the real bus); the tools emit
-/// `browser-actions-changed` after recording an action or screenshot.
-static ACTIONS_BUS: std::sync::OnceLock<std::sync::Arc<dyn vale_agent_core::EventBus>> =
-    std::sync::OnceLock::new();
-
-pub(crate) fn set_actions_bus(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) {
-    let _ = ACTIONS_BUS.set(bus);
-}
-
-/// Append one line to pwout/actions.jsonl (create/append) — the Evidence
-/// drawer's action feed. record_mcp_action and record_mcp_screenshot used
-/// to each inline this open/write pair.
-fn append_action_line(line: &impl std::fmt::Display) {
-    use std::io::Write;
-    let pwout = crate::paths::evidence_dir();
-    if let Ok(mut f) = std::fs::OpenOptions::new()
-        .create(true)
-        .append(true)
-        .open(pwout.join("actions.jsonl"))
-    {
-        let _ = writeln!(f, "{line}");
-    }
-}
-
-fn notify_actions_changed() {
-    if let Some(bus) = ACTIONS_BUS.get() {
-        bus.emit_term_output(serde_json::json!({ "ev": "browser-actions-changed" }));
-    }
+    crate::evidence::notify_changed();
 }
 
 /// round-246 (B5 part 2): append an action-timeline line that LINKS a real
@@ -662,19 +633,24 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
         return;
     };
     let ts = crate::now_millis();
-    let line = serde_json::json!({
-        "ts": ts,
-        "duration_ms": 0,
-        "exit_code": 0,
-        "timed_out": false,
-        "script": format!("mcp: screenshot -> {name}"),
-        "screenshots": [name],
-        "stdout_tail": "",
-        "stderr_tail": "",
-    });
-    append_action_line(&line);
+    // The same feed dir the blanket record_mcp_action above writes (the
+    // caller parks `dst` inside it) — resolved the same way, as before.
+    let dir = crate::paths::evidence_dir();
+    crate::evidence::append_action_line(
+        &dir,
+        &serde_json::json!({
+            "ts": ts,
+            "duration_ms": 0,
+            "exit_code": 0,
+            "timed_out": false,
+            "script": format!("mcp: screenshot -> {name}"),
+            "screenshots": [name],
+            "stdout_tail": "",
+            "stderr_tail": "",
+        }),
+    );
     // round-252: event-driven actions feed (screenshots refresh the drawer).
-    notify_actions_changed();
+    crate::evidence::notify_changed();
 }
 
 async fn spawn_stdio_server() -> Result<(McpSession, Vec<(String, String)>), DeviceError> {

@@ -17,13 +17,13 @@ use vale_agent_core::ToolDef;
 /// Plugin struct — tools close over shared connection state; the event bus
 /// powers the round-252 event-driven AI-actions feed (panels refresh on the
 /// `browser-actions-changed` push instead of polling actions.jsonl). The bus
-/// is handed to tools::set_actions_bus (module OnceLock); the plugin itself
-/// stays stateless.
+/// is handed to the evidence feed, which owns the producer side
+/// (crate::evidence::set_bus); the plugin itself stays stateless.
 pub struct McpClientPlugin;
 
 impl McpClientPlugin {
     pub fn new(bus: std::sync::Arc<dyn vale_agent_core::EventBus>) -> Self {
-        tools::set_actions_bus(bus);
+        crate::evidence::set_bus(bus);
         Self
     }
 }

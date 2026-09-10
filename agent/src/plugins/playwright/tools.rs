@@ -212,8 +212,10 @@ fn tool_browser_run_script() -> ToolDef {
                     .unwrap_or_default();
                 // P2: AI-action timeline — append one JSONL line per
                 // browser_run_script execution (the panel's Evidence view
-                // polls /api/browser/actions and renders these as the "what
-                // did the AI do" log, paired with the screenshot strip).
+                // reads /api/browser/actions and renders these as the "what
+                // did the AI do" log, paired with the screenshot strip). The
+                // line shape + the open/append pair are owned by
+                // crate::evidence (shared with the mcp-client producers).
                 let script_preview: String = {
                     let s = script_src.replace('\n', " ").trim().to_string();
                     if s.len() > 200 { format!("{}…", &s[..200]) } else { s }
@@ -222,19 +224,16 @@ fn tool_browser_run_script() -> ToolDef {
                 let stdout_full = trunc(stdout);
                 let stderr_full = trunc(stderr);
                 let tail = |s: &str| s.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>();
-                let _ = std::fs::OpenOptions::new().create(true).append(true).open(out_dir.join("actions.jsonl")).and_then(|mut f| {
-                    use std::io::Write;
-                    writeln!(f, "{}", serde_json::json!({
-                        "ts": ts,
-                        "duration_ms": duration_ms,
-                        "exit_code": exit_code,
-                        "timed_out": timed_out,
-                        "script": script_preview,
-                        "screenshots": after,
-                        "stdout_tail": tail(&stdout_full),
-                        "stderr_tail": tail(&stderr_full),
-                    }))
-                });
+                crate::evidence::append_action_line(&out_dir, &serde_json::json!({
+                    "ts": ts,
+                    "duration_ms": duration_ms,
+                    "exit_code": exit_code,
+                    "timed_out": timed_out,
+                    "script": script_preview,
+                    "screenshots": after,
+                    "stdout_tail": tail(&stdout_full),
+                    "stderr_tail": tail(&stderr_full),
+                }));
                 Ok(to_value_or_empty(json!({
                     "exit_code": exit_code,
                     "timed_out": timed_out,

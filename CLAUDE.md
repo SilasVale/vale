@@ -78,9 +78,12 @@ running every downstream test gate.
   `mcp-errors.ts` (tool-failure code family)
 - agent: `vale-command-core` (Plugin/ToolDef/Config/EventBus contract — import
   via `vale_agent_core::`), `paths.rs`, `state.rs` (ConfigHandle), `web/`
-  helpers, `tunnel.rs`, `session_log.rs` (durable audit trail, best-effort
-  writes, 30 d retention), `lib/ratelimit`-equivalent: bounded subprocess
-  runners (`runSchtasks`/`run_bounded`)
+  helpers, `evidence.rs` (the pwout AI-evidence feed — ONE owner for the
+  actions.jsonl append/newest-first read, the shot listing, the basename guard
+  and the `browser-actions-changed` push; two producers: the playwright tools
+  and the mcp-client tools), `tunnel.rs`, `session_log.rs` (durable audit
+  trail, best-effort writes, 30 d retention), `lib/ratelimit`-equivalent:
+  bounded subprocess runners (`runSchtasks`/`run_bounded`)
 - vale CLI: network calls go through the bounded-fetch layer (see vale.ts) —
   no bare `fetch` in feature code
 

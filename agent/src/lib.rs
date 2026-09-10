@@ -80,6 +80,10 @@ pub mod tunnel_ctl {
         }
     }
 }
+/// Internal-only (no embedding consumer): the AI-evidence feed contract is
+/// crate-private — its playwright + mcp-client producers and the web reader
+/// all live in this crate.
+pub(crate) mod evidence;
 pub mod filelog;
 pub mod mcp;
 pub mod metrics;

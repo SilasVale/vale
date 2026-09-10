@@ -129,8 +129,15 @@ correctness is.
 | 94 | agent terminal | tests | secret-tool validation without a keychain | +1 | `3e2a03cb` |
 | 95 | audits | verify | dep drift check + build.sh/CI wiring verification | — | — |
 | 96 | extension | SRP/tests | studio-links pure core to shared + path pins | +5 | `3a1346dc` |
-| 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | (this commit: the ledger row cannot name its own final hash) |
-| 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
+| 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | `4648be01` |
+| 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | (this commit: the ledger row cannot name its own final hash) |
+
+> **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
+> after R97 (an R97 editing accident — R56 already has its row in sequence at
+> line 92) is removed. Also, the R97-recounted agent gate total (409) was
+> ALREADY stale when written: the suites measured 412 before R98's changes
+> (364 lib → 366; the extra 2 are post-recount tree drift, not program work).
+> R98's rows use measured values only.
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
 > overstated gateway pins (+85/+89/+90 across R50/R53/R54 reports) by
@@ -143,7 +150,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +94 · agent lib +17 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +26 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
@@ -163,3 +170,19 @@ Gateway +94 · agent lib +17 · core +7 · CLI +4 · relay +54 · extension +9 �
   on record.
 - Panel-react, hardware-gated backends, Electron main: covered or
   deliberately untestable — see round notes, not revisit-worthy.
+- **SUGGESTION for the human (R98 finding, NOT acted on):**
+  `update::tools::host_of()` strips a bare IPv6 loopback URL
+  (`http://[::1]:8080/x` → host `[`) so such a URL can never pass
+  `check_download_url`'s loopback exemption — the existing `"::1"` match arm
+  is dead. The code documents this deliberately ("widening a SYSTEM-execution
+  gate is a product decision"), so R98 left it alone. One-line fix if wanted:
+  use `reqwest::Url` for host parsing (already a dependency) — testable
+  without widening the gate, since the verdicts are pure.
+- `agent_update` (`update/tools.rs`, 327 lines) and `tool_execute`
+  (`terminal/tools/exec.rs`, 622 lines) are the two remaining agent
+  monoliths. Both are ~entirely `#[cfg(windows)]` or process-plumbing
+  bodies where extraction would scatter the documented sequencing
+  (stage → swap-script → WMI hand-off; spawn → bounded capture → kill-tree).
+  Next rounds should audit them for a PURE decision core (like R98's
+  `host_of`/`check_download_url`/`pin_blocks` already are) rather than
+  split the I/O.

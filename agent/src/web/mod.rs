@@ -252,18 +252,16 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
     // current_exe()'s parent while the WRITE side (playwright tools)
     // uses the registry install_dir() — the exact 1.2.219 /api/sessions
     // blindness pattern. Same source of truth now.
+    //
+    // The feed's storage contract (actions.jsonl shape, shot listing,
+    // basename guard) is owned by crate::evidence — the producers
+    // (browser_run_script, the mcp-client tools) append through the same
+    // module, so a shape change has exactly one place to land.
     let pwout = crate::paths::evidence_dir();
     // P2: AI-action timeline — the JSONL written by browser_run_script
     // (one line per execution). Return newest-first, capped at 50.
     if path == "/api/browser/actions" {
-        let mut actions: Vec<serde_json::Value> = Vec::new();
-        if let Ok(contents) = std::fs::read_to_string(pwout.join("actions.jsonl")) {
-            for line in contents.lines().rev().take(50) {
-                if let Ok(v) = serde_json::from_str::<serde_json::Value>(line) {
-                    actions.push(v);
-                }
-            }
-        }
+        let actions = crate::evidence::recent_actions(&pwout, 50);
         return Some(built_response(
             StatusCode::OK,
             "application/json",
@@ -271,32 +269,7 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
         ));
     }
     if path == "/api/browser/pwshots" {
-        let mut shots: Vec<serde_json::Value> = Vec::new();
-        if let Ok(rd) = std::fs::read_dir(&pwout) {
-            for e in rd.filter_map(|e| e.ok()) {
-                let name = e.file_name().to_string_lossy().to_string();
-                if !name.ends_with(".png") {
-                    continue;
-                }
-                let meta = e.metadata().ok();
-                let mtime_ms = meta
-                    .as_ref()
-                    .and_then(|m| m.modified().ok())
-                    .map(|t| {
-                        t.duration_since(std::time::UNIX_EPOCH)
-                            .map(|d| d.as_millis())
-                            .unwrap_or(0)
-                    })
-                    .unwrap_or(0);
-                shots.push(serde_json::json!({
-                    "name": name,
-                    "mtime_ms": mtime_ms,
-                    "size": meta.map(|m| m.len()).unwrap_or(0),
-                }));
-            }
-        }
-        shots.sort_by(|a, b| b["mtime_ms"].as_u64().cmp(&a["mtime_ms"].as_u64()));
-        shots.truncate(40);
+        let shots = crate::evidence::list_shots(&pwout, 40);
         return Some(built_response(
             StatusCode::OK,
             "application/json",
@@ -305,7 +278,7 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
     }
     // /api/browser/pwshot?name=xxx — serve one screenshot (basename only)
     let name = query_param(query, "name").unwrap_or("");
-    if name.is_empty() || name.contains('/') || name.contains('\\') || name.contains("..") {
+    if !crate::evidence::shot_name_is_safe(name) {
         return Some(built_response(
             StatusCode::BAD_REQUEST,
             "text/plain",

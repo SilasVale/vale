@@ -36,6 +36,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | `gateway/src/store/` | KV domains (users/admin/settings/devices/regkeys/plugins/grants) behind the shim; `cache.ts` is the SINGLE process-global cache; no inter-domain cycles | bc64b8fb |
 | `gateway/src/lib/` | cross-plugin policy factories (ratelimit) | 931f42d6 |
 | `agent/src/web/` | mod.rs auth+dispatch+handlers; panel.rs (static+grant redemption); sse.rs (streams) | 02193d37 |
+| `agent/src/evidence.rs` | the pwout AI-evidence feed contract (actions.jsonl append/newest-first read, shot listing, basename guard, `browser-actions-changed` push) — ONE owner for both producers + the web reader (SOLID R98) | evidence.rs header |
 | `agent/src/plugins/terminal/tools/` | ctx.rs (shared state) ← per-domain builders (exec/sessions/files/output/secrets/connections); mod.rs owns registration order | f869d432 |
 | `agent/src/tools/` | TRANSPORTS (ssh=russh, serial=SerialPool) UNDER the terminal backends; the two ssh.rs are layers, not duplicates | da6a6137 |
 | `index/src/` | single-file router + extracted pure modules (claim.js, page.js) | 81b1c40f |
@@ -67,6 +68,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 | agent TerminalManager | 1071-line session orchestration over 3 backends — size inherent to owning PTY/SSH/serial lifecycles with the documented lock discipline (round-92/94/55); a split would scatter the lock policy | ece266d4 review |
 | agent terminal spill helpers | spill_path is the single Option choke point for spill-file access; writers fail closed (SOLID R6, review-#8 completion: validation lived only on the read path) | tools/ctx.rs header |
 | agent state.rs | write-through ConfigHandle: file before swap under one guard (ADR 0005) | c579b311 |
+| agent evidence.rs | the pwout AI-evidence feed. Before R98 the JSONL open/append pair lived in TWO producers (playwright `browser_run_script` inline, mcp-client private helper), the refresh push was a mcp-client-private OnceLock (a second producer could not signal), and the reader in web/mod.rs re-implemented the shape by hand — a shape change had three places to land. Now: dir is a PARAMETER (contract unit-testable against a temp dir; paths.rs keeps the resolution), producers only supply payloads. Promotion held all three conditions (2 real producers + the round-245/252 evidence-feed incident lessons + zero env coupling) | evidence.rs header (R98) |
 | index single file | appropriate at current size; page template + claim logic extracted | 81b1c40f |
 | extension | code-server folder-link rewriter ("Vale Code Links"): no tokens, no network probes since ADR 0006 (pure-local resolution); manifest + README + default origin (`vscode.saisi.online`) re-synced 2026-09-08 | ADR 0006, 2026-09-08 sweep |
 | ~~studio~~ | RETIRED 2026-09-06 (ADR 0006): replaced by code-server behind Access (vscode.saisi.online → 127.0.0.1:7739, password + Access double gate); the extension deep-link target switched to code-server folder-open. Its 41-test suite and lib/ modules are preserved in git history. Post-retirement sweep: code.saisi.online still resolves but is Access-gated with its own app (no unauthenticated exposure) | ADR 0006 |
@@ -74,7 +76,7 @@ auth: admin token + scoped relay credential (role "relay", ADR 0007) — relay p
 ## Foundation layers (features build on these; changes run every downstream gate)
 
 - **gateway**: http.ts, auth.ts (safeEq/randomHex/HMAC/CSRF), session.ts, reliability.ts, upstream.ts, channels.ts, body-scan.ts, device-fetch.ts (device dialing + SSRF guard stack), store/cache.ts, lib/ratelimit.ts, mcp-errors.ts
-- **agent**: vale-command-core, paths.rs, state.rs ConfigHandle, web/ helpers, session_log.rs (audit trail), bounded subprocess runners
+- **agent**: vale-command-core, paths.rs, state.rs ConfigHandle, evidence.rs (pwout AI-evidence feed: append/newest-first read/basename guard/push), web/ helpers, session_log.rs (audit trail), bounded subprocess runners
 - ~~studio~~: RETIRED with the code (ADR 0006) — lib/fsapi.mjs, lib/auth.mjs, lib/pty.mjs, lib/watch.mjs, lib/terminals.mjs live in git history only
 - **vale CLI**: boundedFetch — every network call goes through it (6cd81347)
 - **test harnesses**: gateway test/helpers.mjs, proxies per-file stubs (studio test/helpers.mjs retired with the code)
@@ -103,7 +105,7 @@ false failures. Suites are green only under their own runners.
 | Subproject | Gate | Count |
 |---|---|---|
 | gateway | tsc + eslint(src+ui) + prettier + node --test | 712 (709 → 712, relay-matrix R81; suite green) |
-| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 409 feat-gated terminal,keyring (recounted 2026-09-09: 364 lib + 5 bin + 2 dep-surface + 27 + 1 + 2 + 7 + 1 integration; default-config lib 357; xwin gate re-verified R33; suite green) |
+| agent | cargo test + clippy -D warnings + fmt --check + xwin check | 421 feat-gated terminal,keyring (recounted R98: 375 lib — includes +9 evidence-feed pins — + 6 bin + 2 dep-surface + 27 + 1 + 2 + 7 + 1 integration; the pre-R98 row (409 = 364 + 5 + …) was ALREADY stale by 3 from post-recount tree drift — real pre-round baseline 412; default-config lib 368; xwin gate re-verified R98; suite green) |
 | vale-agent-core | cargo test + clippy -D warnings + fmt --check | 22 (15 + 7 SOLID-program pins R11–R12; suite green) |
 | vale CLI (npm) | node --test | 20 (16 + 4 SOLID-program pins R17: boxed-manifest contract; suite green) |
 | api-relay (vrelay) | node --test + build-relay.sh bundle build | 54 (0 → 49 across SOLID R18–R23; 49 → 54 across R67–R69 no-body/plumbing/header-merge; suite green) |
