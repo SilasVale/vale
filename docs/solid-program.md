@@ -116,7 +116,8 @@ correctness is.
 | 81 | gateway translate | SRP/tests | result-relay export + breaker recording matrix pins | +3 | `cf91d2a9` |
 | 82 | audits | verify | behavior-preservation audit: all program commits classified, zero drift | — | — |
 | 83 | audits | verify | mutation proof: recordOgBodyFailure flag matters (precise kill) | — | — |
-| 84 | docs | docs | ledger R81–84 + gateway recount | — | (this commit: the ledger row cannot name its own final hash) |
+| 84 | docs | docs | ledger R81–84 + gateway recount | — | `ad429f92` |
+| 85 | docs | docs | ledger R84–85 (record exactness) | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
