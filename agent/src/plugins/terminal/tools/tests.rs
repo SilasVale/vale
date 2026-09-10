@@ -1161,3 +1161,27 @@ async fn diag_write_requires_line() {
         "missing line is a caller error, got: {res:?}"
     );
 }
+
+// SOLID Round-94: the six secret tools had zero dispatch pins — the
+// keychain itself is hardware-gated (correctly untested headless), but
+// require_str validation runs BEFORE any backend touch, in both configs.
+// A missing field must be InvalidParams, never a keychain attempt.
+#[tokio::test]
+async fn secret_tools_reject_missing_fields_before_the_keychain() {
+    let (tools, _buf) = seeded_tools();
+    for (name, params) in [
+        ("terminal_secret_set", json!({})),
+        ("terminal_secret_set", json!({"target": "u@h:22"})),
+        ("secret_set", json!({"target": "u@h:22"})),
+        ("terminal_secret_get", json!({})),
+        ("secret_get", json!({})),
+        ("terminal_secret_delete", json!({})),
+        ("secret_delete", json!({})),
+    ] {
+        let res = find(&tools, name).handler.call(params).await;
+        assert!(
+            matches!(res, Err(vale_agent_core::DeviceError::InvalidParams { .. })),
+            "{name} validates without a keychain, got: {res:?}"
+        );
+    }
+}
