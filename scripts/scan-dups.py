@@ -66,6 +66,14 @@ def collect_files(roots, exts):
                 files.append(p)
     return files
 
+# Rust integration/test-only files (tests.rs, *_test.rs) and their
+# in-tree fixtures are scaffolding, not production signal — excluded
+# the same way JS *.test.* files are (round-50). Module level (SOLID
+# Round-62: was nested in main(), untestable) so the predicate is pinned.
+def is_test_file(p: str) -> bool:
+    base = p.rsplit("/", 1)[-1]
+    return base.endswith("tests.rs") or base.endswith("_test.rs")
+
 def main():
     ap = argparse.ArgumentParser(description=__doc__)
     ap.add_argument("--window", type=int, default=6)
@@ -86,10 +94,6 @@ def main():
     # Rust integration/test-only files (tests.rs, *_test.rs) and their
     # in-tree fixtures are scaffolding, not production signal — excluded
     # the same way JS *.test.* files are (round-50).
-    def is_test_file(p: str) -> bool:
-        base = p.rsplit("/", 1)[-1]
-        return base.endswith("tests.rs") or base.endswith("_test.rs")
-
     files = [
         p for p in collect_files(args.roots, (".rs", ".ts", ".tsx", ".js", ".mjs"))
         if not is_test_file(p)
