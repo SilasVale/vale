@@ -35,7 +35,6 @@ use std::sync::Arc;
 use crate::plugins::terminal::{DiagStore, OutputBuf};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
-use ctx::JobsMap;
 use vale_agent_core::{EventBus, ToolDef};
 
 pub(super) fn build(
@@ -47,25 +46,36 @@ pub(super) fn build(
     logger: &crate::session_log::SessionLogger,
     buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
 ) -> Vec<ToolDef> {
-    let jobs: JobsMap =
-        std::sync::Arc::new(std::sync::Mutex::new(std::collections::HashMap::new()));
+    // ONE context (SOLID R112) instead of threading seven parameters into each
+    // builder. Builders that need a single dependency still take that
+    // dependency (`&ctx.output_buf`, `&ctx.jobs`) — see ToolCtx's note on why
+    // the context is not imposed on them.
+    let ctx = ctx::ToolCtx::new(
+        terminal_mgr.clone(),
+        serial_pool.clone(),
+        bus.clone(),
+        output_buf.clone(),
+        diag.clone(),
+        logger.clone(),
+        buffer_limit.clone(),
+    );
     let mut tools = vec![
-        sessions::tool_open(terminal_mgr, bus, output_buf, logger, buffer_limit),
-        exec::tool_jobs(&jobs),
-        sessions::tool_write(terminal_mgr),
-        sessions::tool_close(terminal_mgr, bus, output_buf),
-        sessions::tool_list(terminal_mgr),
-        output::tool_history(terminal_mgr, output_buf),
-        exec::tool_execute(terminal_mgr, bus, output_buf, logger, &jobs),
-        sessions::tool_list_ports(serial_pool),
-        sessions::tool_resize(terminal_mgr),
-        sessions::tool_select(terminal_mgr),
-        output::tool_read(output_buf),
-        output::tool_screen(output_buf),
-        output::tool_diag_write(diag),
-        output::tool_diag_read(diag),
+        sessions::tool_open(&ctx),
+        exec::tool_jobs(&ctx.jobs),
+        sessions::tool_write(&ctx.terminal_mgr),
+        sessions::tool_close(&ctx),
+        sessions::tool_list(&ctx.terminal_mgr),
+        output::tool_history(&ctx),
+        exec::tool_execute(&ctx),
+        sessions::tool_list_ports(&ctx.serial_pool),
+        sessions::tool_resize(&ctx.terminal_mgr),
+        sessions::tool_select(&ctx.terminal_mgr),
+        output::tool_read(&ctx.output_buf),
+        output::tool_screen(&ctx.output_buf),
+        output::tool_diag_write(&ctx.diag),
+        output::tool_diag_read(&ctx.diag),
         connections::tool_saved_connections(),
-        connections::tool_connect_saved(terminal_mgr, bus, output_buf, logger, buffer_limit),
+        connections::tool_connect_saved(&ctx),
         connections::tool_forget_saved(),
         exec::tool_terminal_env(),
     ];

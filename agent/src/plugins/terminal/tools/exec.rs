@@ -9,9 +9,8 @@ use std::sync::Arc;
 use std::time::Instant;
 
 use super::ctx::{session_lost, JobInfo, JobsMap};
-use crate::plugins::terminal::{clean_terminal_output, OutputBuf};
+use crate::plugins::terminal::clean_terminal_output;
 use crate::plugins::{require_str, to_value_or_empty};
-use crate::tools::terminal::TerminalManager;
 use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
 
 /// Build the session-mode execute result JSON (round-157): a partial (idle)
@@ -619,18 +618,12 @@ async fn execute_local(
     }))
 }
 
-pub(super) fn tool_execute(
-    terminal_mgr: &Arc<TerminalManager>,
-    bus: &Arc<dyn EventBus>,
-    output_buf: &OutputBuf,
-    logger: &crate::session_log::SessionLogger,
-    jobs: &JobsMap,
-) -> ToolDef {
-    let terminal_mgr = terminal_mgr.clone();
-    let buf = output_buf.clone();
-    let bus = bus.clone();
-    let logger = logger.clone();
-    let jobs = jobs.clone();
+pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
+    let terminal_mgr = ctx.terminal_mgr.clone();
+    let buf = ctx.output_buf.clone();
+    let bus = ctx.bus.clone();
+    let logger = ctx.logger.clone();
+    let jobs = ctx.jobs.clone();
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated, still_running}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX and `still_running=true` — the command is STILL RUNNING, continue with terminal_read(offset=read_from) until you see the prompt/exit. NEVER re-run a command or open a new session just because a partial was returned: the output arrives in the SAME session's buffer; opening new sessions (terminal_open) while old commands run is what causes output to look interleaved/queued. Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 3s, serial 4s, pty 1s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",

@@ -338,7 +338,26 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R111 — append-only JSONL hygiene has one
+Last updated: 2026-09-10 SOLID-R112 — the terminal tool builders take ONE
+  context. `build()` threaded seven parameters by hand and three builders took
+  five each, but the cost was never the typing: the terminal tools keep
+  gaining shared state (`buffer_limit` round-68, `jobs`, `diag`) and every
+  addition re-churned every signature and call site. `ToolCtx` (ctx.rs) now
+  names the shared set once, and `jobs` moves from `build()`'s local into it —
+  its two consumers, the executor and `terminal_jobs`, are exactly the pair
+  review #2 established must share ONE map (a process-global accessor once let
+  the background waiter write a different map than the inserts read, so
+  `terminal_jobs` never observed completion). Deliberately NOT imposed on
+  single-dependency builders: `tool_read(&ctx.output_buf)` and
+  `tool_diag_read(&ctx.diag)` keep focused signatures — the
+  interface-segregation half of the same principle. Bonus: the documented
+  "connections reuses sessions::tool_open" exception no longer unpacks five
+  locals back into five arguments. Pure interface refactor (±0 pins); agent
+  gates 472 feat-gated / 465 default green, clippy -D warnings clean both
+  configs, fmt clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R111 — append-only JSONL hygiene has one
   owner. Found with a normalized 5-line cross-file clone detector rather than
   by reading files one at a time: the crash-safety rules for append-only
   line-oriented files were duplicated in `session_log.rs` and

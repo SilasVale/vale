@@ -10,8 +10,69 @@
 use std::collections::HashMap;
 use std::sync::{Arc, OnceLock};
 
+use crate::session_log::SessionLogger;
+use crate::tools::serial::SerialPool;
 use crate::tools::terminal::TerminalManager;
-use vale_agent_core::DeviceError;
+use vale_agent_core::{DeviceError, EventBus};
+
+use crate::plugins::terminal::{DiagStore, OutputBuf};
+
+/// The shared runtime state every terminal tool closes over (SOLID R112).
+///
+/// A PARAMETER OBJECT, not a bag for its own sake. Before it, each builder
+/// listed the subset of this state it happened to need: the largest three
+/// took five parameters each, and `build()` threaded SEVEN through by hand.
+/// The cost was not the typing — it was that the terminal tools keep gaining
+/// shared state (`buffer_limit` in round-68, `jobs` for background commands,
+/// `diag` for the panel ring) and every addition re-churned every signature
+/// and every call site. With the context named once, a new shared dependency
+/// is a field plus the builders that actually use it.
+///
+/// Deliberately NOT imposed on every builder: the ones that need a single
+/// dependency keep that dependency in their signature (`tool_read(&OutputBuf)`,
+/// `tool_diag_read(&DiagStore)`). Handing them the whole context would widen
+/// their interface for no benefit — the interface-segregation half of the same
+/// principle. The context is for builders that genuinely need several.
+#[derive(Clone)]
+pub(super) struct ToolCtx {
+    pub terminal_mgr: Arc<TerminalManager>,
+    pub serial_pool: Arc<SerialPool>,
+    pub bus: Arc<dyn EventBus>,
+    pub output_buf: OutputBuf,
+    pub diag: DiagStore,
+    pub logger: SessionLogger,
+    pub buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
+    /// Background-job registry. Created HERE (not by `build`) because it is
+    /// process-lifetime shared state with exactly two consumers — the executor
+    /// that inserts jobs and `terminal_jobs` that reads them. Review #2
+    /// established these must be the SAME map: an earlier process-global
+    /// accessor let the background waiter write one map while inserts read
+    /// another, so `terminal_jobs` never observed completion.
+    pub jobs: JobsMap,
+}
+
+impl ToolCtx {
+    pub(super) fn new(
+        terminal_mgr: Arc<TerminalManager>,
+        serial_pool: Arc<SerialPool>,
+        bus: Arc<dyn EventBus>,
+        output_buf: OutputBuf,
+        diag: DiagStore,
+        logger: SessionLogger,
+        buffer_limit: Arc<std::sync::atomic::AtomicUsize>,
+    ) -> Self {
+        Self {
+            terminal_mgr,
+            serial_pool,
+            bus,
+            output_buf,
+            diag,
+            logger,
+            buffer_limit,
+            jobs: std::sync::Arc::new(std::sync::Mutex::new(HashMap::new())),
+        }
+    }
+}
 
 /// Background-job record (refactor Phase 3): gives run_in_background
 /// commands completion semantics — callers poll terminal_jobs instead of

@@ -5,12 +5,9 @@
 //! monolithic `plugins/terminal/tools.rs`.
 
 use serde_json::{json, Value};
-use std::sync::Arc;
 
-use crate::plugins::terminal::OutputBuf;
 use crate::plugins::{require_str, tool_error};
-use crate::tools::terminal::TerminalManager;
-use vale_agent_core::{DeviceError, EventBus, ToolDef};
+use vale_agent_core::{DeviceError, ToolDef};
 // The reconnect path reuses the open tool's full handler — terminal-feature
 // only (headless builds return the explicit "terminal feature disabled"
 // error without it).
@@ -74,33 +71,22 @@ pub(super) fn tool_forget_saved() -> ToolDef {
 /// Reconnect to a saved connection by id (round-70). The saved params are
 /// replayed through terminal_open (baud/parity/rows/cols preserved), so a
 /// serial console reconnects at the same link config without re-typing it.
-pub(super) fn tool_connect_saved(
-    terminal_mgr: &Arc<TerminalManager>,
-    bus: &Arc<dyn EventBus>,
-    output_buf: &OutputBuf,
-    logger: &crate::session_log::SessionLogger,
-    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
-) -> ToolDef {
-    let terminal_mgr = terminal_mgr.clone();
-    let bus = bus.clone();
-    let buf = output_buf.clone();
-    let logger = logger.clone();
-    let buffer_limit = buffer_limit.clone();
+pub(super) fn tool_connect_saved(ctx: &super::ctx::ToolCtx) -> ToolDef {
+    // Own a clone of the context: the handler closure is `move`, so a BORROWED
+    // `&ToolCtx` would not outlive it. One clone of the context replaces the
+    // five individual clones this builder used to carry.
+    let ctx = ctx.clone();
     ToolDef::new(
         "terminal_connect_saved",
         "Reconnect to a saved terminal connection (from terminal_saved_connections) by id. Replays the saved params through terminal_open; returns the new session id. Optional params override the saved ones.",
         json!({"type":"object","properties":{"id":{"type":"string","description":"The id (kind:target) from terminal_saved_connections."},"rows":{"type":"integer"},"cols":{"type":"integer"}},"required":["id"]}),
         move |params: Value| {
-            let terminal_mgr = terminal_mgr.clone();
-            let bus = bus.clone();
-            let buf = buf.clone();
-            let logger = logger.clone();
-            let buffer_limit = buffer_limit.clone();
+            let ctx = ctx.clone();
             async move {
                 let id = require_str(&params, "id")?;
                 // round-109: headless — silence the unused closure clones.
                 #[cfg(not(feature = "terminal"))]
-                let _ = (&terminal_mgr, &bus, &buf, &logger, &buffer_limit, &id);
+                let _ = (&ctx, &id);
                 // round-108: saved connections are terminal-feature only.
                 #[cfg(feature = "terminal")]
                 {
@@ -137,16 +123,13 @@ pub(super) fn tool_connect_saved(
                     // Overrides: rows/cols from the caller win.
                     if let Some(r) = params.get("rows") { open_params.insert("rows".into(), r.clone()); }
                     if let Some(c) = params.get("cols") { open_params.insert("cols".into(), c.clone()); }
-                    // Reuse the open handler's full body (prompt-marker injection,
-                    // audit, connection memory) via a fresh closure.
-                    let handler = {
-                        let terminal_mgr = terminal_mgr.clone();
-                        let bus = bus.clone();
-                        let buf = buf.clone();
-                        let logger = logger.clone();
-                        let buffer_limit = buffer_limit.clone();
-                        tool_open(&terminal_mgr, &bus, &buf, &logger, &buffer_limit).handler
-                    };
+                    // Reuse the open handler's full body (prompt-marker
+                    // injection, audit, connection memory) via a fresh
+                    // closure. With the context this is ONE call: the module
+                    // doc's "connections reuses sessions::tool_open" exception
+                    // no longer needs five locals unpacked back into five
+                    // arguments.
+                    let handler = tool_open(&ctx).handler;
                     return handler.call(serde_json::Value::Object(open_params)).await;
                 }
                 #[cfg(not(feature = "terminal"))]

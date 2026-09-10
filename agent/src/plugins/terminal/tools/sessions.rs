@@ -13,11 +13,11 @@ use super::ctx::{
     append_spill, ensure_session_known, persist_pre_restart, pre_restart_map, rotate_spill,
     MAX_SPILL_BYTES,
 };
-use crate::plugins::terminal::{OutputBuf, SessionBuf};
+use crate::plugins::terminal::SessionBuf;
 use crate::plugins::{require_str, to_value_or_empty};
 use crate::tools::serial::SerialPool;
 use crate::tools::terminal::{parse_serial_target, parse_ssh_target, TerminalManager};
-use vale_agent_core::{recover_guard, AgentEvent, DeviceError, EventBus, ToolDef};
+use vale_agent_core::{recover_guard, AgentEvent, DeviceError, ToolDef};
 
 // P2-5: drainer frames rerouted after a vanished history entry (warn path
 // below). Monotonic process-lifetime counter — a rising value means the
@@ -48,18 +48,13 @@ fn close_event(kind: &str, sid: &str) -> AgentEvent {
 /// compile-time constant (1MB → 8MB round-68) — a serial console scrolling
 /// GPON logs wrapped in seconds, and the value was unchangeable without a
 /// rebuild.
-pub(super) fn tool_open(
-    terminal_mgr: &Arc<TerminalManager>,
-    bus: &Arc<dyn EventBus>,
-    output_buf: &OutputBuf,
-    logger: &crate::session_log::SessionLogger,
-    buffer_limit: &Arc<std::sync::atomic::AtomicUsize>,
-) -> ToolDef {
-    let terminal_mgr = terminal_mgr.clone();
-    let bus = bus.clone();
-    let buf = output_buf.clone();
-    let logger = logger.clone();
-    let buffer_limit = buffer_limit.clone();
+pub(super) fn tool_open(ctx: &super::ctx::ToolCtx) -> ToolDef {
+    // Shared runtime state arrives as ONE context (SOLID R112) — see ToolCtx.
+    let terminal_mgr = ctx.terminal_mgr.clone();
+    let bus = ctx.bus.clone();
+    let buf = ctx.output_buf.clone();
+    let logger = ctx.logger.clone();
+    let buffer_limit = ctx.buffer_limit.clone();
     ToolDef::new(
         "terminal_open",
         "Open a terminal connection. Kind: 'pty' (local shell; target optional — blank = default shell), 'ssh' (target=user@host:port), or 'serial' (target=port_name, optional ?baud=N&parity=E&data=8&stop=1 e.g. /dev/ttyUSB0?baud=9600&parity=even&data=8&stop=1, default 115200 8N1). Returns session ID.",
@@ -366,14 +361,10 @@ pub(super) fn tool_write(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     )
 }
 
-pub(super) fn tool_close(
-    terminal_mgr: &Arc<TerminalManager>,
-    bus: &Arc<dyn EventBus>,
-    output_buf: &OutputBuf,
-) -> ToolDef {
-    let terminal_mgr = terminal_mgr.clone();
-    let bus = bus.clone();
-    let buf = output_buf.clone();
+pub(super) fn tool_close(ctx: &super::ctx::ToolCtx) -> ToolDef {
+    let terminal_mgr = ctx.terminal_mgr.clone();
+    let bus = ctx.bus.clone();
+    let buf = ctx.output_buf.clone();
     ToolDef::new(
         "terminal_close",
         "Close a terminal session.",

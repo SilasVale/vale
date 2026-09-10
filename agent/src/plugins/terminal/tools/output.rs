@@ -5,14 +5,12 @@
 //! `plugins/terminal/tools.rs`.
 
 use serde_json::{json, Value};
-use std::sync::Arc;
 
 use super::ctx::{read_spill, spill_path};
 use crate::plugins::require_str;
 use crate::plugins::terminal::{
     clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf,
 };
-use crate::tools::terminal::TerminalManager;
 use vale_agent_core::{recover_guard, ToolDef};
 
 /// Byte range of the last `lines` CONTENT lines in `data`: trailing blank
@@ -40,9 +38,9 @@ pub(super) fn tail_n_lines(data: &[u8], lines: usize) -> (usize, usize) {
 
 // ── History ───────────────────────────────────────
 
-pub(super) fn tool_history(terminal_mgr: &Arc<TerminalManager>, output_buf: &OutputBuf) -> ToolDef {
-    let terminal_mgr = terminal_mgr.clone();
-    let buf = output_buf.clone();
+pub(super) fn tool_history(ctx: &super::ctx::ToolCtx) -> ToolDef {
+    let terminal_mgr = ctx.terminal_mgr.clone();
+    let buf = ctx.output_buf.clone();
     ToolDef::new(
         "terminal_history",
         "List ALL terminal sessions, including closed ones retained in history. Each entry: {id, kind, label, status: 'live'|'closed', bytes, closed_at? (unix seconds), exit_code? (natural shell exit code)}. Closed entries sorted newest-first.",
