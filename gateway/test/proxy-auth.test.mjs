@@ -328,7 +328,7 @@ test("decodeDeviceName: decodes, passes plain through, null on bad escapes", asy
 });
 
 test("rewriteDeviceBody via proxy: mount insert, token scrub, no double-prefix", async () => {
-  // rewriteDeviceBody is module-private; exercise it through the admin
+  // rewriteDeviceBody is exported but this exercises it through the admin
   // proxy path (static imports above) with a device serving crafted HTML.
   const env = makeBaseEnv({
     devices: [DEVICE],
@@ -337,10 +337,12 @@ test("rewriteDeviceBody via proxy: mount insert, token scrub, no double-prefix",
   });
   const cookie = await issueSessionToken(ADMIN_PW, "admin", "admin");
   const html = [
+    '<script src="/api/spec"></script>',
+    '<link href="/mcp">',
+    "<script>fetch(`/api/events`).then()</script>",
+    '<script src="/api/devices/d1/proxy/api/x"></script>',
     '<script src="/app.js"></script>',
     '<link href="/styles.css">',
-    "<script>fetch(`/api/events`).then()</script>",
-    '<script src="/api/devices/d1/proxy/app.js"></script>',
     '<script>window.__PANEL_TOKEN__ = "PERMANENT-SECRET";</script>',
     "<script>window.__PANEL_TOKEN__='SINGLE-SECRET';</script>",
     "<p>plain /api/ mention without a quote stays</p>",
@@ -354,10 +356,14 @@ test("rewriteDeviceBody via proxy: mount insert, token scrub, no double-prefix",
     );
     assert.equal(res.status, 200);
     const text = await res.text();
-    assert.match(text, /"\/api\/devices\/d1\/proxy\/app\.js"/);
-    assert.match(text, /"\/api\/devices\/d1\/proxy\/styles\.css"/);
+    assert.match(text, /"\/api\/devices\/d1\/proxy\/api\/spec"/);
+    assert.match(text, /"\/api\/devices\/d1\/proxy\/mcp"/);
     assert.match(text, /`\/api\/devices\/d1\/proxy\/api\/events`/);
     assert.ok(!text.includes("/api/devices/d1/proxy/api/devices/d1/proxy/"), "already-mounted path must not double-prefix");
+    // Round-54 prune: pre-panel-react SPA paths match nothing served and
+    // pass through byte-identical end to end.
+    assert.ok(text.includes('<script src="/app.js"></script>'), "pruned /app.js untouched");
+    assert.ok(text.includes('<link href="/styles.css">'), "pruned /styles.css untouched");
     assert.ok(!text.includes("PERMANENT-SECRET") && !text.includes("SINGLE-SECRET"), "panel token scrubbed");
     assert.match(text, /window\.__PANEL_TOKEN__=""/);
     assert.match(text, /plain \/api\/ mention without a quote stays/);

@@ -17,24 +17,29 @@ import {
 
 const M = (name = "d1") => `${DEVICE_BASE}/${name}/proxy`;
 
-test("asset paths gain the proxy mount", () => {
+test("live paths gain the proxy mount (/api/, /mcp)", () => {
   assert.equal(
-    rewriteDeviceBody('<script src="/app.js"></script>', "d1"),
-    `<script src="${M()}/app.js"></script>`,
+    rewriteDeviceBody('<script src="/api/spec"></script>', "d1"),
+    `<script src="${M()}/api/spec"></script>`,
   );
   assert.equal(
     rewriteDeviceBody('fetch("/api/status?x=1")', "d1"),
     `fetch("${M()}/api/status?x=1")`,
   );
-  assert.equal(
-    rewriteDeviceBody('<link href="/vendor/x.css">', "d1"),
-    `<link href="${M()}/vendor/x.css">`,
-  );
   assert.equal(rewriteDeviceBody("go('/mcp')", "d1"), `go('${M()}/mcp')`);
+  assert.equal(rewriteDeviceBody('open("/mcp/stream")', "d1"), `open("${M()}/mcp/stream")`);
+});
+
+test("removed table entries no longer rewrite (Round-54 prune)", () => {
+  // The pre-panel-react SPA paths (/app.js, /vendor/, …) left the table:
+  // they match nothing served anymore and must pass through byte-identical.
+  for (const t of ['<script src="/app.js"></script>', '<link href="/vendor/x.css">', '"ui/app"']) {
+    assert.equal(rewriteDeviceBody(t, "d1"), t, JSON.stringify(t));
+  }
 });
 
 test("already-proxied URLs are never double-written", () => {
-  const once = `"${M("d2")}/app.js"`;
+  const once = `"${M("d2")}/mcp"`;
   assert.equal(rewriteDeviceBody(once, "d1"), once, "foreign-device mount untouched");
   assert.equal(rewriteDeviceBody(`"${M()}/api/x"`, "d1"), `"${M()}/api/x"`, "own mount untouched");
 });

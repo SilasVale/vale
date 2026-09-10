@@ -239,26 +239,23 @@ async function proxyDevice(
 }
 
 // Absolute paths a vale-agent panel serves from its own root. When proxied
-// through the console they must carry the proxy mount so the SPA's absolute
-// paths (/api/*, /app.js, /ui/*, ...) keep resolving through the proxy.
-const PANEL_ROOT_PATHS: string[] = [
-  "/api/",
-  "/mcp",
-  "/app.js",
-  "/styles.css",
-  "/state.js",
-  "/ipc.js",
-  "/events.js",
-  "/transport.js",
-  "/view.js",
-  "/tabs.js",
-  "/browser.js",
-  "/term.js",
-  "/conn.js",
-  "/icons.js",
-  "/ui/",
-  "/vendor/",
-];
+// through the console they must carry the proxy mount so absolute references
+// keep resolving through the proxy.
+//
+// SOLID Round-54: pruned to the paths that actually occur. The /app.js,
+// /styles.css, /state.js, /ipc.js, /events.js, /transport.js, /view.js,
+// /tabs.js, /browser.js, /term.js, /conn.js, /icons.js, /ui/ and /vendor/
+// entries served the pre-panel-react SPA (deleted round-341) — zero matches
+// in any currently served asset (panel index.html/panel.js/panel.css/vendor,
+// both /panel/ and /desktop/ mounts serve the same bundle with RELATIVE
+// asset URLs; verify with:
+// grep -oF "$p" agent/resources/panel/index.html agent/resources/panel/panel.js
+// agent/resources/panel/panel.css agent/resources/panel/vendor/*).
+// Kept: /api/ (the SPA's absolute API calls, ~17 refs) and /mcp (live
+// endpoint family). Rule for future entries: must match served content or a
+// live endpoint family — speculative entries cost a regex compile + full
+// scan per proxied text response for nothing.
+const PANEL_ROOT_PATHS: string[] = ["/api/", "/mcp"];
 
 /**
  * Rewrite absolute panel paths to the proxy mount + strip the injected
