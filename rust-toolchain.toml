@@ -1,0 +1,19 @@
+# Pinned toolchain — the single source of truth for BOTH builders.
+#
+# Why this file exists: release.yml used `dtolnay/rust-toolchain@stable`, a
+# FLOATING channel. The local release box ran whatever its `stable` happened to
+# be (1.98.0), the runner picked up a newer one (1.98.1) — so the two exes could
+# never be byte-identical, and the P0 dual-builder audit could never pass:
+# measured on 1.2.316, every file matched except vale-agent.exe.
+#
+# Bump this deliberately, in its own commit, so a toolchain change is visible in
+# history instead of silently drifting between builds. CI reads the same file
+# (rustup honours it) AND passes the version explicitly to the setup action, so
+# the runner never resolves "latest" on its own.
+[toolchain]
+channel = "1.98.1"
+# llvm-tools supplies llvm-ar, which cargo-xwin's cache is linked to as
+# llvm-lib/llvm-dlltool (ring's cc build). A `--profile minimal` toolchain has
+# no llvm-tools, so both builders must install it explicitly.
+components = ["rustfmt", "clippy", "llvm-tools"]
+targets = ["x86_64-pc-windows-msvc"]

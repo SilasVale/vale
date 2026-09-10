@@ -119,6 +119,12 @@ build_agent() {
   fi
   ( cd "$ROOT/agent/resources/panel-react" && npm run build )
   ( cd "$ROOT/agent/resources/panel-react" && npm test )
+  # Normalise the paths rustc bakes into the binary — the local box and the CI
+  # runner sit at different home/workspace paths, and those embedded strings
+  # alone make the two exes differ (the dual-builder audit's whole problem).
+  # release.yml passes the SAME two placeholders; keep them in sync. Workspace
+  # FIRST: it lives under $HOME, so the more specific prefix must win.
+  export RUSTFLAGS="${RUSTFLAGS:-} --remap-path-prefix=$ROOT=/src --remap-path-prefix=$HOME=/buildhome"
   ( cd "$ROOT/agent" \
       && cargo xwin build --target "$TARGET" $flags --features "$FEATURES" --bin vale-agent )
   echo "    ok: agent/target/$TARGET/${profile}/vale-agent.exe"

@@ -97,19 +97,48 @@ jobs:
             echo "::error::timed out (~10 min) waiting for CI on tag commit ${SHA} — not releasing blind (bypass: wait for CI to go green, then Re-run jobs)"
             exit 1
           fi
-      - uses: dtolnay/rust-toolchain@stable
+      # Pinned, never @stable: the local release box and this runner must build
+      # with the SAME rustc, or the two exes can never be byte-identical — the
+      # exact reason the dual-builder audit used to be unsatisfiable. Kept in
+      # sync with rust-toolchain.toml (source of truth for local builds).
+      - uses: dtolnay/rust-toolchain@master
         with:
+          toolchain: 1.98.1
           targets: x86_64-pc-windows-msvc
+          # llvm-ar lives here; the cargo-xwin cache links to it below.
+          components: llvm-tools
       - uses: Swatinem/rust-cache@v2
         with:
           workspaces: agent
       - uses: actions/setup-node@v4
         with:
           node-version: 24
-      - name: Install LLVM (llvm-lib needed by ring's cc build)
-        run: sudo apt-get update && sudo apt-get install -y llvm
-      - name: Install cargo-xwin
-        run: cargo install cargo-xwin --locked
+      # LLVM 18 from apt.llvm.org — deliberately NOT the distro's `llvm`
+      # package. cargo-xwin drives clang/lld for the MSVC target and the local
+      # release box uses apt.llvm.org's 18.1.8; same source + same major means
+      # the same codegen. Also supplies llvm-lib for ring's cc build.
+      - name: Install LLVM 18 (apt.llvm.org, matches the local release box)
+        run: |
+          set -euo pipefail
+          curl -fsSL https://apt.llvm.org/llvm.sh -o /tmp/llvm.sh
+          chmod +x /tmp/llvm.sh
+          sudo /tmp/llvm.sh 18
+      # cargo-xwin resolves its tools from ~/.cache/cargo-xwin — mirror the
+      # local box's layout exactly so both builders invoke the same binaries.
+      - name: Point cargo-xwin at that LLVM
+        run: |
+          set -euo pipefail
+          mkdir -p "$HOME/.cache/cargo-xwin"
+          ln -sf /usr/lib/llvm-18/bin/clang    "$HOME/.cache/cargo-xwin/clang-cl"
+          ln -sf /usr/lib/llvm-18/bin/lld-link "$HOME/.cache/cargo-xwin/lld-link"
+          ln -sf /usr/lib/llvm-18/bin/llvm-rc  "$HOME/.cache/cargo-xwin/llvm-rc"
+          AR="$(rustc --print sysroot)/lib/rustlib/x86_64-unknown-linux-gnu/bin/llvm-ar"
+          ln -sf "$AR" "$HOME/.cache/cargo-xwin/llvm-lib"
+          ln -sf "$AR" "$HOME/.cache/cargo-xwin/llvm-dlltool"
+      # Pinned: a bare `cargo install cargo-xwin` grabs whatever is newest that
+      # day, which is another silent source of build drift.
+      - name: Install cargo-xwin (pinned)
+        run: cargo install cargo-xwin --locked --version 0.23.0
       # panel.js is include_str!-embedded — it must be built BEFORE the exe.
       - name: Build panel SPA
         run: npm ci --include=optional && npm run build
@@ -118,8 +147,16 @@ jobs:
         run: npm test
         working-directory: agent/resources/panel-react
       - name: Cross-compile the agent exe
-        run: cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --release --features terminal,keyring --bin vale-agent
         working-directory: agent
+        run: |
+          set -euo pipefail
+          # Normalise the paths rustc bakes into the binary. The two builders
+          # sit at different home/workspace paths and those embedded strings
+          # alone make the exes differ; both sides map to the same placeholders.
+          # Workspace FIRST — it lives under $HOME, so the more specific prefix
+          # must win.
+          export RUSTFLAGS="--remap-path-prefix=${GITHUB_WORKSPACE}=/src --remap-path-prefix=${HOME}=/buildhome"
+          cargo xwin build -p vale-agent --target x86_64-pc-windows-msvc --release --features terminal,keyring --bin vale-agent
       - name: Pack the npm artifact
         working-directory: agent
         run: |
