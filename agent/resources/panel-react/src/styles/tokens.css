@@ -135,6 +135,11 @@
   --chrome-hover: rgba(0, 0, 0, 0.05);
   --chrome-active-bg: var(--accent-soft);
   --chrome-active-ink: var(--accent-ink);
+  /* READABLE TEXT for an active control. --chrome-active-ink above is, by its own
+     doc, "the accent for CHROME — icons, dots, borders"; it was also being used as
+     TEXT on two different chrome surfaces and failed on both (3.83 on the active
+     tab, 3.65 on the active view switch). This is the text-weight counterpart. */
+  --chrome-active-text: var(--accent-on-soft);
   --chrome-glass: rgba(255, 255, 255, 0.96);
   --amber-bright: #ffa94d;          /* accent readable on DARK chrome */
   --term-canvas-bg: #ffffff;        /* xterm container (theme-following) */
@@ -221,6 +226,8 @@ body[data-theme="dark"] {
   --chrome-hover: rgba(255, 255, 255, 0.08);
   --chrome-active-bg: rgba(217, 72, 15, 0.9);
   --chrome-active-ink: #ffffff;
+  /* Restated for the same computed-value reason as the tokens above. */
+  --chrome-active-text: #ffffff;
   --chrome-glass: rgba(31, 32, 38, 0.94);
   --term-canvas-bg: #131418;
 

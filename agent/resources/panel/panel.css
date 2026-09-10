@@ -136,6 +136,11 @@
   --chrome-hover: rgba(0, 0, 0, 0.05);
   --chrome-active-bg: var(--accent-soft);
   --chrome-active-ink: var(--accent-ink);
+  /* READABLE TEXT for an active control. --chrome-active-ink above is, by its own
+     doc, "the accent for CHROME — icons, dots, borders"; it was also being used as
+     TEXT on two different chrome surfaces and failed on both (3.83 on the active
+     tab, 3.65 on the active view switch). This is the text-weight counterpart. */
+  --chrome-active-text: var(--accent-on-soft);
   --chrome-glass: rgba(255, 255, 255, 0.96);
   --amber-bright: #ffa94d;          /* accent readable on DARK chrome */
   --term-canvas-bg: #ffffff;        /* xterm container (theme-following) */
@@ -222,6 +227,8 @@ body[data-theme="dark"] {
   --chrome-hover: rgba(255, 255, 255, 0.08);
   --chrome-active-bg: rgba(217, 72, 15, 0.9);
   --chrome-active-ink: #ffffff;
+  /* Restated for the same computed-value reason as the tokens above. */
+  --chrome-active-text: #ffffff;
   --chrome-glass: rgba(31, 32, 38, 0.94);
   --term-canvas-bg: #131418;
 
@@ -443,10 +450,15 @@ code {
   letter-spacing: -0.01em;
   color: var(--ink);
 }
+/* --chrome-ink-dim, not --muted: --muted on --surface-chip measured 4.40 in the
+   running app — just under AA, and a near miss is still a miss. The other three
+   count chips (.cmd-stream-count, .traj-count, .plug-count) carry the IDENTICAL
+   token pair, so the same measurement applies to them; all four moved together
+   rather than leaving three known-failing copies behind. */
 .side-count {
   margin-left: auto;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -502,10 +514,12 @@ code {
   text-overflow: ellipsis;
 }
 .side-row.closed .side-label { color: var(--faint); }
+/* --chrome-ink-dim, not --faint: 2.29 light / 2.82 dark — the worst of the
+   chrome defects, and "when did this session start" is real information. */
 .side-time {
   flex: none;
   font-size: 11px;
-  color: var(--faint);
+  color: var(--chrome-ink-dim);
   white-space: nowrap;
 }
 .side-actions {
@@ -589,7 +603,9 @@ code {
 .tab.closed:hover { color: var(--chrome-ink-faint); }
 .tab.active {
   background: var(--chrome-active-bg);
-  color: var(--chrome-active-ink);
+  /* TEXT gets the readable token; the BORDER keeps the accent, because a border
+     is a mark and 3:1 is the bar that applies to it. */
+  color: var(--chrome-active-text);
   border-color: var(--chrome-active-ink);
 }
 .tab-dot {
@@ -993,7 +1009,7 @@ code {
    theme's own "accent readable on dark chrome" value. Measured with
    --accent-ink: the active label was #d9480f on #2a2b33 = 3.27, under AA for
    11px text. */
-.view-switch-btn.active { color: var(--chrome-active-ink); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
+.view-switch-btn.active { color: var(--chrome-active-text); background: var(--chrome-bg-3); box-shadow: var(--shadow); }
 
 /* ---------- status bar ---------- */
 #statusbar {
@@ -1013,9 +1029,11 @@ code {
   white-space: nowrap;
 }
 #status.error { color: #ff8787; }
+/* --chrome-ink-dim, not -faint: -faint measured 2.33 on the status bar in light
+   and 3.61 in dark, and this is the session count the operator reads at a glance. */
 #session-count {
   margin-left: auto;
-  color: var(--chrome-ink-faint);
+  color: var(--chrome-ink-dim);
   font-size: 12px;
   white-space: nowrap;
 }
@@ -1265,7 +1283,7 @@ code {
 .cmd-stream-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .cmd-stream-count {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1414,7 +1432,7 @@ code {
 .traj-title { font-size: 12px; font-weight: 650; letter-spacing: -0.01em; }
 .traj-count {
   font-size: 11px;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;
@@ -1669,7 +1687,7 @@ code {
 .plug-count {
   flex: none;
   font-size: 11px;
-  color: var(--muted);
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border: 1px solid var(--line);
   border-radius: 999px;

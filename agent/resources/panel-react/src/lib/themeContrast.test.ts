@@ -130,12 +130,19 @@ describe("recessed content surfaces", () => {
 
   it("count chips are readable in both themes", () => {
     // These are NUMBERS the operator reads, not decoration. They carried
-    // --faint, which measured 2.34 in light (near-invisible) and 3.14 on the
-    // now-dark chip. --muted is the token for secondary text that must be read.
+    // --faint first (2.34 light / 3.14 dark), then --muted — which was verified
+    // only as "better than --faint" and measured 4.40 on the chip when the REAL
+    // running app was audited, i.e. still under AA. A near miss is a miss.
+    //
+    // All four carry the identical token pair, so the measurement transfers:
+    // it is a property of `--muted on --surface-chip`, not of the one element
+    // that happened to be on screen.
     const css = builtCss();
     for (const sel of [".side-count", ".cmd-stream-count", ".traj-count", ".plug-count"]) {
       const block = blockOf(css, sel);
-      expect(block, `${sel} must use secondary-text ink`).toMatch(/color\s*:\s*var\(--muted\)/);
+      expect(block, `${sel} must use ink that clears AA on the chip`).toMatch(
+        /color\s*:\s*var\(--chrome-ink-dim\)/,
+      );
       expect(block, `${sel} must sit on the theme-aware chip surface`).toMatch(
         /background\s*:\s*var\(--surface-chip\)/,
       );
@@ -227,6 +234,24 @@ describe("recessed content surfaces", () => {
       ['.traj-ev-gov[data-action="approved"], .traj-ev-gov[data-action="granted"]', "--success-text"],
       ['.traj-ev-gov[data-action="refused"], .traj-ev-gov[data-action="revoked"]', "--danger-on-soft"],
       ['.traj-ev-gov-sub', "--chrome-ink"],
+      // CHROME TEXT — found by auditing EVERY text node in the real running app,
+      // not the elements I had just written. These five had been wrong the whole
+      // time and no feature-by-feature audit could see them: I only ever measured
+      // what I was working on.
+      //
+      //   #session-count   --chrome-ink-faint   2.33 light / 3.61 dark
+      //   .side-time       --faint              2.29 light / 2.82 dark  (the worst)
+      //   .side-count      --muted on chip      4.40 light              (a near miss)
+      //   .tab.active      --chrome-active-ink  3.83 light
+      //   .view-switch-btn.active  same token   3.65 light
+      //
+      // The last two are the same mistake as --accent-ink earlier: a token whose
+      // own doc says "the accent for CHROME — icons, dots, borders" used as TEXT.
+      ['#session-count', "--chrome-ink-dim"],
+      ['.side-time', "--chrome-ink-dim"],
+      ['.side-count', "--chrome-ink-dim"],
+      ['.tab.active', "--chrome-active-text"],
+      ['.view-switch-btn.active', "--chrome-active-text"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);
@@ -248,7 +273,13 @@ describe("recessed content surfaces", () => {
     expect(save).not.toMatch(/background:\s*var\(--accent\)/);
 
     const dark = blockOf(css, 'body[data-theme="dark"]');
-    for (const t of ["--success-text", "--danger-on-soft", "--warn-ink", "--accent-solid"]) {
+    for (const t of [
+      "--success-text",
+      "--danger-on-soft",
+      "--warn-ink",
+      "--accent-solid",
+      "--chrome-active-text",
+    ]) {
       expect(blockOf(css, ":root"), `:root must define ${t}`).toContain(`${t}:`);
       expect(dark, `dark must restate ${t}`).toContain(`${t}:`);
     }
@@ -265,11 +296,15 @@ describe("recessed content surfaces", () => {
 
   it("the view-switch active pill does not hardcode the accent ink", () => {
     // --accent-ink is the SAME orange in both themes, so on dark chrome the
-    // active label measured 3.27. --chrome-active-ink is that theme's own
-    // readable answer and is value-identical to --accent-ink in :root.
+    // active label measured 3.27, and --chrome-active-ink replaced it — but the
+    // comment on that fix noted the two are "value-identical in :root", which is
+    // exactly why the LIGHT theme was never re-measured: it still failed, at
+    // 3.65, until the running app was audited. `--chrome-active-text` is the
+    // text-weight token; the BORDER keeps the accent, since a mark needs 3:1.
     const css = builtCss();
     const panel = blockOf(css, ".view-switch-btn.active");
-    expect(panel).toMatch(/color\s*:\s*var\(--chrome-active-ink\)/);
+    expect(panel).toMatch(/color\s*:\s*var\(--chrome-active-text\)/);
+    expect(panel).not.toMatch(/color\s*:\s*var\(--chrome-active-ink\)/);
     expect(
       panel,
       "the active view-switch label must not use --accent-ink directly",
