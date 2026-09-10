@@ -7,7 +7,7 @@
 // caller-supplied path= that would collide with the rewritten one.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { resolveRoute, buildUrl } from "../routing.mjs";
+import { resolveRoute, buildUrl, resolveHost, forwardHeaders } from "../routing.mjs";
 
 // Synthetic table mirroring entry.mjs's ROUTES shape (handlers stay opaque:
 // resolveRoute never calls them — real fns only exist in dist/).
@@ -73,4 +73,29 @@ test("buildUrl: bare prefix → path=/; caller path= dropped (collision)", () =>
   const params = new URL(buildUrl(evil, "h.example")).searchParams;
   assert.equal(params.get("path"), "/a", "rewritten tail wins, caller value dropped");
   assert.equal(params.get("service"), "x", "innocent args survive");
+});
+
+// SOLID Round-68: entry-plumbing helpers extracted verbatim (entry.mjs
+// binds a socket on import, so these could never be pinned in place).
+// resolveHost decides the origin gform's rewriter builds proxy URLs from;
+// forwardHeaders decides what rides upstream.
+test("resolveHost: x-forwarded-host wins (nginx), then host, then localhost", () => {
+  assert.equal(resolveHost({ "x-forwarded-host": "oracle.saisi.online", host: "127.0.0.1:8081" }), "oracle.saisi.online");
+  assert.equal(resolveHost({ host: "127.0.0.1:8081" }), "127.0.0.1:8081");
+  assert.equal(resolveHost({}), "localhost", "direct curl with no Host");
+});
+
+test("forwardHeaders: host/pseudo dropped, arrays appended, scalars set", () => {
+  const h = forwardHeaders({
+    host: "127.0.0.1:8081",
+    ":method": "GET",
+    "x-api-key": "sk-1",
+    cookie: ["a=1", "b=2"],
+  });
+  assert.equal(h.get("host"), null, "rebuilt from the upstream URL instead");
+  // NOTE: h.get(":method") itself throws (invalid name) — absence is proven
+  // by enumerating what survived instead.
+  assert.ok(![...h.keys()].some((k) => k.startsWith(":")), "HTTP/2 pseudo-headers never ride");
+  assert.equal(h.get("x-api-key"), "sk-1");
+  assert.equal(h.get("cookie"), "a=1; b=2", "multi-values preserved in order (cookie ; join per spec)");
 });

@@ -35,7 +35,7 @@ import proxy from "./proxy.mjs";
 import github from "./github.mjs";
 import git from "./git.mjs";
 import gform from "./gform.mjs";
-import { resolveRoute, buildUrl } from "./routing.mjs";
+import { resolveRoute, buildUrl, resolveHost, forwardHeaders } from "./routing.mjs";
 
 const PORT = Number(process.env.PORT || 8081);
 
@@ -51,7 +51,7 @@ const ROUTES = [
 ];
 
 const server = createServer(async (req, res) => {
-  const host = req.headers["x-forwarded-host"] || req.headers.host || "localhost";
+  const host = resolveHost(req.headers);
   try {
     if (req.url === "/healthz") {
       res.writeHead(200, { "content-type": "text/plain" });
@@ -64,12 +64,7 @@ const server = createServer(async (req, res) => {
       res.end(JSON.stringify({ error: "not found" }));
       return;
     }
-    const headers = new Headers();
-    for (const [k, v] of Object.entries(req.headers)) {
-      if (k === "host" || k.startsWith(":")) continue;
-      if (Array.isArray(v)) for (const one of v) headers.append(k, one);
-      else headers.set(k, v);
-    }
+    const headers = forwardHeaders(req.headers);
     const hasBody = req.method !== "GET" && req.method !== "HEAD";
     const request = new Request(buildUrl(hit, host), {
       method: req.method,

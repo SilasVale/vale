@@ -1,13 +1,34 @@
-// vrelay routing — pure URL routing for the VPS entry (SOLID Round-18:
-// SRP/DIP extraction from server/entry.mjs, moved verbatim except for one
-// seam: resolveRoute takes the routes TABLE as a parameter instead of
-// closing over entry.mjs's module-level ROUTES. Rationale: the table holds
-// handler function refs that only exist in dist/ (build-relay.sh transpiles
-// api/ + copies server/), so an unparameterized move would be untestable in
-// the source tree. entry.mjs passes its real ROUTES; tests pass synthetic
-// tables. Adding a route = adding a table entry (OCP); this module never
-// changes for it.
-//
+// vrelay routing — pure URL routing + entry plumbing helpers for the VPS
+// entry. Rationale (SOLID Round-18): handler function refs exist only in
+// dist/, so unparameterized moves would be untestable in the source tree;
+// entry.mjs passes its real ROUTES, tests pass synthetic tables.
+
+/**
+ * Real public host for proxied URL building (SOLID Round-68: verbatim move
+ * from entry.mjs). nginx fronts vrelay (location /api/ -> 127.0.0.1:8081,
+ * Host preserved), so request.url origins are https://<public host> — gform's
+ * body rewriting builds proxy URLs from that origin and must see the REAL
+ * host, hence x-forwarded-host first.
+ */
+export function resolveHost(headers) {
+  return headers["x-forwarded-host"] || headers.host || "localhost";
+}
+
+/**
+ * Inbound headers for the upstream Request (SOLID Round-68: verbatim move).
+ * Drops hop-by-hop noise (host — rebuilt from the upstream URL; HTTP/2
+ * pseudo-headers); multi-value headers append in order.
+ */
+export function forwardHeaders(rawHeaders) {
+  const headers = new Headers();
+  for (const [k, v] of Object.entries(rawHeaders)) {
+    if (k === "host" || k.startsWith(":")) continue;
+    if (Array.isArray(v)) for (const one of v) headers.append(k, one);
+    else headers.set(k, v);
+  }
+  return headers;
+}
+
 // Routing replicates vercel.json's rewrites in-process:
 //   /api/git/<rest>     -> handler(Request at /api/git?path=/<rest>&<orig args>)
 //   /api/github/...     -> /api/github?path=...
