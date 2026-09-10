@@ -58,7 +58,7 @@
     // Models that must NOT get the describe-first treatment on /v1/messages —
     // they read real Anthropic image blocks upstream (verified 2026-09-02:
     // Radeon's vision-exp OCR'd a screenshot's session UUID exactly).
-    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp"
+    "VISION_CAPABLE_MODELS": "amd/DeepSeek-V4-Flash-Vision-Exp, og/deepseek-flash"
   }
   // Vale Gate — unified AI gateway + device console. Custom domains are added
   // in the dashboard (custom_domains API is OAuth-only).
