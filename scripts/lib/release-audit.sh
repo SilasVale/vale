@@ -79,10 +79,14 @@ audit_release_asset() {
   # shellcheck disable=SC2064
   trap "[[ \"${AUDIT_KEEP:-0}\" == 1 ]] || rm -rf '$work'" RETURN
 
-  # 2. Fetch both artifacts.
-  curl -fsSL -m 300 "https://github.com/${AUDIT_REPO}/releases/download/v${ver}/${tgz}" \
+  # 2. Fetch both artifacts. Retries matter: this box's route to GitHub's
+  # release-asset host is intermittent (a 0-byte timeout has been observed),
+  # and a single flaky attempt used to read as "audit failed".
+  curl -fsSL -m 300 --retry 5 --retry-delay 3 --retry-connrefused \
+    "https://github.com/${AUDIT_REPO}/releases/download/v${ver}/${tgz}" \
     -o "$work/gh.tgz" || { echo "::error::release audit: cannot download the GitHub asset" >&2; return 1; }
-  curl -fsSL -m 300 "${cdn}/vale-agent/${tgz}" -o "$work/cdn.tgz" \
+  curl -fsSL -m 300 --retry 5 --retry-delay 3 --retry-connrefused \
+    "${cdn}/vale-agent/${tgz}" -o "$work/cdn.tgz" \
     || { echo "::error::release audit: cannot download the CDN tgz" >&2; return 1; }
 
   local cdn_sha gh_sha
