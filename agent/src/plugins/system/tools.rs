@@ -11,12 +11,15 @@
 //!   fill the disk or blow the MCP response.
 //! - Errors are returned as structured JSON (`{"ok": false, "error": ...}`),
 //!   never thrown — the model sees a readable failure, not an exception.
+//!   Build that envelope with `plugins::tool_error` (SOLID R101 — one owner
+//!   for the shape; its doc comment explains how this in-band family differs
+//!   from a typed `Err(DeviceError)` once it crosses `/api/tools`).
 
 use futures::StreamExt;
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
 
-use crate::plugins::{require_str, to_value_or_empty};
+use crate::plugins::{require_str, to_value_or_empty, tool_error};
 
 const MAX_READ_BYTES: u64 = 1024 * 1024; // 1 MiB per file_read
 const MAX_WRITE_BYTES: usize = 4 * 1024 * 1024; // 4 MiB per file_write
@@ -56,7 +59,7 @@ fn tool_file_list() -> ToolDef {
                 let dir = std::path::PathBuf::from(&path);
                 let mut read = match tokio::fs::read_dir(&dir).await {
                     Ok(r) => r,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read_dir {path}: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("read_dir {path}: {e}")))),
                 };
                 let mut entries: Vec<Value> = Vec::new();
                 loop {
@@ -137,7 +140,7 @@ fn tool_file_stat() -> ToolDef {
                             "modified_ms": modified,
                         })))
                     }
-                    Err(e) => Ok(to_value_or_empty(json!({"ok": false, "error": format!("stat {path}: {e}")}))),
+                    Err(e) => Ok(to_value_or_empty(tool_error(format!("stat {path}: {e}")))),
                 }
             }
         },
@@ -168,13 +171,13 @@ fn tool_file_read() -> ToolDef {
                 // (a slow network drive would stall the whole MCP server).
                 let mut f = match tokio::fs::File::open(&path).await {
                     Ok(f) => f,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("open {path}: {e}")))),
                 };
                 use tokio::io::{AsyncReadExt, AsyncSeekExt};
                 if offset > 0 {
                     use std::io::SeekFrom;
                     if let Err(e) = f.seek(SeekFrom::Start(offset)).await {
-                        return Ok(to_value_or_empty(json!({"ok": false, "error": format!("seek: {e}")})));
+                        return Ok(to_value_or_empty(tool_error(format!("seek: {e}"))));
                     }
                 }
                 let mut buf = vec![0u8; limit as usize];
@@ -184,7 +187,7 @@ fn tool_file_read() -> ToolDef {
                     match f.read(&mut buf[total..]).await {
                         Ok(0) => break,
                         Ok(n) => total += n,
-                        Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read: {e}")}))),
+                        Err(e) => return Ok(to_value_or_empty(tool_error(format!("read: {e}")))),
                     }
                 }
                 buf.truncate(total);
@@ -231,16 +234,16 @@ fn tool_file_write() -> ToolDef {
                     use base64::Engine;
                     match base64::engine::general_purpose::STANDARD.decode(&data_b64) {
                         Ok(b) => b,
-                        Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("base64 decode: {e}")}))),
+                        Err(e) => return Ok(to_value_or_empty(tool_error(format!("base64 decode: {e}")))),
                     }
                 } else {
                     text.into_bytes()
                 };
                 if bytes.is_empty() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": "empty content (provide text or data)"})));
+                    return Ok(to_value_or_empty(tool_error("empty content (provide text or data)")));
                 }
                 if bytes.len() > MAX_WRITE_BYTES {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("content too large ({} bytes, max {MAX_WRITE_BYTES})", bytes.len())})));
+                    return Ok(to_value_or_empty(tool_error(format!("content too large ({} bytes, max {MAX_WRITE_BYTES})", bytes.len()))));
                 }
                 use tokio::io::AsyncWriteExt;
                 let mut opts = tokio::fs::OpenOptions::new();
@@ -248,11 +251,11 @@ fn tool_file_write() -> ToolDef {
                 if !append { opts.truncate(true); }
                 let mut f = match opts.open(&path).await {
                     Ok(f) => f,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("open {path}: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("open {path}: {e}")))),
                 };
                 match f.write_all(&bytes).await {
                     Ok(()) => {}
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("write: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("write: {e}")))),
                 }
                 let _ = f.flush().await;
                 Ok(to_value_or_empty(json!({"ok": true, "path": path, "bytes": bytes.len(), "append": append})))
@@ -326,24 +329,24 @@ fn tool_file_download() -> ToolDef {
                 let url_str = require_str(&params, "url")?;
                 let path_str = require_str(&params, "path")?;
                 if !url_str.starts_with("http://") && !url_str.starts_with("https://") {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": "url must start with http:// or https://"})));
+                    return Ok(to_value_or_empty(tool_error("url must start with http:// or https://")));
                 }
                 let url = match reqwest::Url::parse(&url_str) {
                     Ok(u) => u,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("invalid url: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("invalid url: {e}")))),
                 };
                 let host = match url.host_str() {
                     Some(h) => h.to_string(),
-                    None => return Ok(to_value_or_empty(json!({"ok": false, "error": "url has no host"}))),
+                    None => return Ok(to_value_or_empty(tool_error("url has no host"))),
                 };
                 if host.parse::<std::net::IpAddr>().is_ok() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": "IP-based URLs are blocked (SSRF protection)"})));
+                    return Ok(to_value_or_empty(tool_error("IP-based URLs are blocked (SSRF protection)")));
                 }
                 let canonical = strip_verbatim(&resolve_dest(&path_str));
                 if let Some(parent) = canonical.parent() {
                     if let Err(e) = tokio::fs::create_dir_all(parent).await {
                         let msg = format!("create parent {}: {e}", parent.display());
-                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                        return Ok(to_value_or_empty(tool_error(msg)));
                     }
                 }
                 const MAX_BYTES: u64 = 100 * 1024 * 1024;
@@ -358,14 +361,14 @@ fn tool_file_download() -> ToolDef {
                     .build()
                 {
                     Ok(c) => c,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("reqwest build: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("reqwest build: {e}")))),
                 };
                 let resp = match client.get(&url_str).send().await {
                     Ok(r) => r,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("download failed: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("download failed: {e}")))),
                 };
                 if !resp.status().is_success() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upstream returned {}", resp.status())})));
+                    return Ok(to_value_or_empty(tool_error(format!("upstream returned {}", resp.status()))));
                 }
                 let mut stream = resp.bytes_stream();
                 let mut total: u64 = 0;
@@ -386,7 +389,7 @@ fn tool_file_download() -> ToolDef {
                     Ok(f) => f,
                     Err(e) => {
                         let msg = format!("open {}: {}", tmp.display(), e);
-                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                        return Ok(to_value_or_empty(tool_error(msg)));
                     }
                 };
                 // Every early exit below must leave no corpse behind: the
@@ -396,7 +399,7 @@ fn tool_file_download() -> ToolDef {
                         let msg = format!($($t)*);
                         let _ = f.shutdown().await;
                         let _ = tokio::fs::remove_file(&tmp).await;
-                        return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                        return Ok(to_value_or_empty(tool_error(msg)));
                     }};
                 }
                 while let Some(chunk) = stream.next().await {
@@ -419,7 +422,7 @@ fn tool_file_download() -> ToolDef {
                 if let Err(e) = tokio::fs::rename(&tmp, &canonical).await {
                     let msg = format!("rename {} -> {}: {e}", tmp.display(), canonical.display());
                     let _ = tokio::fs::remove_file(&tmp).await;
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": msg})));
+                    return Ok(to_value_or_empty(tool_error(msg)));
                 }
                 Ok(to_value_or_empty(json!({"ok": true, "path": canonical.to_string_lossy(), "bytes": total})))
             }
@@ -443,22 +446,22 @@ fn tool_file_upload() -> ToolDef {
                 let path_str = require_str(&params, "path")?;
                 let path = std::path::Path::new(&path_str);
                 if !path.exists() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file not found: {path_str}")})));
+                    return Ok(to_value_or_empty(tool_error(format!("file not found: {path_str}"))));
                 }
                 let meta = match std::fs::metadata(path) {
                     Ok(m) => m,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("metadata: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("metadata: {e}")))),
                 };
                 if !meta.is_file() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": "not a file"})));
+                    return Ok(to_value_or_empty(tool_error("not a file")));
                 }
                 const MAX_BYTES: u64 = 100 * 1024 * 1024;
                 if meta.len() > MAX_BYTES {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("file too large ({} bytes, max {MAX_BYTES})", meta.len())})));
+                    return Ok(to_value_or_empty(tool_error(format!("file too large ({} bytes, max {MAX_BYTES})", meta.len()))));
                 }
                 let bytes = match std::fs::read(path) {
                     Ok(b) => b,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("read: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("read: {e}")))),
                 };
                 let gateway_url = std::env::var("VALE_GATEWAY_URL")
                     .unwrap_or_else(|_| "https://api.saisi.online".to_string());
@@ -476,7 +479,7 @@ fn tool_file_upload() -> ToolDef {
                     &[("name", path.file_name().unwrap_or_default().to_string_lossy().as_ref())],
                 ) {
                     Ok(u) => u.to_string(),
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("bad upload url: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("bad upload url: {e}")))),
                 };
                 let req = reqwest::Client::new()
                     .put(&upload_url)
@@ -485,14 +488,14 @@ fn tool_file_upload() -> ToolDef {
                     .body(bytes);
                 let resp = match req.send().await {
                     Ok(r) => r,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upload failed: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("upload failed: {e}")))),
                 };
                 if !resp.status().is_success() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("upload returned {}", resp.status())})));
+                    return Ok(to_value_or_empty(tool_error(format!("upload returned {}", resp.status()))));
                 }
                 let body: serde_json::Value = match resp.json().await {
                     Ok(b) => b,
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("parse response: {e}")}))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("parse response: {e}")))),
                 };
                 let url = body["url"].as_str().unwrap_or("").to_string();
                 let size = body["size"].as_u64().unwrap_or(0);
@@ -525,8 +528,8 @@ fn tool_process_list() -> ToolDef {
                 }
                 let out = match out {
                     Ok(o) if o.status.success() => o,
-                    Ok(_) => return Ok(to_value_or_empty(json!({"ok": false, "error": "process listing failed (no tasklist/ps)"}))),
-                    Err(e) => return Ok(to_value_or_empty(json!({"ok": false, "error": format!("spawn: {e}")}))),
+                    Ok(_) => return Ok(to_value_or_empty(tool_error("process listing failed (no tasklist/ps)"))),
+                    Err(e) => return Ok(to_value_or_empty(tool_error(format!("spawn: {e}")))),
                 };
                 let text = String::from_utf8_lossy(&out.stdout).to_string();
                 let mut procs: Vec<Value> = Vec::new();
@@ -582,7 +585,7 @@ fn tool_process_kill() -> ToolDef {
                 let pid = params.get("pid").and_then(|v| v.as_u64());
                 let name = params.get("name").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if pid.is_none() && name.is_empty() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": "provide pid or name"})));
+                    return Ok(to_value_or_empty(tool_error("provide pid or name")));
                 }
                 let mut killed: Vec<Value> = Vec::new();
                 if let Some(pid) = pid {
@@ -595,7 +598,7 @@ fn tool_process_kill() -> ToolDef {
                         let r2 = tokio::process::Command::new("kill").arg("-9").arg(pid.to_string()).output().await;
                         let ok2 = matches!(&r2, Ok(o) if o.status.success());
                         if !ok2 {
-                            return Ok(to_value_or_empty(json!({"ok": false, "error": format!("kill {pid} failed (taskkill and kill both failed)")})));
+                            return Ok(to_value_or_empty(tool_error(format!("kill {pid} failed (taskkill and kill both failed)"))));
                         }
                     }
                     killed.push(json!({"pid": pid}));
@@ -623,7 +626,7 @@ fn tool_process_kill() -> ToolDef {
                     }
                 }
                 if killed.is_empty() {
-                    return Ok(to_value_or_empty(json!({"ok": false, "error": format!("no process matched {}{}", pid.map(|p| format!("pid={p} ")).unwrap_or_default(), if name.is_empty() { String::new() } else { format!("name={name}") })})));
+                    return Ok(to_value_or_empty(tool_error(format!("no process matched {}{}", pid.map(|p| format!("pid={p} ")).unwrap_or_default(), if name.is_empty() { String::new() } else { format!("name={name}") }))));
                 }
                 Ok(to_value_or_empty(json!({"ok": true, "killed": killed})))
             }
@@ -740,7 +743,7 @@ mod file_tool_tests {
         tool.handler
             .call(params)
             .await
-            .unwrap_or_else(|e| json!({"ok": false, "error": e.to_string()}))
+            .unwrap_or_else(|e| tool_error(e.to_string()))
     }
 
     /// Shared by the VALE_GATEWAY_URL-mutating upload tests (round-370):

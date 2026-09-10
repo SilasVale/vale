@@ -338,7 +338,24 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R100 — the session-mode result cap is now a
+Last updated: 2026-09-10 SOLID-R101 — the device-tool FAILURE envelope
+  (`{"ok": false, "error": msg}`) has an owner: `plugins::tool_error`. It was
+  hand-written at 46 sites across four plugins (system 36, memory 7,
+  connections 2, update 1); the migration is proven byte-identical
+  MECHANICALLY (a string-aware extractor compared all 46 message expressions
+  from HEAD against the new `tool_error(...)` arg — identical). Pinning the
+  shape surfaced an undocumented cross-layer fact, now on record and tested:
+  an in-band `Ok({"ok":false})` renders at `/api/tools` as
+  `{"ok":true,"result":{"ok":false}}` — outer ok TRUE, no top-level `code` —
+  while a typed `Err(DeviceError)` renders `{"ok":false,"error","code"}`. The
+  gateway's round-58 check therefore classifies only the TYPED family as a
+  failure; the in-band one is the long-standing MCP behaviour (the model reads
+  the envelope as content) and is left unchanged, pinned so a future change is
+  a visible decision. Agent gates 435 feat-gated / 428 default green, clippy
+  -D warnings clean both configs, fmt clean, xwin check OK.
+  Program ledger: docs/solid-program.md. No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R100 — the session-mode result cap is now a
   pure, tested unit. `bounded_append(result, truncated, s, max)` was the
   `append_result` closure inside the 622-line `tool_execute` wait loop, and it
   carried THREE incidents with zero coverage: round-105 (uncapped result

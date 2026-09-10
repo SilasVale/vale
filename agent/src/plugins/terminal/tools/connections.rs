@@ -7,8 +7,8 @@
 use serde_json::{json, Value};
 use std::sync::Arc;
 
-use crate::plugins::require_str;
 use crate::plugins::terminal::OutputBuf;
+use crate::plugins::{require_str, tool_error};
 use crate::tools::terminal::TerminalManager;
 use vale_agent_core::{DeviceError, EventBus, ToolDef};
 // The reconnect path reuses the open tool's full handler — terminal-feature
@@ -47,7 +47,7 @@ pub(super) fn tool_forget_saved() -> ToolDef {
         move |params: Value| async move {
             let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
             if id.is_empty() {
-                return Ok(json!({ "ok": false, "error": "id is required" }));
+                return Ok(tool_error("id is required"));
             }
             #[cfg(feature = "terminal")]
             {
@@ -65,7 +65,7 @@ pub(super) fn tool_forget_saved() -> ToolDef {
             #[cfg(not(feature = "terminal"))]
             {
                 let _ = id;
-                Ok(json!({ "ok": false, "error": "terminal support not compiled in" }))
+                Ok(tool_error("terminal support not compiled in"))
             }
         },
     )

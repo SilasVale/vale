@@ -1757,6 +1757,59 @@ mod tests {
     }
 
     #[tokio::test]
+    async fn tool_error_envelope_survives_the_api_wrapper() {
+        // THE DEVICE ERROR CONTRACT, pinned on the /api/tools side (SOLID
+        // R101). Two failure families reach a client and this wrapper treats
+        // them differently — deliberately, and now on the record:
+        //
+        //   typed   Err(DeviceError)         → {"ok": false, "error", "code"}
+        //   in-band Ok(plugins::tool_error)  → {"ok": true,  "result": {"ok": false, "error"}}
+        //
+        // The in-band family is the majority of device tools (46 sites). Its
+        // OUTER ok is TRUE, so the gateway's round-58 check (`data.ok ===
+        // false`) does not classify it as a failure — the message survives as
+        // text inside a result the model reads. That is the long-standing MCP
+        // behaviour; this test exists so changing it is a visible decision
+        // rather than a silent drift.
+        let missing = if cfg!(windows) {
+            r"C:\vale-no-such-file-r101"
+        } else {
+            "/vale-no-such-file-r101"
+        };
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/system_file_stat",
+                &serde_json::json!({ "path": missing }).to_string(),
+            ),
+            state(),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "in-band failures are HTTP 200"
+        );
+        let v = json_body(resp).await;
+        assert_eq!(
+            v["ok"], true,
+            "the OUTER ok is true for the in-band family — see the doc comment"
+        );
+        assert!(
+            v.get("code").is_none(),
+            "in-band failures carry no top-level code"
+        );
+        assert_eq!(v["result"]["ok"], false, "the tool's own envelope is kept");
+        assert!(
+            v["result"]["error"]
+                .as_str()
+                .is_some_and(|e| e.contains("stat ")),
+            "the tool's message survives verbatim: {}",
+            v["result"]
+        );
+    }
+
+    #[tokio::test]
     async fn plugins_status_requires_auth() {
         // /api/plugins/* is inside the same auth gate as every other /api/*
         let mut cfg = Config::default();

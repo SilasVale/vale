@@ -4,6 +4,7 @@ use serde_json::{json, Value};
 use sha2::{Digest, Sha256};
 use std::path::PathBuf;
 
+use crate::plugins::tool_error;
 use vale_agent_core::{DeviceError, ToolDef};
 
 /// Build the release manifest endpoint from the configured download site.
@@ -499,7 +500,7 @@ pub fn agent_update(download_url: Option<String>) -> ToolDef {
                     Some(u) => u,
                     None => {
                         return Ok(
-                            json!({"ok": false, "error": "no update channel configured (platform.download_url unset) — this is a purely local install"}),
+                            tool_error("no update channel configured (platform.download_url unset) — this is a purely local install"),
                         );
                     }
                 };

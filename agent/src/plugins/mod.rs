@@ -34,6 +34,36 @@ pub fn to_value_or_empty<T: serde::Serialize>(v: T) -> Value {
     serde_json::to_value(v).unwrap_or_else(|_| json!([]))
 }
 
+/// The device-tool FAILURE envelope: exactly `{"ok": false, "error": msg}`.
+///
+/// This is the ONE definition of the convention the system plugin's header
+/// documents ("errors are returned as structured JSON, never thrown"): a tool
+/// that can fail in a way it wants the MODEL to read reports it in-band and
+/// returns `Ok`, rather than raising a [`DeviceError`]. Before this helper the
+/// literal was hand-written at 46 sites across four plugins — one shape with
+/// 46 independent copies, and no owner to pin it.
+///
+/// Two DIFFERENT failure families reach a caller, and the distinction matters
+/// because the layers above treat them differently:
+///
+/// * **typed** — `Err(DeviceError)`. `web::api_call_tool` renders it as
+///   `{"ok": false, "error", "code"}`, so the outer `ok` is false and the
+///   gateway maps `code` onto its own failure class (round-59).
+/// * **in-band** (this helper) — `Ok({"ok": false, "error"})`. The same wrapper
+///   renders it as `{"ok": true, "result": {"ok": false, …}}`: the OUTER `ok`
+///   is TRUE, so a consumer that only inspects `data.ok` (the gateway's
+///   round-58 check) does not see a failure here — the message survives as
+///   text inside a successful tool result.
+///
+/// That asymmetry is DELIBERATE and left alone: it is the long-standing
+/// contract on the MCP path, where the model reads the envelope as content.
+/// It is pinned by tests on both sides so a future change is a visible
+/// decision rather than a silent drift — see `tool_error_*` in this module and
+/// `tool_error_envelope_survives_the_api_wrapper` in `web`.
+pub fn tool_error(message: impl Into<String>) -> Value {
+    json!({ "ok": false, "error": message.into() })
+}
+
 /// Holds all active plugins and provides access to their tools.
 /// Tools are built ONCE at registration time and cached — `find_tool` is O(1)
 /// and `all_tools`/spec iteration never re-runs the closure factories.
@@ -155,5 +185,42 @@ mod tests {
             "plugin_tools must not rebuild"
         );
         assert!(reg.find_tool("c1").is_some());
+    }
+
+    // ── tool_error: the device-tool failure envelope ──────────
+
+    #[test]
+    fn tool_error_is_the_two_key_envelope() {
+        // Byte-identity with the literal it replaced at 46 call sites: the
+        // shape is EXACTLY {ok:false, error} — no extra keys, and `ok` is the
+        // boolean false (not "false", not 0). Consumers match on this.
+        let v = tool_error("stat /x: No such file");
+        assert_eq!(v, json!({"ok": false, "error": "stat /x: No such file"}));
+        assert_eq!(
+            v.as_object().map(|o| o.len()),
+            Some(2),
+            "the envelope carries exactly ok + error"
+        );
+        assert_eq!(v["ok"], serde_json::Value::Bool(false));
+        assert!(v["error"].is_string());
+        assert!(
+            v.get("code").is_none(),
+            "in-band failures carry no code — that is the typed family's job \
+             (see the tool_error doc comment)"
+        );
+    }
+
+    #[test]
+    fn tool_error_accepts_owned_and_borrowed_messages() {
+        // Call sites pass `&str`, a `String`, or a `format!(...)` with inline
+        // args (the shape every migrated site uses); all must render the same
+        // string so the migration could not alter an error message.
+        let path = "boom";
+        let a = tool_error("stat boom: gone");
+        let b = tool_error(String::from("stat boom: gone"));
+        let c = tool_error(format!("stat {path}: gone"));
+        assert_eq!(a, b);
+        assert_eq!(b, c);
+        assert_eq!(tool_error(""), json!({"ok": false, "error": ""}));
     }
 }

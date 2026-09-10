@@ -12,6 +12,8 @@ use std::sync::{Arc, LazyLock};
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
 
+use crate::plugins::tool_error;
+
 use super::sanitize::sanitize;
 use super::store::{MemoryLimits, MemoryRecord, MemoryStore};
 
@@ -58,7 +60,7 @@ pub fn build(store: Arc<MemoryStore>) -> Vec<ToolDef> {
 /// wording lets AI clients pattern-match one recovery path ("unknown
 /// id" → re-search before retrying).
 fn unknown_id_error(id: &str) -> Value {
-    json!({ "ok": false, "error": format!("unknown id: {id}") })
+    tool_error(format!("unknown id: {id}"))
 }
 
 fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
@@ -81,10 +83,10 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                 let title = params.get("title").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 let content = params.get("content").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if title.trim().is_empty() {
-                    return Ok(json!({"ok": false, "error": "title is required"}));
+                    return Ok(tool_error("title is required"));
                 }
                 if content.trim().is_empty() {
-                    return Ok(json!({"ok": false, "error": "content is required"}));
+                    return Ok(tool_error("content is required"));
                 }
                 let tags: Vec<String> = params
                     .get("tags")
@@ -143,7 +145,7 @@ fn tool_search(store: Arc<MemoryStore>) -> ToolDef {
             async move {
                 let query = params.get("query").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if query.trim().is_empty() {
-                    return Ok(json!({"ok": false, "error": "query is required"}));
+                    return Ok(tool_error("query is required"));
                 }
                 let namespace = params.get("namespace").and_then(|v| v.as_str());
                 let limit = params
@@ -206,7 +208,7 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
             async move {
                 let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if id.is_empty() {
-                    return Ok(json!({"ok": false, "error": "id is required"}));
+                    return Ok(tool_error("id is required"));
                 }
                 let title = params.get("title").and_then(|v| v.as_str()).map(sanitize)
                     // empty-string title means "clear"? the store treats
@@ -246,7 +248,7 @@ fn tool_delete(store: Arc<MemoryStore>) -> ToolDef {
             async move {
                 let id = params.get("id").and_then(|v| v.as_str()).unwrap_or("").to_string();
                 if id.is_empty() {
-                    return Ok(json!({"ok": false, "error": "id is required"}));
+                    return Ok(tool_error("id is required"));
                 }
                 if store.delete(&id) {
                     Ok(json!({"ok": true, "id": id, "deleted": true}))
@@ -432,11 +434,7 @@ mod dispatch_tests {
             ("memory_delete", json!({"id": "m-nope"})),
         ] {
             let out = tool(&tools, name).handler.call(params).await.unwrap();
-            assert_eq!(
-                out,
-                json!({"ok": false, "error": "unknown id: m-nope"}),
-                "{name} envelope"
-            );
+            assert_eq!(out, tool_error("unknown id: m-nope"), "{name} envelope");
         }
         let _ = std::fs::remove_dir_all(&dir);
     }

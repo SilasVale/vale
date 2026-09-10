@@ -133,7 +133,7 @@ correctness is.
 | 98 | agent evidence | SRP/OCP/tests | pwout AI-evidence feed promoted to `evidence.rs`: one owner for actions.jsonl append + newest-first read, shot listing, basename guard, `browser-actions-changed` push (was 2 inline producers + a mcp-client-private OnceLock + a hand-mirrored reader); dir now a PARAMETER so the contract is unit-testable; recount found the R97 "409" already stale (real pre-round 412) | +9 | `28c7c71f` |
 | 99 | agent update | DRY/SRP/tests | update BUSY MARKER owned: the path was spelled out twice (a Rust PathBuf join in `agent_update` + two hand-written literals in the generated PowerShell swap script) and the acquire/reclaim decision sat inline in the 300-line handler closure with ZERO coverage despite three recorded incidents. Now `BUSY_MARKER_REL` → `busy_marker_path()` (acquirer) + `busy_marker_ps()` (swap script) from ONE definition, and the decision is `acquire_busy_marker(path, stale_after)` (atomic `create_new`; reclaim the stale marker at most once so a locked marker cannot spin). Mutation-proven: dropping the reclaim-once flag HANGS the suite (timeout exit 124), and changing either the relpath or the join shape fails the drift contract | +4 | `24341e1b` |
 | 100 | agent terminal exec | SRP/tests | session-mode result cap extracted from the `tool_execute` wait loop into pure `bounded_append(result, truncated, s, max)`: the closure carried THREE panic/wedge incidents (round-105 OOM, round-113 oversized-chunk bypass, round-106 + review-#1 char-boundary panics that abort the loop PAST `term_release_execute` and wedge the session busy flag forever) with ZERO coverage. Both walks mutation-proven: removing the chunk-trim walk-forward panics with `start byte index 7 is not a char boundary; it is inside '汉'`, removing the drain walk-back panics in `String::drain` | +7 | `f44130df` |
-> **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
+| 101 | agent tool errors | DRY/tests | the device-tool FAILURE envelope `{"ok": false, "error": msg}` had NO owner — hand-written at 46 sites across 4 plugins (system 36, memory 7, connections 2, update 1). Promoted to `plugins::tool_error`; migration proven byte-identical mechanically (a string-aware extractor compared all 46 message expressions before/after: identical). While pinning it, the cross-layer contract was found UNDOCUMENTED and is now on record + tested: in-band `Ok({"ok":false})` renders as `{"ok":true,"result":{"ok":false}}` (outer ok TRUE, no top-level code) while typed `Err(DeviceError)` renders `{"ok":false,"error","code"}` — so the gateway's round-58 check classifies only the typed family as a failure | +3 | (this commit: the ledger row cannot name its own final hash) |> **Ledger repair (Round-98):** the stray duplicate `| 56 | …` row that sat
 > after R97 (an R97 editing accident — R56 already has its row in sequence at
 > line 92) is removed. Also, the R97-recounted agent gate total (409) was
 > ALREADY stale when written: the suites measured 412 before R98's changes
@@ -151,7 +151,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +94 · agent lib +37 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +40 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
