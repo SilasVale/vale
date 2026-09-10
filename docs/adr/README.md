@@ -16,6 +16,7 @@ file here is not an error.
 | [0007](0007-scoped-relay-token.md) | Adopted 2026-09-08 | F3 scoped relay token, step 1: per-user relay credential (`role: "relay"`) for settings.json; dual-accept on relay paths, /mcp + recovery stay admin-only; step-3 cutover pending |
 | [0008](0008-install-layout-v2.md) | Adopted 2026-09-09 | install-dir subdirectories (`etc\`/`components\`/`scripts\`, logs + `pwout\` under DataDir); explicit task config argument; one-version migration exception |
 | [0009](0009-self-contained-installer.md) | Adopted 2026-09-09 | pinned tgz rides inside the installer exe (NSIS File); local-first install, CDN download as fallback; exe-larger-than-tgz fail-closed proof |
+| [0010](0010-two-products-one-repository.md) | Adopted 2026-09-10 | the agent and the gateway are two independently usable **products** in ONE repository — split only on independent release cadence / owners / compliance |
 | [proposal-control-path](proposal-control-path.md) | Proposal (unnumbered, 2026-09-10) | draft for a device-side AI **control plane**: the AI's work as a decision tree the operator holds — capability scopes, a bounded-block gate contract, boundary-only pause, durable decisions |
 | [proposal-interactive-browser](proposal-interactive-browser.md) | Proposal (unnumbered, round-134) | draft for an interactive remote browser embedded in the panel (CDP screencast + WS input) |
 | [proposal-scoped-relay-token](proposal-scoped-relay-token.md) | Superseded by 0007 (Option B approved 2026-09-08) | F3 decision material, kept as history |
