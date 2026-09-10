@@ -51,7 +51,7 @@ re-litigated.
 | 2 **Advance** | the character walks | `terminal_execute` bounded wait + `run_in_background` | **DONE** |
 | 3 **Gate** | choose at a fork | pause at a capability boundary for approval | **MISSING** — see `proposal-control-path.md` |
 | 4 **Evidence** | hit feedback | `evidence.rs`, actions.jsonl, screenshots | **DONE** |
-| 5 **Take over** | grab the controller | `terminal_write` can send Ctrl+C | **HALF** — no ownership semantics |
+| 5 **Take over** | grab the controller | an explicit hold: the AI is refused with `human_in_control` while a person owns the session, and hands back on request | **DONE** — the hold is real, visible in `terminal_list`, and one click in both densities (`fd1013c0`, `f0f06fa8`) |
 | 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
 Originally two beats done, two half-done, two missing — and the missing pair is
@@ -227,7 +227,7 @@ and it is the user's to answer, not the author's to assume.
 | A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
 | Device-level activity signal + device state (§4.2–4.3) | **done** — `useDeviceActivity.ts` merges terminal + browser activity into one device signal, rendered as off/idle/working on the rail foot in BOTH densities; 2 mutants caught. §4.2 was re-scoped first (see the Law 3 correction): the merged signal is new and device-scoped, NOT a re-wiring of the browser pulse |
 | Path view (post-hoc record) | **done** — `PathView.tsx` + `lib/path.ts`, the third `SessionView`, both densities (`db940aef`); 15 tests. NO branches and it says so: the alternatives are not in the audit trail, so the view refuses to imply they are. Also forced `ViewSwitch.tsx` (one label list for two densities) and exposed + fixed 7 more dark-mode contrast failures (`e5696809`) |
-| Control plane (Law 2's mechanism) | proposal only (`proposal-control-path.md`) |
+| Control plane (Law 2's mechanism) | **PARTLY BUILT** — §D5 (the hold + `human_in_control`, distinct from `session_busy`) shipped; §D1 capability scopes, §D3 boundary pause + `stopping`, and §D4 durable decisions remain proposals. What shipped is COORDINATION, not enforcement: `terminal_write` is ungated by design, so an AI that ignores the handover can still type raw bytes — documented on `term_set_control` rather than oversold |
 
 Two notes on the completed items, both about VERIFICATION rather than code:
 
