@@ -117,7 +117,19 @@ correctness is.
 | 82 | audits | verify | behavior-preservation audit: all program commits classified, zero drift | — | — |
 | 83 | audits | verify | mutation proof: recordOgBodyFailure flag matters (precise kill) | — | — |
 | 84 | docs | docs | ledger R81–84 + gateway recount | — | `ad429f92` |
-| 85 | docs | docs | ledger R84–85 (record exactness) | — | (this commit: the ledger row cannot name its own final hash) |
+| 85 | docs | docs | ledger R84–85 (record exactness) | — | `01fb4e53` |
+| 86 | audits | verify | export-surface audit: all program exports test-imported | — | — |
+| 87 | audits | verify | cross-layer 100MB limit audit (agent cap deliberately untested) | — | — |
+| 88 | audits | verify | panel-react 183/183 fresh; adopt/api helpers pinned | — | — |
+| 89 | docs | docs | two verdict rows refreshed to R54/R68–69 end-states | — | `c1962d7f` |
+| 90 | gateway reliability | fix | gmi asymmetry retracted (misread); flag dropped; thread corrected | −1 net | `cc5847ac` |
+| 91 | gateway auth | SRP | mePutKeys onto the shared key prologue (body rides along) | ±0 | `7db1e1b0` |
+| 92 | audits | verify | access-handler review; double-check duplication judged structural | — | — |
+| 93 | gateway auth | OCP | usage-query endpoint table + pins | +1 | `fa02e5cc` |
+| 94 | agent terminal | tests | secret-tool validation without a keychain | +1 | `3e2a03cb` |
+| 95 | audits | verify | dep drift check + build.sh/CI wiring verification | — | — |
+| 96 | extension | SRP/tests | studio-links pure core to shared + path pins | +5 | `3a1346dc` |
+| 97 | docs | docs | ledger R86–97 + recounts (agent 407, extension 9) | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -131,7 +143,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +94 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +7 · scripts +19 · deps +2.
+Gateway +94 · agent lib +17 · core +7 · CLI +4 · relay +54 · extension +9 · index +7 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
