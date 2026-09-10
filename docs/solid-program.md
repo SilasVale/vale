@@ -88,6 +88,14 @@ correctness is.
 | 53 | gateway consistency | tests | OCP tables × registries cross-checks (route/key/probe) | +3 | `626654bc` |
 | 54 | gateway proxy | dead-code | prune 14 dead rewrite-table entries to live paths | +1 net | `96f12de7` |
 | 55 | docs | docs | count reconciliation (see note) + ledger R51–55 | — | `60d2a25b` |
+| 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | `33cca369` |
+| 57 | gateway translate | SRP/tests | response decision tree export + stream/oneshot/envelope pins | +3 | `310b72ed` |
+| 58 | gateway translate | tests | kind↔message cross-check + SSE envelope pin | +2 | `9be0f40e` |
+| 59 | gateway consistency | tests | managed keys routable + probeable cross-checks | +2 | `32c182ab` |
+| 60 | gateway auth | verify+fix | mutation proof → self-diagnosing probe fallback + comment correction | ±0 | `708d6d39` |
+| 61 | scripts | tests | smoke sha-guard pins + CI step (new shell front) | +9 | `4736ecf3` |
+| 62 | scripts | SRP/tests | dup-scanner seam + normalizer pins + CI step | +10 | `f1e238fb` |
+| 63 | docs | docs | ledger R56–63 catch-up | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -101,7 +109,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +82 · agent lib +12 · core +7 · CLI +4 · relay +49 · extension +4 · index +5.
+Gateway +89 · agent lib +12 · core +7 · CLI +4 · relay +49 · extension +4 · index +5 · scripts +19.
 
 ## Open threads (explicitly NOT started)
 
