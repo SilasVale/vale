@@ -1993,19 +1993,37 @@ mod tests {
         // (the whole system_*/memory_*/mcp_client_* families) stayed invisible
         // to MCP clients with every gate green. Regenerate with:
         //   VALE_REFRESH_SPEC=1 cargo test --features terminal,keyring spec_snapshot
+        //
+        // PARAMETER NAMES joined the snapshot for the same reason the tool names
+        // did, one drift later: the gateway advertises its OWN inputSchema for
+        // every device-direct tool, so a parameter added here is invisible to a
+        // console client — it cannot discover it, and a schema-validating client
+        // would refuse to send it. `terminal_execute`'s `intent`/`considered`
+        // shipped exactly that way and were found by reading, not by a gate.
+        // Names only, no types: enough to catch a MISSING parameter (the
+        // failure that matters — an unadvertised one cannot be sent), while a
+        // type difference between the two sides is a separate question this
+        // snapshot is not trying to answer.
         let spec = api_spec(&state());
         let mut entries: Vec<serde_json::Value> = Vec::new();
         for p in spec["plugins"].as_array().unwrap() {
             for t in p["tools"].as_array().unwrap() {
+                let mut params: Vec<String> = t["schema"]["properties"]
+                    .as_object()
+                    .map(|o| o.keys().cloned().collect())
+                    .unwrap_or_default();
+                params.sort();
                 entries.push(serde_json::json!({
                     "name": t["name"].as_str().unwrap(),
                     "plugin": p["name"].as_str().unwrap(),
+                    "params": params,
                 }));
             }
         }
         entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         let rendered = format!(
-            "// Device MCP tool inventory (name + owning plugin), generated from\n\
+            "// Device MCP tool inventory (name + owning plugin + parameter names),\n\
+             // generated from\n\
              // the live PluginRegistry by web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.\n\
              // The gateway MCP registry contract test reads this file.\n\
              // Do not hand-edit: VALE_REFRESH_SPEC=1 cargo test spec_snapshot, then commit.\n{}\n",
@@ -2259,6 +2277,92 @@ mod tests {
                 "{p} must reject an anonymous caller pre-dispatch"
             );
         }
+    }
+
+    /// THE INTENT LAYER, end to end: reasoning posted to the TOOL surface comes
+    /// back out of the audit trail beside the command it explains.
+    ///
+    /// The unit pins prove the logger stores what it is handed; the schema pin
+    /// proves the parameter is advertised. Neither proves the two are CONNECTED —
+    /// a handler that reads `intent` and never forwards it, or one that forwards
+    /// it to the wrong field, would leave every other test green while the
+    /// feature did nothing. This drives the real route.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn intent_posted_to_the_tool_surface_reaches_the_audit_trail() {
+        let (st, cfg_path) = state_with_cfg("intent-e2e", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        let body = serde_json::json!({
+            "session_id": sid,
+            "command": "echo intent-probe",
+            "intent": "confirm the session is responsive before changing anything",
+            "considered": ["skip the check", "reopen the session instead"],
+        });
+        let resp = handle_request(
+            req_with_json("POST", "/api/tools/terminal_execute", &body.to_string()),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
+        let start = events
+            .iter()
+            .find(|e| e["kind"] == "command/start")
+            .expect("the command was recorded");
+        assert_eq!(
+            start["intent"].as_str(),
+            Some("confirm the session is responsive before changing anything"),
+            "the reasoning must travel from the tool call to the trail"
+        );
+        assert_eq!(
+            start["considered"].as_array().map(|a| a.len()),
+            Some(2),
+            "and the branches not taken must survive the trip too"
+        );
+
+        // A malformed `considered` is ABSENT, never a failed execute: the
+        // reasoning is optional annotation on a command that should still run.
+        let body = serde_json::json!({
+            "session_id": sid,
+            "command": "echo no-intent",
+            "considered": "not-an-array",
+        });
+        let resp = handle_request(
+            req_with_json("POST", "/api/tools/terminal_execute", &body.to_string()),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::OK,
+            "a bad annotation must not stop the command the operator asked for"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
     }
 
     /// THE DISPATCH BEAT, end to end: the operator states a goal through the

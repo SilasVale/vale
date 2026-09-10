@@ -631,7 +631,7 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated, still_running}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX and `still_running=true` — the command is STILL RUNNING, continue with terminal_read(offset=read_from) until you see the prompt/exit. NEVER re-run a command or open a new session just because a partial was returned: the output arrives in the SAME session's buffer; opening new sessions (terminal_open) while old commands run is what causes output to look interleaved/queued. Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 3s, serial 4s, pty 1s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
-        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."}},"required":["command"]}),
+        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."},"intent":{"type":"string","description":"Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself."},"considered":{"type":"array","items":{"type":"string"},"description":"Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
@@ -669,6 +669,30 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     // cursor, so long-running commands (builds, tail -f) don't
                     // block an MCP call or trip the busy guard.
                     let run_in_background = params.get("run_in_background").and_then(|v| v.as_bool()).unwrap_or(false);
+                    // The agent's stated reasoning, if the client sent any. Read
+                    // ONCE here and carried to the audit write below, so the
+                    // record and any later reader see the same values — a second
+                    // extraction at the log site is how the two drift.
+                    //
+                    // A malformed `considered` (not an array of strings) is
+                    // treated as ABSENT rather than refused: the reasoning is
+                    // optional metadata about a command that is about to run
+                    // anyway, and failing the execute over it would trade a real
+                    // action for a nice-to-have annotation.
+                    let intent: Option<String> = params
+                        .get("intent")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
+                    let considered: Option<Vec<String>> = params
+                        .get("considered")
+                        .and_then(|v| v.as_array())
+                        .map(|a| {
+                            a.iter()
+                                .filter_map(|x| x.as_str())
+                                .map(|s| s.to_string())
+                                .collect::<Vec<_>>()
+                        })
+                        .filter(|c| !c.is_empty());
                     // Absolute position of the first post-command byte.
                     // All tracking is byte-exact against the raw buffer, so
                     // UTF-8 lossy conversion and 1MB eviction can never
@@ -858,7 +882,12 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     // A command that never reached the shell must not leave a
                     // dangling start that crash recovery reports as
                     // "interrupted" (round-55).
-                    logger.log_command_start(&sid, &command);
+                    logger.log_command_start_with(
+                        &sid,
+                        &command,
+                        intent.as_deref(),
+                        considered.as_deref(),
+                    );
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
                     // Background mode: return immediately with the read cursor
                     // so the caller can collect output incrementally.

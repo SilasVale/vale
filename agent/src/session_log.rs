@@ -34,6 +34,38 @@ use serde::Serialize;
 /// audit lines (round-98 — a closed session's file grew unbounded).
 const MAX_CLOSED_LOG_LINES: usize = 2000;
 
+/// Longest command line we keep, in bytes.
+///
+/// Existed as a literal 4096 in the plain path for the reason recorded there (a
+/// multi-MB one-liner rode the trail forever and forced a multi-MB read at
+/// close); named now that a SECOND entry point needs the same rule, because two
+/// copies of a cap is how one of them drifts.
+const COMMAND_MAX_BYTES: usize = 4096;
+
+/// Apply the command cap with its truncation notice. ONE rule for both entry
+/// points — the plain log and the intent-carrying one — so a command cannot ride
+/// the trail uncapped just because of which method the caller happened to use.
+fn cap_command(command: &str) -> String {
+    if command.len() > COMMAND_MAX_BYTES {
+        let cut = crate::text::boundary_at_or_below(command, COMMAND_MAX_BYTES);
+        format!(
+            "{}…[truncated {} bytes]",
+            &command[..cut],
+            command.len() - cut
+        )
+    } else {
+        command.to_string()
+    }
+}
+
+/// Longest `intent` we keep, in bytes — an objective sentence, not an essay.
+const INTENT_MAX_BYTES: usize = 512;
+/// Most alternatives we keep per command. The decision tree's branching factor:
+/// beyond a handful a reader is looking at a list, not a choice.
+const CONSIDERED_MAX: usize = 8;
+/// Longest single alternative, in bytes — a button label, not a paragraph.
+const CONSIDERED_ITEM_MAX_BYTES: usize = 160;
+
 /// Stream-trim a session JSONL: keep the version header + the LAST
 /// command/start (recovery needs it to detect an interrupted command) and
 /// everything after it; if that's still over the cap, keep the most recent
@@ -141,10 +173,41 @@ pub struct SessionEvent {
     /// command/end only: wall-clock duration of the command in ms (round-58).
     #[serde(skip_serializing_if = "Option::is_none")]
     pub duration_ms: Option<u64>,
+    /// command/start only: WHY the agent ran this, in its own words.
+    ///
+    /// Supplied by the AI client through `terminal_execute`. Optional because
+    /// most clients will not send it for a while — and the view has to be honest
+    /// about the difference between "no reason given" and "no reason needed".
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub intent: Option<String>,
+    /// command/start only: the alternatives the agent says it passed over.
+    ///
+    /// The half of the decision tree that does not exist in a command log. This
+    /// field is where it finally becomes real: an audit trail records what
+    /// happened, and this records what did not.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub considered: Option<Vec<String>>,
 }
 
 impl SessionEvent {
     pub fn command_start(seq: u64, command: &str) -> Self {
+        Self::command_start_with(seq, command, None, None)
+    }
+
+    /// As [`SessionEvent::command_start`], with the agent's stated reasoning.
+    ///
+    /// `intent` and `considered` are TRIMMED and CAPPED here rather than at the
+    /// call site: they arrive from a remote client, they ride every audit read,
+    /// and an uncapped one would be a remote memory amplifier. A blank intent is
+    /// stored as `None` — "the client sent an empty string" and "the client sent
+    /// nothing" mean the same thing to a reader, and collapsing them keeps the
+    /// view from having to distinguish two kinds of absent.
+    pub fn command_start_with(
+        seq: u64,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+    ) -> Self {
         Self {
             seq,
             ts: crate::unix_now(),
@@ -155,6 +218,20 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            intent: intent
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::text::clip(s, INTENT_MAX_BYTES).to_string()),
+            considered: considered
+                .map(|c| {
+                    c.iter()
+                        .map(|s| s.trim())
+                        .filter(|s| !s.is_empty())
+                        .take(CONSIDERED_MAX)
+                        .map(|s| crate::text::clip(s, CONSIDERED_ITEM_MAX_BYTES).to_string())
+                        .collect::<Vec<_>>()
+                })
+                .filter(|c: &Vec<String>| !c.is_empty()),
         }
     }
     pub fn output(seq: u64, text: String) -> Self {
@@ -168,6 +245,8 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            intent: None,
+            considered: None,
         }
     }
     pub fn command_end(seq: u64, exit_code: Option<i32>, reason: Option<&str>) -> Self {
@@ -181,6 +260,8 @@ impl SessionEvent {
             reason: reason.map(|s| s.to_string()),
             status: None,
             duration_ms: None,
+            intent: None,
+            considered: None,
         }
     }
     pub fn status(seq: u64, status: &str) -> Self {
@@ -194,6 +275,8 @@ impl SessionEvent {
             reason: None,
             status: Some(status.to_string()),
             duration_ms: None,
+            intent: None,
+            considered: None,
         }
     }
 
@@ -219,6 +302,8 @@ impl SessionEvent {
             reason: None,
             status: None,
             duration_ms: None,
+            intent: None,
+            considered: None,
         }
     }
 
@@ -248,6 +333,8 @@ impl SessionEvent {
             reason: None,
             status: Some(holder.to_string()),
             duration_ms: None,
+            intent: None,
+            considered: None,
         }
     }
 }
@@ -458,21 +545,31 @@ impl SessionLogger {
         }
     }
 
+    /// Record a command AND the agent's stated reasoning for it.
+    ///
+    /// Best-effort like every write here. The reasoning is optional at every
+    /// layer: a client that sends none produces exactly the event this always
+    /// produced, so nothing downstream has to special-case its absence.
+    pub fn log_command_start_with(
+        &self,
+        sid: &str,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+    ) {
+        let command = cap_command(command);
+        self.log(
+            sid,
+            SessionEvent::command_start_with(0, &command, intent, considered),
+        );
+    }
+
     pub fn log_command_start(&self, sid: &str, command: &str) {
         // audit round: the 4 KiB cap existed for OUTPUT only — a single
         // multi-MB command line (`python -c '<payload>'`) rode the trail
         // forever (trim counts LINES) and forced a multi-MB read_line at
         // close. Cap identically (char-boundary-safe).
-        let command = if command.len() > 4096 {
-            let cut = crate::text::boundary_at_or_below(command, 4096);
-            format!(
-                "{}…[truncated {} bytes]",
-                &command[..cut],
-                command.len() - cut
-            )
-        } else {
-            command.to_string()
-        };
+        let command = cap_command(command);
         self.log(sid, SessionEvent::command_start(0, &command));
     }
     pub fn log_output(&self, sid: &str, text: String) {
@@ -1114,6 +1211,152 @@ mod tests {
         );
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE INTENT LAYER'S FIRST REAL SURFACE: what the agent was thinking, and
+    /// what it passed over, recorded beside the command it explains.
+    ///
+    /// The alternatives are the half that matters. An audit trail already answers
+    /// "what ran"; `considered` is the only place the branches NOT taken exist at
+    /// all, and without them a finished session reads as a single inevitable line
+    /// of steps rather than as a sequence of choices.
+    #[test]
+    fn intent_and_alternatives_are_recorded_beside_the_command() {
+        let dir = temp_dir("intent");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start_with(
+            "s1",
+            "display ont info 0 1",
+            Some("  check whether the ONU is actually online  "),
+            Some(&[
+                "reset the ONU".to_string(),
+                "check the OLT uplink".to_string(),
+            ]),
+        );
+        drop(logger);
+
+        let logger2 = SessionLogger::new(dir.clone());
+        let events = logger2.events_of("s1");
+        let start = events
+            .iter()
+            .find(|e| e["kind"] == "command/start")
+            .expect("the command was recorded");
+        assert_eq!(
+            start["intent"].as_str(),
+            Some("check whether the ONU is actually online"),
+            "intent is trimmed and stored verbatim otherwise"
+        );
+        assert_eq!(
+            start["considered"].as_array().map(|a| a.len()),
+            Some(2),
+            "the alternatives are recorded — they exist nowhere else"
+        );
+    }
+
+    /// A blank or absent intent is ABSENT, not an empty string.
+    ///
+    /// The view has to tell "the agent explained itself and said nothing useful"
+    /// from "the agent sent no explanation", and collapsing them here means no
+    /// reader downstream has to distinguish two kinds of nothing.
+    #[test]
+    fn a_blank_intent_reads_as_absent() {
+        let dir = temp_dir("intent-blank");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_command_start_with("s1", "ls", Some("   "), Some(&[]));
+        drop(logger);
+
+        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let start = events
+            .iter()
+            .find(|e| e["kind"] == "command/start")
+            .unwrap();
+        assert!(
+            start.get("intent").is_none(),
+            "a blank intent must not appear"
+        );
+        assert!(
+            start.get("considered").is_none(),
+            "an empty alternatives list must not appear"
+        );
+        // The plain entry point produces the same shape, so nothing downstream
+        // has to special-case a command logged without reasoning.
+        let logger2 = SessionLogger::new(dir.clone());
+        logger2.log_command_start("s1", "ls");
+        drop(logger2);
+        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        assert!(events.iter().all(|e| e.get("intent").is_none()));
+    }
+
+    /// The caps are REMOTE-INPUT bounds, so they are asserted at the boundary.
+    ///
+    /// These strings arrive from a client, ride every audit read, and are written
+    /// to disk — an uncapped one is a remote memory and storage amplifier. The
+    /// char-boundary part matters for the same reason it does everywhere else in
+    /// this file: a naive byte cut panics, and this crate has paid for that three
+    /// times.
+    #[test]
+    fn intent_and_alternatives_are_capped_and_boundary_safe() {
+        let dir = temp_dir("intent-caps");
+        let logger = SessionLogger::new(dir.clone());
+
+        // Every char is 3 bytes, so a byte cut at 512 lands mid-character.
+        let long_intent = "汉".repeat(400);
+        let many = (0..20).map(|i| format!("option {i}")).collect::<Vec<_>>();
+        logger.log_command_start_with("s1", "x", Some(&long_intent), Some(&many));
+        drop(logger);
+
+        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let start = events
+            .iter()
+            .find(|e| e["kind"] == "command/start")
+            .unwrap();
+        let intent = start["intent"].as_str().unwrap();
+        assert!(intent.len() <= INTENT_MAX_BYTES, "intent is capped");
+        assert_eq!(
+            intent.chars().count(),
+            intent.len() / 3,
+            "the cap must land on a char boundary, not inside 汉"
+        );
+        let considered = start["considered"].as_array().unwrap();
+        assert_eq!(
+            considered.len(),
+            CONSIDERED_MAX,
+            "the branch list is capped"
+        );
+        assert!(considered
+            .iter()
+            .all(|c| c.as_str().unwrap().len() <= CONSIDERED_ITEM_MAX_BYTES));
+    }
+
+    /// BOTH entry points apply the command cap.
+    ///
+    /// The cap existed only on the plain path, so a multi-MB one-liner could ride
+    /// the trail forever simply by being logged through the intent-carrying
+    /// method instead — a second entry point is exactly how a cap drifts.
+    #[test]
+    fn the_command_cap_applies_to_both_entry_points() {
+        let dir = temp_dir("intent-cmdcap");
+        let logger = SessionLogger::new(dir.clone());
+        let huge = "A".repeat(50_000);
+        logger.log_command_start("s1", &huge);
+        logger.log_command_start_with("s1", &huge, Some("why"), None);
+        drop(logger);
+
+        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let starts: Vec<_> = events
+            .iter()
+            .filter(|e| e["kind"] == "command/start")
+            .collect();
+        assert_eq!(starts.len(), 2);
+        for s in starts {
+            let cmd = s["command"].as_str().unwrap();
+            assert!(
+                cmd.len() < 5000,
+                "a 50 KB command must be capped on BOTH paths (got {} bytes)",
+                cmd.len()
+            );
+            assert!(cmd.contains("truncated"), "and say that it was cut");
+        }
     }
 
     #[test]
