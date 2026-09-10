@@ -338,7 +338,30 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R108 — web request handling is split at its
+Last updated: 2026-09-10 SOLID-R109 — a documented memory feature does not
+  exist, and now says so. The memory plugin's CLIENT-IDENTITY CAPTURE:
+  `tools::set_source` is `pub`, documented as "called by the MCP layer on
+  handshake", and has ZERO callers repo-wide — so `SOURCE` keeps its
+  "unknown" initializer and every `memory_save` record is stamped `unknown`.
+  Three doc comments asserted the capture works (the module header, the
+  static, the fn) and `MemoryRecord.source`'s field doc listed the intended
+  values; nothing contradicted any of it, which is exactly why it survived.
+  All four claims are corrected, and the situation is PINNED rather than
+  silently repaired — wiring `set_source` is a BEHAVIOUR change needing a
+  product decision about WHAT identity to record (the MCP client's
+  `clientInfo.name`? the device-local transport?) and where in the handshake
+  to take it. `records_are_stamped_unknown_until_set_source_is_wired` fails
+  with that instruction the moment someone wires it; the paired
+  `update_preserves_an_existing_source` pins the other half (update clones the
+  stored record, so an older or hand-edited source survives edits).
+  Also removed `MemoryRecord::is_deleted` — zero callers AND a doc comment
+  describing an unrelated concern ("the effective id used for ordering"),
+  i.e. the kind of thing a reader wastes time trusting. Agent gates 461
+  feat-gated / 454 default green, clippy -D warnings clean both configs, fmt
+  clean, xwin check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R108 — web request handling is split at its
   natural seam. `handle_request` was a 230-line function mixing three
   concerns: pre-dispatch routing (public SPA + assets, the static status page,
   and the three streaming routes that self-authenticate), the auth gate, and

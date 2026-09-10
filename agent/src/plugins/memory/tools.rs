@@ -3,8 +3,12 @@
 //! memory_update / memory_delete / memory_export.
 //!
 //! All tools operate on the shared MemoryStore (device-wide); `namespace`
-//! optionally scopes a query/save. `source` is the writing client identity
-//! captured at the transport (MCP handshake) — fallback "unknown".
+//! optionally scopes a query/save.
+//!
+//! `source` (the writing client identity) is INTENDED to be captured at the
+//! transport, but the capture is not wired — see `set_source` — so records are
+//! stamped "unknown" today. The gap is pinned by a test in this plugin's
+//! parent module rather than left as a claim here.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -17,11 +21,24 @@ use crate::plugins::tool_error;
 use super::sanitize::sanitize;
 use super::store::{MemoryLimits, MemoryRecord, MemoryStore};
 
-/// Current client source for writes; set by the transport when known.
+/// Current client source for writes.
+///
+/// SOLID R109: this is ALWAYS `"unknown"` today — see `set_source`.
 static SOURCE: LazyLock<std::sync::Mutex<String>> =
     LazyLock::new(|| std::sync::Mutex::new("unknown".to_string()));
 
-/// Set the writing-client identity (called by the MCP layer on handshake).
+/// Set the writing-client identity.
+///
+/// NOT WIRED (SOLID R109): this has no caller anywhere in the repo, so
+/// `SOURCE` keeps its `"unknown"` initializer and every record written through
+/// `memory_save` is stamped `"unknown"` — the identity capture described in
+/// this module's header does not actually happen. Recorded rather than
+/// repaired because wiring it is a BEHAVIOUR change, not a refactor: it needs
+/// a product decision about what identity to record (the MCP client's
+/// `clientInfo.name`? the device-local transport?) and where in the handshake
+/// to take it. The gap is pinned by
+/// `plugins::memory::tests::records_are_stamped_unknown_until_set_source_is_wired`
+/// so it cannot be mistaken for a working feature again.
 pub fn set_source(source: &str) {
     *SOURCE.lock().unwrap_or_else(|p| p.into_inner()) = source.to_string();
 }

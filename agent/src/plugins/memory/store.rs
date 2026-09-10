@@ -37,7 +37,14 @@ pub struct MemoryRecord {
     pub tags: Vec<String>,
     #[serde(default = "default_namespace")]
     pub namespace: String,
-    /// Writing client identity: "claude-code" | "dsh" | "vale-desktop" | "unknown".
+    /// Writing client identity, when one is known.
+    ///
+    /// The intended values are `"claude-code"` / `"dsh"` / `"vale-desktop"`,
+    /// but see `tools::set_source` — NOTHING sets it today, so records written
+    /// through `memory_save` are stamped `"unknown"` (pinned by
+    /// `plugins::memory::tests::records_are_stamped_unknown_until_set_source_is_wired`).
+    /// Records that already carry a source keep it: `update` clones the
+    /// stored record and never touches this field.
     #[serde(default = "default_source")]
     pub source: String,
     pub created_at: u64,
@@ -51,13 +58,6 @@ fn default_namespace() -> String {
 }
 fn default_source() -> String {
     "unknown".to_string()
-}
-
-impl MemoryRecord {
-    /// The effective "id" used for ordering: latest-updated first.
-    pub fn is_deleted(&self) -> bool {
-        self.deleted
-    }
 }
 
 /// Capacity policy (from config `memory:`), defaults when unset.
