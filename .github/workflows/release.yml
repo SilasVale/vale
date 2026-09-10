@@ -143,7 +143,11 @@ jobs:
           curl -fsSL -o /tmp/libtinfo5.deb \
             http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2.1_amd64.deb
           dpkg-deb -x /tmp/libtinfo5.deb "$HOME/llvm18-compat"
-          echo "LD_LIBRARY_PATH=$HOME/llvm18-compat/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
+          # GITHUB_ENV only takes effect for LATER steps, so export it here as
+          # well — otherwise the verification line below fails on the very
+          # soname this step just provided.
+          export LD_LIBRARY_PATH="$HOME/llvm18-compat/lib/x86_64-linux-gnu"
+          echo "LD_LIBRARY_PATH=$LD_LIBRARY_PATH" >> "$GITHUB_ENV"
           "$HOME/llvm18/bin/clang" --version | head -1
       # cargo-xwin resolves its tools from ~/.cache/cargo-xwin — mirror the
       # local box's layout exactly (clang / lld-link / llvm-rc out of the LLVM
