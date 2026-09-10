@@ -6,6 +6,7 @@ import worker from "../src/index.ts";
 import { buildHealth, encodeBase64Utf8, posixInstaller, probeRateLimited, psInstaller, valeProbe } from "../src/index.ts";
 import { probeEnvKeyName } from "../src/tooling.ts";
 import { HEALTH_CHANNELS } from "../src/channels.ts";
+import { USER_KEY_NAMES } from "../src/store.ts";
 import { resolveAutoModel } from "../src/plugins/translate.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
 
@@ -359,6 +360,21 @@ test("probe rows cover every non-og HEALTH_CHANNELS id (no silent default)", () 
       "DEEPSEEK_API_KEY",
       `${id}/ must resolve via its own row, not the default`,
     );
+  }
+});
+
+// SOLID Round-59: every console-managed key must be probeable — a key the
+// console lets users save but no probe path spends leaves `vale check`
+// blind for its channel. og rides the dedicated breaker-pathed probe, not
+// the table; everything else needs its own PROBE_ENV_KEYS row (the default
+// would spend the DeepSeek worker key on a foreign channel).
+test("probe coverage spans every USER_KEY_NAMES entry", () => {
+  const tabled = new Set(
+    ["or", "qw", "nv", "gmi", "cm", "amd", "ds"].map((p) => probeEnvKeyName(p)),
+  );
+  for (const name of USER_KEY_NAMES) {
+    const covered = tabled.has(name) || name === "OPENCODE_GO_API_KEY";
+    assert.ok(covered, `managed key ${name} has no probe path`);
   }
 });
 

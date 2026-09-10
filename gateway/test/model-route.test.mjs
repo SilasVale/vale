@@ -12,6 +12,7 @@ import {
 } from "../src/plugins/model-route.ts";
 import { __clearDegradedCache } from "../src/reliability.ts";
 import { MODELS } from "../src/channels.ts";
+import { USER_KEY_NAMES } from "../src/store.ts";
 
 function envFor({ ukeys = {}, uid, breakerOpen = false, extra = {} } = {}) {
   const kv = new Map([[`ukeys:${uid}`, JSON.stringify(ukeys)]]);
@@ -138,5 +139,15 @@ test("CHANNEL_KEY_RULES covers every MODELS prefix", () => {
       Object.prototype.hasOwnProperty.call(CHANNEL_KEY_RULES, p),
       `${p}/ models need a key rule`,
     );
+  }
+});
+
+// SOLID Round-59: every console-managed key must be routable — a key the
+// console lets users save but no channel rule reads is a dead credential
+// (saved, never usable, confusingly reported as configured).
+test("CHANNEL_KEY_RULES userKeys cover every USER_KEY_NAMES entry", () => {
+  const wired = new Set(Object.values(CHANNEL_KEY_RULES).map((r) => r.userKey));
+  for (const name of USER_KEY_NAMES) {
+    assert.ok(wired.has(name), `managed key ${name} has no routing rule`);
   }
 });
