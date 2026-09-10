@@ -155,6 +155,7 @@ export function TerminalWorkspace({
                 sessionKind={activeSession?.kind}
                 sessionLabel={activeSession?.label}
                 goal={activeSession?.goal}
+                plan={activeSession?.plan}
               />
             ) : trajOpen && activeSid ? (
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
@@ -200,6 +201,7 @@ export function TerminalWorkspace({
               sessionKind={activeSession?.kind}
               sessionLabel={activeSession?.label}
               goal={activeSession?.goal}
+                plan={activeSession?.plan}
             />
           ) : trajOpen && activeSid ? (
             <TrajectoryView key={activeSid} events={cmdEvents.events} />

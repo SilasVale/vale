@@ -497,6 +497,61 @@
   overflow-wrap: anywhere;
 }
 
+/* The agent's PLAN in the path header: the steps it said it would take, each
+   with how many commands actually served it. A `0` is not a decoration — it is
+   the run departing from what was announced. */
+.path-plan {
+  display: flex;
+  align-items: baseline;
+  gap: 10px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface-recessed);
+}
+.path-plan-label {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--muted);
+}
+.path-plan-steps {
+  display: flex;
+  flex-wrap: wrap;
+  gap: 5px 8px;
+  margin: 0;
+  padding: 0;
+  list-style: none;
+}
+.path-plan-step {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 5px;
+  padding: 1px 8px;
+  border-radius: 999px;
+  border: 1px solid var(--line-strong);
+  background: var(--surface-chip);
+  font-size: 11.5px;
+  color: var(--chrome-ink-dim);
+}
+/* Claimed vs not is a SHAPE difference (solid vs dashed), so it survives a
+   reader who cannot separate the two colours. */
+.path-plan-step.open { border-style: dashed; }
+.path-plan-n {
+  font: 600 10px var(--font-mono);
+  color: var(--chrome-ink);
+}
+.path-plan-text { overflow-wrap: anywhere; }
+/* --chrome-ink-dim, NOT --muted: this is the same --muted-on---surface-chip pair
+   that measured 4.40 and was fixed for the count chips last round. Reintroduced
+   here from habit, and caught by measuring rather than by remembering. */
+.path-plan-count {
+  font: 600 10px var(--font-mono);
+  color: var(--chrome-ink-dim);
+}
+.path-plan-count[data-zero="yes"] { color: var(--danger-on-soft); }
+
 /* The goal in the PATH header — beside the summary, never as a verdict. */
 .path-goal {
   flex: none;

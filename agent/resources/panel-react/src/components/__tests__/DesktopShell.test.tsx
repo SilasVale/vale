@@ -19,7 +19,7 @@ vi.mock("../../lib/api", async (importOriginal) => ({
 function sessions(): Session[] {
   return [{
     sid: "s1", label: "shell", kind: "pty", closed: false, savedOnly: false,
-    active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, }];
+    active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, plan: [], }];
 }
 
 const baseProps = {

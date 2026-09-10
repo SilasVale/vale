@@ -29,6 +29,8 @@ export interface CommandEvent {
   intent?: string | null;
   /** command/start only: the alternatives it says it passed over. */
   considered?: string[] | null;
+  /** command/start only: the 1-based plan step this command advances. */
+  plan_step?: number | null;
 }
 
 export interface CommandCard {

@@ -21,6 +21,14 @@ function mapGoal(s: any): string | null {
   return typeof g === "string" && g.trim().length > 0 ? g : null;
 }
 
+/** The plan arrives as an array of step labels; same filtering discipline as
+ *  grants, so the UI never renders a step it could not match back. */
+function mapPlan(s: any): string[] {
+  const p = s?.plan;
+  if (!Array.isArray(p)) return [];
+  return p.filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
+}
+
 function mapGrants(s: any): string[] {
   const g = s?.approval_grants;
   if (!Array.isArray(g)) return [];
@@ -64,6 +72,11 @@ export interface Session {
    *  the goal is the anchor a run is judged against, so the panel must show the
    *  stored value rather than whatever was last typed. */
   goal: string | null;
+  /** The AGENT's declared plan: what it intends to do, in order. Distinct from
+   *  `goal`, which is the operator's. Showing both is what makes a divergence
+   *  visible — the plan says five steps, the path shows three plus two nobody
+   *  announced. */
+  plan: string[];
 }
 
 interface SessionRuntime {
@@ -129,7 +142,7 @@ export function useSessions(connected: boolean) {
             if (!existing) {
               next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
-                approvalGrants: mapGrants(s), goal: mapGoal(s) });
+                approvalGrants: mapGrants(s), goal: mapGoal(s), plan: mapPlan(s) });
             } else if (existing.closed) {
               // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
               // whose sid reappears live. A fast AI session (open → one
@@ -139,7 +152,8 @@ export function useSessions(connected: boolean) {
               // reappearance means the session is real: un-tombstone it.
               const revived = { ...existing, closed: false, closedAt: null,
                 heldByHuman: !!s.held_by_human, approvalRequired: !!s.approval_required,
-                pendingApproval: mapPending(s), approvalGrants: mapGrants(s), goal: mapGoal(s) };
+                pendingApproval: mapPending(s), approvalGrants: mapGrants(s), goal: mapGoal(s),
+                plan: mapPlan(s) };
               next[next.indexOf(existing)] = revived;
             } else if (
               existing.heldByHuman !== !!s.held_by_human ||
@@ -147,6 +161,7 @@ export function useSessions(connected: boolean) {
               existing.pendingApproval?.id !== mapPending(s)?.id
               || existing.approvalGrants.join("\u0000") !== mapGrants(s).join("\u0000")
               || existing.goal !== mapGoal(s)
+              || existing.plan.join("\u0000") !== mapPlan(s).join("\u0000")
             ) {
               // The hold is server-owned and can change WITHOUT a sessions-changed
               // event (this panel's own control button, or another client).
@@ -160,6 +175,7 @@ export function useSessions(connected: boolean) {
                 pendingApproval: mapPending(s),
                 approvalGrants: mapGrants(s),
                 goal: mapGoal(s),
+                plan: mapPlan(s),
               };
             }
           }
@@ -224,7 +240,7 @@ export function useSessions(connected: boolean) {
           for (const s of missing) {
             next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
-                approvalGrants: mapGrants(s), goal: mapGoal(s) });
+                approvalGrants: mapGrants(s), goal: mapGoal(s), plan: mapPlan(s) });
           }
           if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
             const liveTail = next.filter((x) => !x.closed);
@@ -286,7 +302,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, plan: [] }];
       });
       setActiveSid(sid);
       return sid;

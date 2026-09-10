@@ -66,6 +66,10 @@ export interface PathStep {
    *  the one thing a command log can never reconstruct, and the reason this
    *  field exists at all. */
   considered: string[];
+  /** The 1-based plan step this command claimed, or null if it claimed none.
+   *  Null is the interesting case as much as a number: an unclaimed step is how
+   *  a run visibly departs from what the agent said it would do. */
+  planStep: number | null;
 }
 
 export interface PathSummary {
@@ -171,6 +175,10 @@ export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = 
       outputChars: r.events.reduce((n, e) => n + (e.kind === "output" ? (e.text?.length ?? 0) : 0), 0),
       intent: start?.intent ?? null,
       considered: Array.isArray(start?.considered) ? start!.considered! : [],
+      planStep:
+        typeof start?.plan_step === "number" && start.plan_step > 0
+          ? start.plan_step
+          : null,
     });
   }
 

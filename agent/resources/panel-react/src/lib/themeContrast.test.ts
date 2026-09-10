@@ -250,6 +250,11 @@ describe("recessed content surfaces", () => {
       ['#session-count', "--chrome-ink-dim"],
       ['.side-time', "--chrome-ink-dim"],
       ['.side-count', "--chrome-ink-dim"],
+      // The plan's claim count sits on the same chip surface and was written
+      // with --muted out of habit the round after that pair was fixed. The pin
+      // lists selectors, so a NEW chip is not covered until it is added here —
+      // which is exactly how it slipped through.
+      ['.path-plan-count', "--chrome-ink-dim"],
       ['.tab.active', "--chrome-active-text"],
       ['.view-switch-btn.active', "--chrome-active-text"],
     ];

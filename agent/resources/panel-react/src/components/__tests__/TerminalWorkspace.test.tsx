@@ -24,7 +24,7 @@ const session = (over: Partial<Session & { active: boolean }> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, ...over,
+  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
 });
 
 const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {}) => ({

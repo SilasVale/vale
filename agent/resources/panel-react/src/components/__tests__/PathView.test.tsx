@@ -93,7 +93,7 @@ describe("summarizePath", () => {
   const step = (o: Partial<PathStep>): PathStep => ({
     id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
     startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0,
-    intent: null, considered: [], ...o,
+    intent: null, considered: [], planStep: null, ...o,
   });
 
   it("reports the total as a FLOOR when some steps have no duration", () => {
@@ -134,7 +134,7 @@ describe("attentionSteps", () => {
     const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
       id, index, command: id, state, owner: "ai", stateLabel: "", startedAt: 0,
       durationMs: null, exitCode: null, reason: null, outputChars: 0,
-      intent: null, considered: [],
+      intent: null, considered: [], planStep: null,
     });
     const out = attentionSteps([
       step("ok1", "ok", 1),
@@ -381,5 +381,72 @@ describe("the intent layer in the path", () => {
     // what the run was for — the whole point of showing them together.
     const summary = document.querySelector(".path-summary")!;
     expect(goal!.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+  });
+});
+
+describe("the plan in the path", () => {
+  // Events as the agent now writes them: a command names the plan step it
+  // advances. Driven through the REAL component so the whole path is covered —
+  // event shape, derivation and render.
+  function withPlan(steps: number[]): CommandEvent[] {
+    const evs: CommandEvent[] = [ev({ seq: 1, ts: 100, kind: "status", status: "opened" })];
+    let seq = 2;
+    for (const step of steps) {
+      evs.push(ev({ seq: seq++, ts: 200, kind: "command/start", command: `cmd ${step}`, plan_step: step }));
+      evs.push(ev({ seq: seq++, ts: 201, kind: "command/end", exit_code: 0, duration_ms: 10 }));
+    }
+    return evs;
+  }
+
+  it("shows each step with the number of commands that served it", () => {
+    render(
+      <PathView
+        events={withPlan([1, 1, 3])}
+        plan={["check the ONU is online", "create VLAN 100", "save the config"]}
+      />,
+    );
+    const rows = [...document.querySelectorAll(".path-plan-step")].map((e) => ({
+      text: e.querySelector(".path-plan-text")!.textContent,
+      count: e.querySelector(".path-plan-count")!.textContent,
+      zero: e.querySelector(".path-plan-count")!.getAttribute("data-zero"),
+    }));
+    expect(rows).toEqual([
+      { text: "check the ONU is online", count: "2", zero: "no" },
+      { text: "create VLAN 100", count: "0", zero: "yes" },
+      { text: "save the config", count: "1", zero: "no" },
+    ]);
+  });
+
+  it("marks a step NOBODY claimed, because that is the signal", () => {
+    // An unclaimed step is how a run visibly departs from what was announced.
+    // The count is the honest half of the plan — rendering the steps without it
+    // would show an intention as if it were an accomplishment.
+    render(<PathView events={withPlan([1])} plan={["did this", "did not"]} />);
+    const open = document.querySelectorAll(".path-plan-step.open");
+    expect(open.length).toBe(1);
+    expect(open[0].querySelector(".path-plan-text")!.textContent).toBe("did not");
+    // Distinguishable by SHAPE, not colour alone.
+    expect(open[0].className).toContain("open");
+  });
+
+  it("renders no plan block at all when the agent declared none", () => {
+    // Most sessions have no plan (no client sends one yet); an empty block would
+    // be noise on every run.
+    render(<PathView events={withPlan([1])} plan={[]} />);
+    expect(document.querySelector(".path-plan")).toBeNull();
+    render(<PathView events={withPlan([1])} />);
+    expect(document.querySelector(".path-plan")).toBeNull();
+  });
+
+  it("does not credit a step to a command that claimed nothing", () => {
+    // A command with no plan_step serves no step. Crediting it to step 1 by
+    // position would invent a linkage the agent never stated.
+    const evs = [
+      ev({ seq: 1, ts: 100, kind: "command/start", command: "unplanned" }),
+      ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 5 }),
+    ];
+    render(<PathView events={evs} plan={["the only step"]} />);
+    expect(document.querySelector(".path-plan-count")!.textContent).toBe("0");
+    expect(document.querySelector(".path-plan-count")!.getAttribute("data-zero")).toBe("yes");
   });
 });

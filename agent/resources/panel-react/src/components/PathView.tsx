@@ -40,7 +40,7 @@ export function summaryDuration(s: PathSummary): string {
   return s.untimed > 0 ? `at least ${base}` : base;
 }
 
-export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal }: {
+export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal, plan }: {
   events: CommandEvent[];
   /** Select a step — the caller scrolls/highlights it in the timeline. */
   onJumpToStep?: (step: PathStep) => void;
@@ -53,6 +53,9 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
    *  and inferring it from a command stream is the confident guess this design
    *  keeps refusing to make. */
   goal?: string | null;
+  /** The AGENT's declared plan. Rendered as its own block and matched against the
+   *  steps, so a reader sees the plan followed — or quietly departed from. */
+  plan?: string[];
 }) {
   const rounds = useTrajectory(events);
   const path = useMemo(() => derivePath(rounds, events), [rounds, events]);
@@ -118,6 +121,42 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
         <div className="path-goal" title="What this session was asked to achieve">
           <span className="path-goal-label">Goal</span>
           <span className="path-goal-text">{goal}</span>
+        </div>
+      )}
+      {/* THE PLAN, as a plan. The goal above says what was ASKED FOR; this says
+          what the agent said it would DO, and below each command states which
+          step it served — so a step nobody claimed is visible as work that was
+          never announced, and a step nobody did is visible as an abandoned
+          intention. That comparison is the whole reason both are recorded. */}
+      {plan && plan.length > 0 && (
+        <div className="path-plan">
+          <span className="path-plan-label">Plan</span>
+          <ol className="path-plan-steps">
+            {plan.map((p, i) => {
+              const n = i + 1;
+              const done = path.steps.filter((st) => st.planStep === n).length;
+              return (
+                <li
+                  key={`${n}-${p}`}
+                  className={`path-plan-step ${done > 0 ? "done" : "open"}`}
+                  title={
+                    done > 0
+                      ? `${done} command${done === 1 ? "" : "s"} served this step`
+                      : "no command claimed this step"
+                  }
+                >
+                  <span className="path-plan-n">{n}</span>
+                  <span className="path-plan-text">{p}</span>
+                  {/* The claim count is the honest half. ZERO is shown as
+                      prominently as any number: an unclaimed step is the signal
+                      that the run departed from the plan. */}
+                  <span className="path-plan-count" data-zero={done === 0 ? "yes" : "no"}>
+                    {done}
+                  </span>
+                </li>
+              );
+            })}
+          </ol>
         </div>
       )}
       <header className="path-summary">
