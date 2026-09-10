@@ -95,7 +95,17 @@ correctness is.
 | 60 | gateway auth | verify+fix | mutation proof → self-diagnosing probe fallback + comment correction | ±0 | `708d6d39` |
 | 61 | scripts | tests | smoke sha-guard pins + CI step (new shell front) | +9 | `4736ecf3` |
 | 62 | scripts | SRP/tests | dup-scanner seam + normalizer pins + CI step | +10 | `f1e238fb` |
-| 63 | docs | docs | ledger R56–63 catch-up | — | (this commit: the ledger row cannot name its own final hash) |
+| 63 | docs | docs | ledger R56–63 catch-up | — | `416a24d4` |
+| 64 | agent memory | tests | dispatch roundtrip + validation/sanitize/envelope pins | +4 | `6d342093` |
+| 65 | audits | verify | mutation wave 2 (name-regex, char-boundary, vision marker kills) | — | — |
+| 66 | agent deps | tests | Cargo.lock surface pins (reqwest dual-stack, rmcp major) | +2 | `0b1f670e` |
+| 67 | relay handlers | tests | GET-no-body upstream contract (zen/proxy; rest structural) | +2 | `5519f12f` |
+| 68 | relay entry | SRP | host/header extraction + pins; bundle rebuilt | +2 | `d69166b1` |
+| 69 | relay entry | SRP | response-header merge extraction; entry left with sockets | +1 | `d55e0a32` |
+| 70 | docs | docs | stale wrapper-subsystem reference fixed + tree sweep | — | `2a05938a` |
+| 71 | docs | docs | stale extraction provenance fixed + file-mention sweep | — | `066a9d66` |
+| 72 | audits | verify | shared-tree coexistence check (stage-n work untouched, suites green) | — | — |
+| 73 | docs | docs | ledger R64–73 catch-up | — | (this commit: the ledger row cannot name its own final hash) |
 | 56 | docs | docs | open-threads: reqwest dual-stack decision recorded (R46 finding) | — | (this commit: the ledger row cannot name its own final hash) |
 
 > **Counting correction (Round-55 audit):** prior cumulative claims
@@ -109,7 +119,7 @@ correctness is.
 
 ## Cumulative pins (program-attributable)
 
-Gateway +89 · agent lib +12 · core +7 · CLI +4 · relay +49 · extension +4 · index +5 · scripts +19.
+Gateway +89 · agent lib +16 · core +7 · CLI +4 · relay +54 · extension +4 · index +5 · scripts +19 · deps +2.
 
 ## Open threads (explicitly NOT started)
 
