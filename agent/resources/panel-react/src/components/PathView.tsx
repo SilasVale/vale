@@ -24,8 +24,10 @@
 // cards use — so "what does fail look like" has exactly one answer in this
 // panel, including the shape half of the palette that survives
 // prefers-reduced-motion (see src/lib/statePalette.test.ts).
-import { useMemo } from "react";
+import { useMemo, useState } from "react";
 import { derivePath, attentionSteps, type PathStep, type PathSummary } from "../lib/path";
+import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_TAG } from "../lib/recipe";
+import { callTool } from "../lib/api";
 import { useTrajectory } from "../hooks/useTrajectory";
 import { fmtDuration } from "./CommandCard";
 import type { CommandEvent } from "../hooks/useCommandEvents";
@@ -38,14 +40,26 @@ export function summaryDuration(s: PathSummary): string {
   return s.untimed > 0 ? `at least ${base}` : base;
 }
 
-export function PathView({ events, onJumpToStep }: {
+export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
   events: CommandEvent[];
   /** Select a step — the caller scrolls/highlights it in the timeline. */
   onJumpToStep?: (step: PathStep) => void;
+  /** Context stamped into a saved recipe, so a reader knows what the commands
+   *  were run against. */
+  sessionKind?: string;
+  sessionLabel?: string;
 }) {
   const rounds = useTrajectory(events);
   const path = useMemo(() => derivePath(rounds), [rounds]);
   const attention = useMemo(() => attentionSteps(path.steps), [path.steps]);
+
+  // Recipe saving — beat 6 of the design's core loop ("harvest"). Local UI state
+  // only; the entry itself goes to the shared device memory so AI clients can
+  // find and re-run it (see lib/recipe.ts for why that store).
+  const [recipeOpen, setRecipeOpen] = useState(false);
+  const [recipeName, setRecipeName] = useState("");
+  const [recipeBusy, setRecipeBusy] = useState(false);
+  const [recipeMsg, setRecipeMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   if (path.steps.length === 0) {
     return (
@@ -63,6 +77,35 @@ export function PathView({ events, onJumpToStep }: {
 
   const { summary } = path;
   const bad = summary.counts.fail + summary.counts.warn;
+  const warnings = recipeWarnings(path.steps);
+
+  const openRecipe = () => {
+    setRecipeName(suggestedTitle(path));
+    setRecipeMsg(null);
+    setRecipeOpen(true);
+  };
+
+  /** Save the walked path into the shared device memory. Deliberately explicit
+   *  about failure: a recipe the operator believes was saved but was not is
+   *  worse than no recipe. */
+  const saveRecipe = async () => {
+    setRecipeBusy(true);
+    setRecipeMsg(null);
+    try {
+      const draft = buildRecipe(path, { name: recipeName, sessionKind, sessionLabel });
+      await callTool("memory_save", {
+        title: draft.title,
+        content: draft.content,
+        tags: draft.tags,
+      });
+      setRecipeOpen(false);
+      setRecipeMsg({ kind: "ok", text: `Saved as "${draft.title}" — AI clients can find it with the "${RECIPE_TAG}" tag.` });
+    } catch (e) {
+      setRecipeMsg({ kind: "err", text: `Could not save: ${(e as Error)?.message ?? String(e)}` });
+    } finally {
+      setRecipeBusy(false);
+    }
+  };
 
   return (
     <div className="path-view">
@@ -91,7 +134,51 @@ export function PathView({ events, onJumpToStep }: {
               · {fmtDuration(summary.spanMs)} elapsed
             </span>
           )}
+          {/* Harvest — save this walked path so it can be walked again. */}
+          {!recipeOpen && (
+            <button type="button" className="path-recipe-open" onClick={openRecipe}>
+              Save as recipe
+            </button>
+          )}
         </div>
+
+        {recipeOpen && (
+          <div className="path-recipe">
+            <label className="path-recipe-label" htmlFor="path-recipe-name">
+              Recipe name
+            </label>
+            <input
+              id="path-recipe-name"
+              className="path-recipe-input"
+              value={recipeName}
+              onChange={(e) => setRecipeName(e.target.value)}
+              disabled={recipeBusy}
+            />
+            {warnings.length > 0 && (
+              <p className="path-recipe-warn">
+                This run did not finish cleanly ({warnings.join(", ")}). The recipe
+                will say so — reuse it with that in mind.
+              </p>
+            )}
+            <div className="path-recipe-actions">
+              <button type="button" className="primary" onClick={saveRecipe} disabled={recipeBusy}>
+                {recipeBusy ? "Saving…" : "Save to device memory"}
+              </button>
+              <button type="button" onClick={() => setRecipeOpen(false)} disabled={recipeBusy}>
+                Cancel
+              </button>
+            </div>
+            <p className="path-recipe-hint">
+              Saved to this device's shared memory, so any AI client here can find it
+              with the <code>{RECIPE_TAG}</code> tag and walk it again. It records the
+              commands and how the run went — it does not run by itself.
+            </p>
+          </div>
+        )}
+
+        {recipeMsg && (
+          <p className={`path-recipe-msg ${recipeMsg.kind}`}>{recipeMsg.text}</p>
+        )}
       </header>
 
       {attention.length > 0 && (

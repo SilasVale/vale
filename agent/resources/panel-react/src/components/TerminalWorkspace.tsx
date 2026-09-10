@@ -54,6 +54,9 @@ export function TerminalWorkspace({
     : ((activeSid && sessionViews[activeSid]) || "terminal");
   const trajOpen = !!activeSid && sessionView === "trajectory";
   const pathOpen = !!activeSid && sessionView === "path";
+  // The active session record — used to stamp a saved recipe with what the
+  // commands were actually run against (shell kind + label).
+  const activeSession = sessions.find((s) => s.sid === activeSid);
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
 
   // stage-n: refit terminals after the drawer finishes its enter/exit
@@ -105,7 +108,12 @@ export function TerminalWorkspace({
               The trajectory/terminal view switch is a header button. */}
           <div id="desktop-term-container" className={trajOpen || pathOpen ? "hidden" : undefined}>
             {pathOpen && activeSid ? (
-              <PathView key={activeSid} events={cmdEvents.events} />
+              <PathView
+                key={activeSid}
+                events={cmdEvents.events}
+                sessionKind={activeSession?.kind}
+                sessionLabel={activeSession?.label}
+              />
             ) : trajOpen && activeSid ? (
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
             ) : (
@@ -143,7 +151,12 @@ export function TerminalWorkspace({
             >Logs</button>
           </div>
           {pathOpen && activeSid ? (
-            <PathView key={activeSid} events={cmdEvents.events} />
+            <PathView
+              key={activeSid}
+              events={cmdEvents.events}
+              sessionKind={activeSession?.kind}
+              sessionLabel={activeSession?.label}
+            />
           ) : trajOpen && activeSid ? (
             <TrajectoryView key={activeSid} events={cmdEvents.events} />
           ) : (
