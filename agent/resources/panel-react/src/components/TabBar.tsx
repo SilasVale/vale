@@ -3,10 +3,12 @@ import { useState } from "react";
 import type { Session } from "../hooks/useSessions";
 import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
 import { Icon } from "../ui/Icon";
+import { ViewSwitch } from "./ViewSwitch";
 
 /** Per-session main-area view (round-admin-ui Task 5): the terminal pane +
- *  command card stream, or the raw trajectory timeline. */
-export type SessionView = "terminal" | "trajectory";
+ *  command card stream, the raw trajectory timeline, or the PATH — this
+ *  session's work as a scannable list of steps plus a summary (design §2.1/§7). */
+export type SessionView = "terminal" | "trajectory" | "path";
 
 export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, view, onViewChange }: {
   sessions: Session[];
@@ -84,18 +86,7 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
           shown only while a session is active. Session-tab behavior above is
           untouched. */}
       {activeSid && (
-        <div className="view-switch" role="tablist" aria-label="Session view">
-          <button
-            type="button"
-            className={`view-switch-btn${view === "terminal" ? " active" : ""}`}
-            onClick={() => onViewChange("terminal")}
-          >Terminal</button>
-          <button
-            type="button"
-            className={`view-switch-btn${view === "trajectory" ? " active" : ""}`}
-            onClick={() => onViewChange("trajectory")}
-          >Trajectory</button>
-        </div>
+        <ViewSwitch view={view} onChange={onViewChange} className="view-switch" />
       )}
     </div>
   );

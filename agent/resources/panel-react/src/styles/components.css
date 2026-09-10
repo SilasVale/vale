@@ -1773,6 +1773,137 @@
 
 
 
+/* ── Path view (design §2.1/§7): the session's work as steps + a summary ──
+   Sits beside #traj-view and matches its shell so switching views does not move
+   the furniture. The state dots reuse .cmd-dot, so the palette that survives
+   prefers-reduced-motion is defined once (src/lib/statePalette.test.ts). */
+.path-view {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+}
+.path-summary {
+  flex: none;
+  position: sticky;
+  top: 0;
+  z-index: 1;
+  padding: 10px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.path-summary-main { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.path-summary-n { font: 650 19px var(--font); letter-spacing: -0.02em; }
+.path-summary-label { font-size: 12px; color: var(--muted); }
+.path-summary-bad { font-size: 12px; font-weight: 600; color: var(--danger); }
+.path-summary-good { font-size: 12px; color: var(--success); }
+.path-summary-live {
+  font-size: 11px; font-weight: 600; color: var(--accent-ink);
+  background: var(--accent-soft); border-radius: 999px; padding: 1px 8px;
+}
+.path-summary-times { margin-top: 3px; font-size: 11.5px; color: var(--faint); }
+.path-summary-span { color: var(--faint); }
+
+/* "Worth a look" — failures and interruptions, worst first. This is the part an
+   operator returning to a session actually reads, so it sits ABOVE the full
+   list rather than being discoverable only by scrolling. */
+.path-attention { flex: none; border-bottom: 1px solid var(--line); padding: 8px 10px 10px; }
+.path-attention-title {
+  margin: 0 0 5px; font-size: 10.5px; font-weight: 650; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--faint);
+}
+.path-attention-list { list-style: none; margin: 0; padding: 0; }
+.path-attention-row {
+  display: flex; align-items: center; gap: 8px; width: 100%;
+  padding: 4px 6px; border: none; border-radius: 6px; cursor: pointer;
+  background: none; text-align: left; font: inherit;
+}
+.path-attention-row:hover { background: var(--surface-recessed); }
+.path-attention-cmd {
+  flex: 1; min-width: 0; font: 11.5px var(--font-mono); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.path-attention-tag { flex: none; font-size: 10.5px; font-weight: 600; }
+.path-attention-tag.s-fail { color: var(--danger); }
+.path-attention-tag.s-warn { color: var(--warn-ink); }
+.path-attention-tag.s-running { color: var(--accent-ink); }
+
+/* The path itself — a vertical rail with one node per step. */
+.path-steps { list-style: none; margin: 0; padding: 4px 0 10px; }
+.path-step { position: relative; display: flex; align-items: flex-start; padding: 0 12px 0 16px; }
+.path-step-rail {
+  position: absolute; left: 21px; top: 0; bottom: 0; width: 1px;
+  background: var(--line);
+}
+/* The segment behind the node is erased so a hollow `muted` ring is not crossed
+   by the line — the node reads as a node, not as a knot. Painted in the page
+   surface, ABOVE the rail, UNDER the dot. */
+.path-step::after {
+  content: "";
+  position: absolute;
+  left: 17px;
+  top: 9px;
+  width: 9px;
+  height: 9px;
+  background: var(--surface);
+  z-index: 0;
+}
+/* The rail must not run past the first and last node, or the path looks like it
+   continues beyond the work that exists. */
+.path-step:first-child .path-step-rail { top: 15px; }
+.path-step:last-child .path-step-rail { bottom: auto; height: 15px; }
+/* The dot sits ON the rail, so it needs the page surface behind it — but the
+   dot itself is transparent for `muted` (the hollow ring), which is why this
+   sets background-color on the WRAPPER-adjacent dot only via the palette. */
+/* The dot INTERRUPTS the rail: it needs the page surface behind it, or the 1px
+   line runs straight through the middle of a hollow `muted` node and the ring
+   reads as a scribble. (The rail is drawn first and the dot is z-index 1, so the
+   dot's own background is what masks it.) */
+/* The dot must NOT be given a background here. `.cmd-dot` carries no background
+   of its own — each `[data-state]` variant does — so any background set on this
+   element either loses to those variants (rail shows through the hollow `muted`
+   ring: measured) or, at equal specificity, WINS and erases every state colour
+   (measured: all six nodes rendered as identical hollow rings). Both directions
+   were observed. The rail is broken around the node instead, which needs no
+   background at all. */
+.path-step .path-step-dot { position: relative; z-index: 1; margin: 12px 9px 0 0; }
+.path-step-body {
+  flex: 1; min-width: 0; display: flex; align-items: baseline; gap: 8px;
+  padding: 7px 0; border: none; background: none; cursor: pointer;
+  text-align: left; font: inherit;
+}
+.path-step-body:hover .path-step-cmd { color: var(--accent-ink); }
+.path-step-index {
+  flex: none; min-width: 15px; text-align: right;
+  font: 10.5px var(--font-mono); color: var(--faint);
+}
+.path-step-cmd {
+  flex: 1; min-width: 0; font: 11.5px var(--font-mono); color: var(--ink);
+  white-space: nowrap; overflow: hidden; text-overflow: ellipsis;
+}
+.path-step-meta { flex: none; display: flex; align-items: baseline; gap: 8px; }
+.path-step-tag { font-size: 10.5px; font-weight: 600; }
+.path-step-tag.s-ok { color: var(--muted); }
+.path-step-tag.s-fail { color: var(--danger); }
+.path-step-tag.s-warn { color: var(--warn-ink); }
+.path-step-tag.s-running { color: var(--accent-ink); }
+.path-step-tag.s-muted { color: var(--faint); }
+.path-step-dur, .path-step-out { font: 10.5px var(--font-mono); color: var(--faint); }
+
+/* The honesty note. Deliberately VISIBLE, not a tooltip: what this view does not
+   record is part of reading it correctly. */
+.path-note {
+  flex: none; margin: 0; padding: 10px 14px 14px;
+  font-size: 11.5px; line-height: 1.55; color: var(--faint);
+  border-top: 1px solid var(--line);
+}
+.path-note b { color: var(--muted); }
+.path-empty { padding: 26px 20px; text-align: center; }
+.path-empty-title { margin: 0 0 5px; font-size: 13px; font-weight: 650; }
+.path-empty-body { margin: 0 auto; max-width: 380px; font-size: 12px; color: var(--muted); line-height: 1.6; }
+
 /* ── Browser evidence empty state (token color; no inline styles) ── */
 .browser-live-evidence { min-height: 0; }
 .browser-ev-empty-mini { font-size: 11px; color: var(--muted); padding: 4px 0; }

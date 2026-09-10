@@ -1,0 +1,217 @@
+// Path view — the session's work as steps plus a summary.
+//
+// What these pin, in order of importance:
+//
+//  1. NO INVENTED BRANCHES. The design's prototype drew each step with the
+//     alternatives that were legal at the time ("ghost branches"). That data is
+//     NOT in the audit trail — it needs the control plane's gate records and,
+//     for "considered and rejected", the intent layer. The view must therefore
+//     render no branches at all and SAY SO, rather than drawing an empty fork
+//     that implies the data merely failed to load. A path view that fakes
+//     branches is worse than no path view: it looks like the product knows what
+//     the agent chose between.
+//
+//  2. The state vocabulary is SHARED with the command cards, not re-derived.
+//     Both go through cardState, so "fail" cannot mean one thing here and
+//     another there.
+//
+//  3. The summary is HONEST about what it cannot know: backgrounded and
+//     still-running steps have no duration, so the total is a floor and says
+//     "at least". And it cannot say WHO ran a step — SessionEvent carries no
+//     actor field.
+import { describe, it, expect } from "vitest";
+import { render, screen } from "@testing-library/react";
+import { PathView } from "../PathView";
+import { derivePath, summarizePath, attentionSteps, type PathStep } from "../../lib/path";
+import type { CommandEvent } from "../../hooks/useCommandEvents";
+
+const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
+
+/** A session: one ok command, one failed, one interrupted, one still running. */
+function session(): CommandEvent[] {
+  return [
+    ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
+    ev({ seq: 2, ts: 200, kind: "command/start", command: "display version" }),
+    ev({ seq: 3, ts: 201, kind: "output", text: "VERSION 1.2" }),
+    ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+    ev({ seq: 5, ts: 300, kind: "command/start", command: "vlan 100" }),
+    ev({ seq: 6, ts: 301, kind: "command/end", exit_code: 1, duration_ms: 200 }),
+    ev({ seq: 7, ts: 400, kind: "command/start", command: "display ont info" }),
+    ev({ seq: 8, ts: 401, kind: "command/end", reason: "interrupted" }),
+    ev({ seq: 9, ts: 500, kind: "command/start", command: "sleep 900" }),
+  ];
+}
+
+describe("derivePath", () => {
+  it("turns each command round into a step, skipping the preamble", () => {
+    const p = derivePath(
+      // groupRounds is exercised through the hook elsewhere; feed rounds here.
+      [
+        { id: "r-pre", startSeq: null, command: "(session)", startTs: 100, events: [], ended: false, exitCode: null, reason: null, durationMs: null },
+        { id: "r-2", startSeq: 2, command: "display version", startTs: 200, events: [], ended: true, exitCode: 0, reason: null, durationMs: 900 },
+        { id: "r-5", startSeq: 5, command: "vlan 100", startTs: 300, events: [], ended: true, exitCode: 1, reason: null, durationMs: 200 },
+      ],
+    );
+    expect(p.steps.map((s) => s.command)).toEqual(["display version", "vlan 100"]);
+    expect(p.steps[0].index).toBe(1);
+    expect(p.steps[1].index).toBe(2);
+    // The session-level preamble is context, not a step along the path.
+    expect(p.steps.some((s) => s.id === "r-pre")).toBe(false);
+  });
+
+  it("uses the SAME state derivation as the command cards", () => {
+    const p = derivePath([
+      { id: "r-1", startSeq: 1, command: "ok", startTs: 1, events: [], ended: true, exitCode: 0, reason: null, durationMs: 1 },
+      { id: "r-2", startSeq: 2, command: "bad", startTs: 2, events: [], ended: true, exitCode: 3, reason: null, durationMs: 1 },
+      { id: "r-3", startSeq: 3, command: "bg", startTs: 3, events: [], ended: true, exitCode: null, reason: "backgrounded", durationMs: null },
+      { id: "r-4", startSeq: 4, command: "cut", startTs: 4, events: [], ended: true, exitCode: null, reason: "interrupted", durationMs: null },
+      { id: "r-5", startSeq: 5, command: "live", startTs: 5, events: [], ended: false, exitCode: null, reason: null, durationMs: null },
+    ]);
+    expect(p.steps.map((s) => s.state)).toEqual(["ok", "fail", "warn", "warn", "running"]);
+    expect(p.steps[1].stateLabel).toBe("exit 3");
+  });
+
+  it("counts output characters per step without shipping the text", () => {
+    const p = derivePath([
+      { id: "r-1", startSeq: 1, command: "c", startTs: 1,
+        events: [ev({ kind: "output", text: "abcde" }), ev({ kind: "output", text: "fg" })],
+        ended: true, exitCode: 0, reason: null, durationMs: 1 },
+    ]);
+    expect(p.steps[0].outputChars).toBe(7);
+  });
+
+  it("indexes steps by round id so a step can be traced back", () => {
+    const p = derivePath([
+      { id: "r-9", startSeq: 9, command: "c", startTs: 1, events: [], ended: true, exitCode: 0, reason: null, durationMs: 1 },
+    ]);
+    expect(p.indexOf["r-9"]).toBe(0);
+  });
+});
+
+describe("summarizePath", () => {
+  const step = (o: Partial<PathStep>): PathStep => ({
+    id: "x", index: 1, command: "c", state: "ok", stateLabel: "0",
+    startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0, ...o,
+  });
+
+  it("reports the total as a FLOOR when some steps have no duration", () => {
+    const s = summarizePath([
+      step({ id: "a", durationMs: 1000 }),
+      step({ id: "b", durationMs: null, state: "warn" }),
+    ]);
+    expect(s.commandMs).toBe(1000);
+    expect(s.untimed).toBe(1);
+    // The view must not imply a total it cannot know — `summaryDuration` says
+    // "at least" when untimed > 0 (asserted through the render below).
+  });
+
+  it("counts each state and flags a live run", () => {
+    const s = summarizePath([
+      step({ id: "a", state: "ok" }),
+      step({ id: "b", state: "fail" }),
+      step({ id: "c", state: "fail" }),
+      step({ id: "d", state: "running", durationMs: null }),
+    ]);
+    expect(s.counts).toMatchObject({ ok: 1, fail: 2, running: 1, warn: 0, muted: 0 });
+    expect(s.live).toBe(true);
+  });
+
+  it("measures wall-clock span, which differs from summed command time", () => {
+    // Two 1s commands 10s apart: 2s of work spread over an 11s span.
+    const s = summarizePath([
+      step({ id: "a", startedAt: 0, durationMs: 1000 }),
+      step({ id: "b", startedAt: 10, durationMs: 1000 }),
+    ]);
+    expect(s.commandMs).toBe(2000);
+    expect(s.spanMs).toBe(11000);
+  });
+});
+
+describe("attentionSteps", () => {
+  it("surfaces failures first, then interruptions, then live work", () => {
+    const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
+      id, index, command: id, state, stateLabel: "", startedAt: 0,
+      durationMs: null, exitCode: null, reason: null, outputChars: 0,
+    });
+    const out = attentionSteps([
+      step("ok1", "ok", 1),
+      step("live", "running", 2),
+      step("cut", "warn", 3),
+      step("bad", "fail", 4),
+      step("muted", "muted", 5),
+    ]);
+    expect(out.map((s) => s.id)).toEqual(["bad", "cut", "live"]);
+  });
+});
+
+describe("PathView", () => {
+  it("renders a step per command with the shared state dots", () => {
+    render(<PathView events={session()} />);
+    expect(screen.getByText("display version")).toBeTruthy();
+    // "vlan 100" appears twice on purpose: once in the steps list and once in
+    // the "worth a look" list. Both are the same step.
+    expect(screen.getAllByText("vlan 100").length).toBeGreaterThanOrEqual(2);
+    // The dots use the SAME class the command cards use, so the state palette
+    // (colour + shape) has exactly one definition in the panel.
+    const dots = document.querySelectorAll(".path-step-dot.cmd-dot");
+    expect(dots.length).toBe(4);
+    expect([...dots].map((d) => d.getAttribute("data-state"))).toEqual([
+      "ok", "fail", "warn", "running",
+    ]);
+  });
+
+  it("summarises the run and names the failures", () => {
+    const { container } = render(<PathView events={session()} />);
+    // Scope the count query — "4" also appears as a step index.
+    expect(container.querySelector(".path-summary-n")!.textContent).toBe("4");
+    expect(screen.getByText(/1 failed/)).toBeTruthy();
+    expect(screen.getByText(/1 interrupted/)).toBeTruthy();
+    expect(screen.getByText(/running now/)).toBeTruthy();
+  });
+
+  it("says the duration is a FLOOR when steps have no measurable time", () => {
+    render(<PathView events={session()} />);
+    // Two of the four steps have no duration (interrupted, still running), so a
+    // bare total would be a lie of precision.
+    expect(screen.getByText(/at least/)).toBeTruthy();
+  });
+
+  it("draws NO branches and states why", () => {
+    const { container } = render(<PathView events={session()} />);
+    // No ghost-fork affordance of any kind...
+    expect(container.querySelector(".path-branch")).toBeNull();
+    expect(container.querySelector("[data-branch]")).toBeNull();
+    // ...and the reason is on screen, in the operator's words, so the absence
+    // reads as a known limit rather than missing data.
+    const note = container.querySelector(".path-note")!.textContent!;
+    expect(note).toContain("alternatives");
+    expect(note).toMatch(/not\b.*record|does not invent/i);
+  });
+
+  it("never claims to know WHO ran a step", () => {
+    const { container } = render(<PathView events={session()} />);
+    const text = container.textContent!;
+    expect(text).not.toMatch(/\bAI ran\b|\buser ran\b|\bby: /);
+  });
+
+  it("shows an honest empty state before any command", () => {
+    const { container } = render(<PathView events={[ev({ kind: "status", status: "opened" })]} />);
+    expect(screen.getByText("No path yet")).toBeTruthy();
+    expect(container.querySelectorAll(".path-step").length).toBe(0);
+    // The empty state explains what will appear, so "nothing here" does not
+    // read as "broken".
+    expect(container.querySelector(".path-empty-body")!.textContent).toMatch(
+      /command/i,
+    );
+  });
+
+  it("puts failures in a 'worth a look' list that calls back with the step", () => {
+    const seen: string[] = [];
+    render(<PathView events={session()} onJumpToStep={(s) => seen.push(s.id)} />);
+    expect(screen.getByText(/Worth a look/)).toBeTruthy();
+    const first = document.querySelector(".path-attention-row") as HTMLButtonElement;
+    first.click();
+    // The list is ordered worst-first, so the first row is the FAILURE.
+    expect(seen).toEqual(["r-5"]);
+  });
+});

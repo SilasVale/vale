@@ -22,6 +22,7 @@ import { SettingsPage } from "./SettingsPage";
 import { ConnModal } from "./ConnModal";
 import { Icon } from "../ui/Icon";
 import type { SessionView } from "./TabBar";
+import { ViewSwitch } from "./ViewSwitch";
 import type { usePlugins } from "../hooks/usePlugins";
 
 interface Props {
@@ -234,20 +235,14 @@ export function DesktopShell({
                   )}
                 </div>
 
-                {/* Trajectory/terminal view toggle for the ACTIVE session */}
+                {/* View switch for the ACTIVE session — shared with the panel
+                    density so the two cannot disagree on which views exist. */}
                 {activeSid && (
-                  <div className="desktop-view-switch" role="tablist" aria-label="Session view">
-                    <button
-                      type="button"
-                      className={`view-switch-btn${activeView === "terminal" ? " active" : ""}`}
-                      onClick={() => changeView(activeSid, "terminal")}
-                    >Terminal</button>
-                    <button
-                      type="button"
-                      className={`view-switch-btn${activeView === "trajectory" ? " active" : ""}`}
-                      onClick={() => changeView(activeSid, "trajectory")}
-                    >Trajectory</button>
-                  </div>
+                  <ViewSwitch
+                    view={activeView}
+                    onChange={(v) => changeView(activeSid, v)}
+                    className="desktop-view-switch"
+                  />
                 )}
               </>
             )}

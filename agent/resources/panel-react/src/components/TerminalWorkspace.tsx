@@ -8,6 +8,7 @@ import { TabBar, type SessionView } from "./TabBar";
 import { Icon } from "../ui/Icon";
 import { TerminalPane } from "./TerminalPane";
 import { TrajectoryView } from "./TrajectoryView";
+import { PathView } from "./PathView";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
 import type { CommandEvent } from "../hooks/useCommandEvents";
@@ -52,6 +53,7 @@ export function TerminalWorkspace({
     ? (controlledView ?? "terminal")
     : ((activeSid && sessionViews[activeSid]) || "terminal");
   const trajOpen = !!activeSid && sessionView === "trajectory";
+  const pathOpen = !!activeSid && sessionView === "path";
   const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
 
   // stage-n: refit terminals after the drawer finishes its enter/exit
@@ -101,8 +103,10 @@ export function TerminalWorkspace({
           {/* Desktop density: session tabs + New menu live in the header card
               (DesktopShell) — this workspace renders ONLY the terminal area.
               The trajectory/terminal view switch is a header button. */}
-          <div id="desktop-term-container" className={trajOpen ? "hidden" : undefined}>
-            {trajOpen && activeSid ? (
+          <div id="desktop-term-container" className={trajOpen || pathOpen ? "hidden" : undefined}>
+            {pathOpen && activeSid ? (
+              <PathView key={activeSid} events={cmdEvents.events} />
+            ) : trajOpen && activeSid ? (
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
             ) : (
               <>
@@ -138,7 +142,9 @@ export function TerminalWorkspace({
               }}
             >Logs</button>
           </div>
-          {trajOpen && activeSid ? (
+          {pathOpen && activeSid ? (
+            <PathView key={activeSid} events={cmdEvents.events} />
+          ) : trajOpen && activeSid ? (
             <TrajectoryView key={activeSid} events={cmdEvents.events} />
           ) : (
             <div id="term-container">
