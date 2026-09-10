@@ -54,14 +54,23 @@ re-litigated.
 | 5 **Take over** | grab the controller | an explicit hold: the AI is refused with `human_in_control` while a person owns the session, and hands back on request | **DONE** — the hold is real, visible in `terminal_list`, and one click in both densities (`fd1013c0`, `f0f06fa8`) |
 | 6 **Harvest** | clear / save | durable audit JSONL + accumulating memory | **DONE** — a walked path saves as a recipe into the SHARED memory store, so AI clients can find and re-walk it (`ee563fcc`) |
 
-Originally two beats done, two half-done, two missing — and the missing pair is
-the **head** (your intent) and the **waist** (your choice). That is the whole
-diagnosis. Since this document was written, beat 4's view and beat 6's recipe
-have both shipped, so the remaining gap is narrower and clearer: **the head and
-the waist are still missing**, and they are missing for the same reason —
-neither can be built in the panel alone. Dispatch needs a goal-level surface the
-agent does not have (49 primitives, zero goals); the gate needs the control
-plane. Everything the panel could reach on its own is now built.
+Originally two beats done, two half-done, two missing. As of this writing
+**four are done** (advance, evidence, take-over, harvest) and the remaining gap
+is exactly two beats:
+
+* **Dispatch** — the operator cannot state a GOAL, only issue commands. This is
+  the head of the loop and it needs an agent-side surface that does not exist
+  (E1: 49 primitives, zero goal-level tools).
+* **Gate** — there is no approval at a capability boundary. This is the waist:
+  the operator can now STOP the AI (beat 5) but cannot authorise or redirect it
+  mid-run.
+
+Both are missing for the same kind of reason rather than two separate ones:
+neither can be built in the panel. Dispatch needs a new agent concept; the gate
+needs §D1's capability scopes and §D3's boundary pause, both still proposals.
+Everything the panel could reach on its own has now been built, so the next
+piece of this design is an AGENT-side change — recorded here so the panel is not
+extended further merely because that is where the momentum was.
 
 ### 2.1 The structural gap the loop exposes
 
