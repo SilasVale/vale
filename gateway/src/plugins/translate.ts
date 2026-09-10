@@ -57,7 +57,13 @@ import {
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
-import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "../upstream.ts";
+import {
+  pickRoute,
+  passthroughHeaders,
+  stripBracket,
+  opencodeSessionHeader,
+  wireModelName,
+} from "../upstream.ts";
 import { preprocessImages } from "./translate-vision.ts";
 import { isModelUsable, resolveAutoModel } from "./model-route.ts";
 // Keep the old import paths working for the moved fns' external consumers.
@@ -495,9 +501,13 @@ async function handleGatewayImpl(
   // string); raw truthiness would treat it as ON.
   const usProxy = forceUsProxy || globalSettingEnabled(usProxyRaw) ? "1" : null;
   const baseRoute = pickRoute(prefix2, env, usProxy);
-  let upstreamModel = stripBracket(
-    baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel,
+  let upstreamModel = wireModelName(
+    prefix2,
+    stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel),
   );
+  // og wire-slug aliasing (OG_WIRE_REMAP): the advertised clear name may
+  // differ from the slug zen/go accepts — everything below (native-set check,
+  // body rewrite, response relabel, vision allowlist) sees the WIRE name.
   // og/deepseek-v4-flash is Anthropic-native on zen/go/v1/messages (x-api-key
   // auth, verified 2026-08-10) — bypass the OpenAI translation; other og models
   // (minimax-m3, mimo-v2.5, kimi, glm) keep the translate path. upstreamModel is

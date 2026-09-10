@@ -53,6 +53,48 @@ export interface RetryInspection {
  * concurrent workers don't retry in lockstep.
  */
 
+/** The OpenRouter :free model whose shared pool is won by rapid knocks. */
+export const GLM_LOTTERY_MODEL = "z-ai/glm-5.2:free";
+
+/**
+ * Per-kind retry policy for fetchWithRetry (SOLID Round-77: the same measured
+ * policy table was copy-pasted at the chat and messages-native sites with
+ * comments trying to keep them in sync). One definition; call sites pass
+ * only their timeout base (og vs passthrough budget). The count arm keeps
+ * its own uniform literal deliberately (all kinds share attempts+retry502
+ * there — the table would drop non-nv/gmi kinds to the plain budget).
+ *
+ * Routing note (Round-90 correction): nv/gmi /v1/messages NEVER reach the
+ * messages-native site — the arm's nv/gmi branch catches them first for
+ * the translate path (which retries via its own literal). At the native
+ * site only or/ds/qw/amd/og-native arrive, so the bursty rows below are
+ * live at the chat site and correct-if-reached defaults at the native
+ * site. An earlier revision carried a `gmiBursty` flag for a messages/chat
+ * asymmetry that does not exist — removed, with the routing fact pinned
+ * by the gmi/nv messages-translate flow tests instead.
+ */
+export function retryPolicyFor(
+  kind: string,
+  upstreamModel: string,
+  timeoutMs: number,
+): {
+  timeoutMs: number;
+  attempts?: number;
+  backoffMs?: number;
+  retry502?: boolean;
+  ignoreRetryAfter?: boolean;
+} {
+  if (kind === "nvidia" || kind === "gmi") {
+    return { timeoutMs, attempts: 4, retry502: true };
+  }
+  if (kind === "openrouter") {
+    return upstreamModel === GLM_LOTTERY_MODEL
+      ? { timeoutMs, attempts: 10, backoffMs: 300, retry502: true, ignoreRetryAfter: true }
+      : { timeoutMs, attempts: 4, retry502: true };
+  }
+  return { timeoutMs };
+}
+
 export async function fetchWithRetry(
   url: string,
   init: any,

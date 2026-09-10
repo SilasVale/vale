@@ -98,6 +98,16 @@ export function museResponsesExit(env: any): string {
 export const MODELS: { id: string; owned_by: string }[] = [
   { id: "ds/deepseek-v4-flash", owned_by: "deepseek" },
   { id: "og/deepseek-v4-flash", owned_by: "opencode" },
+  // DeepSeek V4.1 Flash (released 2026-09-10). zen/go slug is `deepseek-flash`
+  // (verified live against /v1/models 2026-09-10; models.dev carries it as
+  // "DeepSeek V4.1 Flash", effort low/high/max, 1M ctx / 384K out). Vision is
+  // merged into the core model — V4 kept it in a separate -vision-exp variant
+  // and its core still 400s on image blocks. Live-verified on zen/go
+  // 2026-09-10: a 1x1 PNG was read back correctly, so og/deepseek-flash rides
+  // the VISION_CAPABLE_MODELS allowlist (wrangler.jsonc). Only OpenCode Go
+  // serves V4.1 for now — the official API and OpenRouter lists stop at V4;
+  // register a ds/ or or/ line when those catalogs pick it up.
+  { id: "og/deepseek-flash", owned_by: "opencode" },
   { id: "og/minimax-m3", owned_by: "opencode" },
   { id: "og/mimo-v2.5", owned_by: "opencode" },
   { id: "og/ox-alpha-free", owned_by: "opencode" },
@@ -161,6 +171,7 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
     desc: "opencode.ai/zen/go — all models via chat/completions (OpenAI format); gpt-5.6-luna auto-routes via OpenRouter US exit (zen region-blocks it); muse-spark-* via /v1/responses forced through the US exit (Meta region policy)",
     models: [
       "deepseek-v4-flash",
+      "deepseek-flash",
       "minimax-m3",
       "mimo-v2.5",
       "ox-alpha-free",
@@ -235,6 +246,7 @@ export const HEALTH_CHANNELS: { id: string; model: string }[] = [
   { id: "qw", model: "qw/qwen3.8-max-preview" },
   { id: "qw", model: "qw/qwen3.8-flash" },
   { id: "og", model: "og/deepseek-v4-flash" },
+  { id: "og", model: "og/deepseek-flash" },
   // More og/ route cards: gpt-5.6-luna (auto-routes via the OpenRouter US
   // exit — translate.ts remaps it), mimo, ox-alpha. Duplicate ids are safe
   // here: buildHealth checks the og circuit for each and recommended uses

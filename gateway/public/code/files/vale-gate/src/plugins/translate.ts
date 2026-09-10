@@ -36,6 +36,7 @@ import {
   recordChannelFailure,
   isChannelDownFailure,
   recordChannelSuccess,
+  retryPolicyFor,
 } from "../reliability.ts";
 import {
   rawWithDeepSeekProvider,
@@ -62,6 +63,7 @@ import { isModelUsable, resolveAutoModel } from "./model-route.ts";
 // Keep the old import paths working for the moved fns' external consumers.
 export { isModelUsable, resolveAutoModel } from "./model-route.ts";
 import type { PluginContext } from "./registry.ts";
+import { provideApi } from "./registry.ts";
 
 const COUNT_PATH = "/v1/messages/count_tokens";
 
@@ -75,7 +77,8 @@ const COUNT_PATH = "/v1/messages/count_tokens";
  * SSE), a stream:true request answered with a plain JSON completion
  * (wrapped as a one-shot Anthropic SSE), and a one-shot JSON completion.
  */
-async function openAIUpstreamToAnthropicResponse(
+// Exported for direct pins (SOLID Round-57; additive — call sites untouched).
+export async function openAIUpstreamToAnthropicResponse(
   upstream: Response,
   body: any,
   clientModel: string,
@@ -140,8 +143,9 @@ export function scrubKeys(msg: string): string {
 }
 
 /** SSE passthrough response — the one-shot and streaming relay sites used to
- *  build the same text/event-stream + no-cache + CORS header set twice. */
-function sseResponse(body: BodyInit | null): Response {
+ *  build the same text/event-stream + no-cache + CORS header set twice.
+ *  Exported for direct pins (SOLID Round-58; additive). */
+export function sseResponse(body: BodyInit | null): Response {
   return new Response(body, {
     headers: {
       "Content-Type": "text/event-stream; charset=utf-8",
@@ -279,14 +283,20 @@ async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
 /// or/stealth/ox-alpha requests default reasoning.effort=max when the
 /// client sent no top-level reasoning. Applied by BOTH the /v1/messages
 /// and the chat/completions flows — used to be inlined at both sites.
-function oxAlphaReasoningDefault(routeKind: string, upstreamModel: string, body: string): string {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function oxAlphaReasoningDefault(
+  routeKind: string,
+  upstreamModel: string,
+  body: string,
+): string {
   if (routeKind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
     return rawWithOxAlphaReasoningDefault(body);
   }
   return body;
 }
 
-async function relayUpstreamResult(
+// Exported for direct pins (SOLID Round-81; additive — call sites untouched).
+export async function relayUpstreamResult(
   env: any,
   request: Request,
   routeKind: string,
@@ -323,7 +333,13 @@ const __rlDay = new Map(); // `day:${token}:${day}`   → count
 /** Per-token rate limiter: in-memory minute + day counters (no KV).
  *  Returns a 429 Response if the token is over budget, else null (proceed).
  *  Shared by the /v1/messages, /v1/chat/completions and /v1/responses arms. */
-function checkRateLimit(env: any, method: string, path: string, token: string): Response | null {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function checkRateLimit(
+  env: any,
+  method: string,
+  path: string,
+  token: string,
+): Response | null {
   if (!(
     env.KEYS &&
     method === "POST" &&
@@ -353,7 +369,8 @@ function checkRateLimit(env: any, method: string, path: string, token: string): 
 
 /** Extract BYOK (bring-your-own-key) keys from the user's key record.
  *  Each key maps to a specific upstream provider. null when unset. */
-function extractByokKeys(ukeys: Record<string, any>) {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function extractByokKeys(ukeys: Record<string, any>) {
   return {
     deepseek: ukeys.DEEPSEEK_API_KEY || null,
     opencodeGo: ukeys.OPENCODE_GO_API_KEY || null,
@@ -367,7 +384,8 @@ function extractByokKeys(ukeys: Record<string, any>) {
 }
 
 /** Detect the route kind from method + path. */
-function detectRoute(method: string, path: string) {
+// Exported for direct pins (SOLID Round-27; additive — call sites untouched).
+export function detectRoute(method: string, path: string) {
   const isCount = method === "POST" && path.endsWith(COUNT_PATH);
   const isMessages = method === "POST" && path.endsWith(VERIFY_PATH);
   const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
@@ -803,28 +821,9 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // or/: glm-5.2:free ONLY — its Decart shared pool is a lottery where rapid
-      // knocks win slots but paced retries never land (2026-08-24). Other or/
-      // models, paid and free alike, keep the standard paced retry.
-      // nv//gmi/: NIM sheds bursts with fast 5xx BEFORE processing — retry502
-      // absorbs them instead of surfacing "temporarily overloaded".
-      route.kind === "nvidia" || route.kind === "gmi"
-        ? { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true }
-        : route.kind === "openrouter"
-          ? upstreamModel === "z-ai/glm-5.2:free"
-            ? {
-                timeoutMs: ogTimeoutMs(env),
-                attempts: 10,
-                backoffMs: 300,
-                retry502: true,
-                ignoreRetryAfter: true,
-              }
-            : {
-                timeoutMs: ogTimeoutMs(env),
-                attempts: 4,
-                retry502: true,
-              }
-          : { timeoutMs: ogTimeoutMs(env) },
+      // Retry policy table (see retryPolicyFor): or/ glm-5.2:free lottery,
+      // nv/gmi burst-shedding, standard paced retry otherwise.
+      retryPolicyFor(route.kind, upstreamModel, ogTimeoutMs(env)),
     );
     return relayUpstreamResult(
       env,
@@ -964,8 +963,10 @@ async function handleGatewayImpl(
         },
         body: JSON.stringify(openaiReq),
       },
-      // Same as the chat/completions site for these upstreams: NIM/GMI shed
-      // bursts with fast 5xx BEFORE processing — retry502 absorbs them.
+      // Deliberately NOT the shared table: this arm serves every kind but
+      // uses one uniform policy (attempts + retry502 for all) — routing it
+      // through retryPolicyFor would silently drop non-nv/gmi kinds to the
+      // plain budget (3 attempts, no retry502). Round-77 review catch.
       { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true },
     );
     if (!upstream || !upstream.ok) {
@@ -1063,25 +1064,10 @@ async function handleGatewayImpl(
         }),
         body: forwardBody,
       },
-      // or/: same free-pool lottery pacing as the chat/completions site above.
-      // nv/: NIM 5xx burst-shedding gets retried here too.
-      route.kind === "nvidia"
-        ? { timeoutMs: passthroughTimeoutMs(env, route.kind), attempts: 4, retry502: true }
-        : route.kind === "openrouter"
-          ? upstreamModel === "z-ai/glm-5.2:free"
-            ? {
-                timeoutMs: passthroughTimeoutMs(env, route.kind),
-                attempts: 10,
-                backoffMs: 300,
-                retry502: true,
-                ignoreRetryAfter: true,
-              }
-            : {
-                timeoutMs: passthroughTimeoutMs(env, route.kind),
-                attempts: 4,
-                retry502: true,
-              }
-          : { timeoutMs: passthroughTimeoutMs(env, route.kind) },
+      // Shared retry table (nv/gmi messages route via the arm's translate
+      // branch, so only or/ds/qw/amd/og-native arrive here — the bursty
+      // rows are correct-if-reached defaults).
+      retryPolicyFor(route.kind, upstreamModel, passthroughTimeoutMs(env, route.kind)),
     );
     return relayUpstreamResult(
       env,
@@ -1249,6 +1235,11 @@ export default {
       handler,
     });
     // Cross-plugin API surface (mirrors the exports index.js exposes today).
-    ctx.api.translate = { handleGateway, handleGatewayImpl, resolveAutoModel, isModelUsable };
+    provideApi(ctx, "translate", {
+      handleGateway,
+      handleGatewayImpl,
+      resolveAutoModel,
+      isModelUsable,
+    });
   },
 };

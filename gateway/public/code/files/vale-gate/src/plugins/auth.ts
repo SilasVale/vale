@@ -50,6 +50,7 @@ import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { opencodeSessionHeader } from "../upstream.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
+import { optionalApi } from "./registry.ts";
 
 const AUTH_BASE = "/api/auth";
 const ME_BASE = "/api/me";
@@ -369,12 +370,10 @@ async function mePutUsproxy(request: Request, env: any): Promise<Response> {
 }
 
 async function mePutKeys(request: Request, env: any): Promise<Response> {
-  const user = await requireSession(request, env);
-  if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
-  const body = await readJson(request);
-  const { name, value } = body || {};
-  if (!USER_KEY_NAMES.includes(name))
-    return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  const r = await sessionAndKeyName(request, env, USER_KEY_NAMES);
+  if (r instanceof Response) return r;
+  const { user, name, body } = r;
+  const { value } = body || {};
   if (typeof value !== "string" || !value.trim())
     return jsonError(400, "value must not be empty", "invalid_request");
   const v = value.trim();
@@ -394,22 +393,26 @@ async function mePutKeys(request: Request, env: any): Promise<Response> {
 /**
  * Shared prologue of the /api/me/keys/{save,reveal,test,usage} handlers:
  * resolve the session, read the JSON body's `name` and validate it against
- * `allowed`. Returns the {user, name} pair, or a Response the caller should
- * return directly (401 / 400). The per-handler prologues used to be
- * copy-pasted; meKeyUsage passes its narrower 3-name set.
+ * `allowed`. Returns the {user, name, body} triple, or a Response the caller
+ * should return directly (401 / 400). The body rides along because the
+ * request stream is consumed by the read — callers needing more fields
+ * (save's `value`) must use this copy, never re-read. The per-handler
+ * prologues used to be copy-pasted; meKeyUsage passes its narrower 3-name
+ * set. (SOLID Round-91: mePutKeys was the last inline copy; the doc claim
+ * above is now true for all four handlers.)
  */
 async function sessionAndKeyName(
   request: Request,
   env: any,
   allowed: readonly string[],
-): Promise<{ user: any; name: string } | Response> {
+): Promise<{ user: any; name: string; body: any } | Response> {
   const user = await requireSession(request, env);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const name = body?.name;
   if (!allowed.includes(name))
     return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
-  return { user, name };
+  return { user, name, body };
 }
 
 async function meRevealKey(request: Request, env: any): Promise<Response> {
@@ -447,8 +450,11 @@ async function meTestKeys(request: Request, env: any): Promise<Response> {
  * {ok:false, detail:"Usage query failed"} on network throws. meKeyUsage's
  * three provider branches used to each inline this fetch/error/parse shape;
  * only the URL + payload mapping differ per provider.
+ *
+ * Exported with the three mappers below for direct pins (SOLID Round-39;
+ * additive — meKeyUsage passes the same functions it used to inline).
  */
-async function usageQuery(
+export async function usageQuery(
   url: string,
   key: string,
   name: string,
@@ -474,110 +480,127 @@ async function usageQuery(
   }
 }
 
+/** OpenRouter key-info mapping (SOLID Round-39: verbatim extraction for direct pins). */
+export function mapOpenRouterUsage(payload: any): Record<string, unknown> {
+  const data = payload?.data;
+  if (!data || typeof data !== "object") {
+    throw Object.assign(new Error("invalid upstream"), { detail: "Invalid upstream response" });
+  }
+  const out: Record<string, unknown> = {};
+  for (const field of ["label", "usage", "limit"]) {
+    if (
+      field in data &&
+      (data[field] === null || typeof data[field] === "string" || typeof data[field] === "number")
+    )
+      out[field] = data[field];
+  }
+  if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
+  if (data.rate_limit && typeof data.rate_limit === "object") {
+    const rateLimit: Record<string, unknown> = {};
+    if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
+    if (typeof data.rate_limit.interval === "string") rateLimit.interval = data.rate_limit.interval;
+    if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
+    if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
+  }
+  return out;
+}
+
+/** AMD spend-cap mapping (SOLID Round-39: verbatim extraction for direct pins). */
+export function mapAmdUsage(payload: any): Record<string, unknown> {
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — GET /v1/usage reports
+  // the rolling daily spend cap of the free rc-… key (verified 2026-09-02):
+  // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
+  //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
+  // generic usage shape the console already renders (USD numbers).
+  const out: Record<string, unknown> = {};
+  if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
+  out.limit =
+    typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
+  if (typeof payload?.rpm_limit === "number") {
+    const rateLimit: Record<string, unknown> = { limit: payload.rpm_limit, interval: "minute" };
+    if (typeof payload.daily_reset_at === "string") rateLimit.reset = payload.daily_reset_at;
+    out.rateLimit = rateLimit;
+  }
+  const all = payload?.all_time;
+  if (all && typeof all === "object") {
+    // The account label the generic renderer shows: org + request/token
+    // totals, so the console says whose key and how much it has carried.
+    const requests = typeof all.requests === "number" ? all.requests : 0;
+    const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
+    out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
+  }
+  return out;
+}
+
+/** OpenCode Go quota mapping, flat + multi-window shapes (SOLID Round-39: verbatim extraction). */
+export function mapOgUsage(payload: any): Record<string, unknown> {
+  // OpenCode Go subscription usage endpoint (undocumented, discovered via
+  // farion1231/cc-switch#6433). Returns three rolling quota windows.
+  const out: Record<string, unknown> = {};
+  if (payload && typeof payload === "object") {
+    // Single-window flat shape: { used, limit, balance, plan }
+    if (typeof payload.used === "number") out.usage = payload.used;
+    if ("limit" in payload && (typeof payload.limit === "number" || payload.limit === null))
+      out.limit = payload.limit;
+    if (typeof payload.balance === "number") out.balance = payload.balance;
+    if (typeof payload.plan === "string") out.label = payload.plan;
+    // Multi-window shape: { windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
+    if (payload.windows && typeof payload.windows === "object") {
+      const windows: Record<string, unknown> = {};
+      for (const [wk, wv] of Object.entries(payload.windows) as [string, any][]) {
+        if (wv && typeof wv === "object") {
+          windows[wk] = {
+            ...(typeof wv.used === "number" ? { used: wv.used } : {}),
+            ...(typeof wv.limit === "number" || wv.limit === null ? { limit: wv.limit } : {}),
+            ...(typeof wv.remaining === "number" ? { remaining: wv.remaining } : {}),
+            ...(typeof wv.reset_at === "string" || wv.reset_at === null
+              ? { resetAt: wv.reset_at }
+              : {}),
+          };
+        }
+      }
+      out.windows = windows;
+    }
+  }
+  return out;
+}
+
+/**
+ * Usage-query endpoints per key (SOLID Round-93: OCP table — adding a
+ * provider registers one row; the allowlist derives from the same source
+ * so the two cannot drift). Exported for direct pins.
+ */
+const USAGE_QUERIES: Record<
+  string,
+  { url: string; map: (payload: any) => Record<string, unknown> }
+> = {
+  OPENROUTER_API_KEY: { url: "https://openrouter.ai/api/v1/auth/key", map: mapOpenRouterUsage },
+  AMD_API_KEY: { url: "https://developer.amd.com.cn/radeon/api/v1/usage", map: mapAmdUsage },
+  OPENCODE_GO_API_KEY: { url: "https://opencode.ai/zen/go/v1/usage", map: mapOgUsage },
+};
+
+/** OCP extension point: null for keys without a usage endpoint. */
+export function usageQueryFor(name: string) {
+  return Object.prototype.hasOwnProperty.call(USAGE_QUERIES, name)
+    ? (USAGE_QUERIES[name] as { url: string; map: (payload: any) => Record<string, unknown> })
+    : null;
+}
+
 async function meKeyUsage(request: Request, env: any): Promise<Response> {
-  const r = await sessionAndKeyName(request, env, [
-    "OPENROUTER_API_KEY",
-    "OPENCODE_GO_API_KEY",
-    "AMD_API_KEY",
-  ]);
+  const r = await sessionAndKeyName(request, env, Object.keys(USAGE_QUERIES));
   if (r instanceof Response) return r;
   const { user, name } = r;
   const ukeys = await getUserKeys(env, user.id);
   const key = ukeys[name];
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
 
-  if (name === "OPENROUTER_API_KEY") {
-    return usageQuery("https://openrouter.ai/api/v1/auth/key", key, name, (payload) => {
-      const data = payload?.data;
-      if (!data || typeof data !== "object") {
-        throw Object.assign(new Error("invalid upstream"), { detail: "Invalid upstream response" });
-      }
-      const out: Record<string, unknown> = {};
-      for (const field of ["label", "usage", "limit"]) {
-        if (
-          field in data &&
-          (data[field] === null ||
-            typeof data[field] === "string" ||
-            typeof data[field] === "number")
-        )
-          out[field] = data[field];
-      }
-      if (typeof data.is_free_tier === "boolean") out.isFreeTier = data.is_free_tier;
-      if (data.rate_limit && typeof data.rate_limit === "object") {
-        const rateLimit: Record<string, unknown> = {};
-        if (typeof data.rate_limit.limit === "number") rateLimit.limit = data.rate_limit.limit;
-        if (typeof data.rate_limit.interval === "string")
-          rateLimit.interval = data.rate_limit.interval;
-        if (typeof data.rate_limit.reset === "string") rateLimit.reset = data.rate_limit.reset;
-        if (Object.keys(rateLimit).length) out.rateLimit = rateLimit;
-      }
-      return out;
-    });
-  }
-
-  if (name === "AMD_API_KEY") {
-    // AMD Radeon Cloud (developer.amd.com.cn/radeon) — GET /v1/usage reports
-    // the rolling daily spend cap of the free rc-… key (verified 2026-09-02):
-    // {rpm_limit, daily_cost_limit_usd, daily_cost_used_usd, daily_reset_at,
-    //  all_time:{requests,total_tokens,cost}, by_model:[…]}. Mapped onto the
-    // generic usage shape the console already renders (USD numbers).
-    return usageQuery("https://developer.amd.com.cn/radeon/api/v1/usage", key, name, (payload) => {
-      const out: Record<string, unknown> = {};
-      if (typeof payload?.daily_cost_used_usd === "number") out.usage = payload.daily_cost_used_usd;
-      out.limit =
-        typeof payload?.daily_cost_limit_usd === "number" ? payload.daily_cost_limit_usd : null;
-      if (typeof payload?.rpm_limit === "number") {
-        const rateLimit: Record<string, unknown> = { limit: payload.rpm_limit, interval: "minute" };
-        if (typeof payload.daily_reset_at === "string") rateLimit.reset = payload.daily_reset_at;
-        out.rateLimit = rateLimit;
-      }
-      const all = payload?.all_time;
-      if (all && typeof all === "object") {
-        // The account label the generic renderer shows: org + request/token
-        // totals, so the console says whose key and how much it has carried.
-        const requests = typeof all.requests === "number" ? all.requests : 0;
-        const tokens = typeof all.total_tokens === "number" ? all.total_tokens : 0;
-        out.label = `${payload.organization_id || "radeon"} · ${requests} req · ${tokens} tok`;
-      }
-      return out;
-    });
-  }
-
-  if (name === "OPENCODE_GO_API_KEY") {
-    // OpenCode Go subscription usage endpoint (undocumented, discovered via
-    // farion1231/cc-switch#6433). Returns three rolling quota windows.
-    return usageQuery("https://opencode.ai/zen/go/v1/usage", key, name, (payload) => {
-      const out: Record<string, unknown> = {};
-      if (payload && typeof payload === "object") {
-        // Single-window flat shape: { used, limit, balance, plan }
-        if (typeof payload.used === "number") out.usage = payload.used;
-        if ("limit" in payload && (typeof payload.limit === "number" || payload.limit === null))
-          out.limit = payload.limit;
-        if (typeof payload.balance === "number") out.balance = payload.balance;
-        if (typeof payload.plan === "string") out.label = payload.plan;
-        // Multi-window shape: { windows: { "5h": {...}, weekly: {...}, monthly: {...} } }
-        if (payload.windows && typeof payload.windows === "object") {
-          const windows: Record<string, unknown> = {};
-          for (const [wk, wv] of Object.entries(payload.windows) as [string, any][]) {
-            if (wv && typeof wv === "object") {
-              windows[wk] = {
-                ...(typeof wv.used === "number" ? { used: wv.used } : {}),
-                ...(typeof wv.limit === "number" || wv.limit === null ? { limit: wv.limit } : {}),
-                ...(typeof wv.remaining === "number" ? { remaining: wv.remaining } : {}),
-                ...(typeof wv.reset_at === "string" || wv.reset_at === null
-                  ? { resetAt: wv.reset_at }
-                  : {}),
-              };
-            }
-          }
-          out.windows = windows;
-        }
-      }
-      return out;
-    });
-  }
-
-  return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  // Table-driven (SOLID Round-93: three if-branches with the URL re-typed
+  // per arm — a fourth provider needed the allowlist above AND a new arm
+  // below extended in lockstep). Unreachable via the prologue (same keys),
+  // kept as a fail-loud backstop, never a throw.
+  const q = usageQueryFor(name);
+  if (!q) return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  return usageQuery(q.url, key, name, q.map);
 }
 
 /* ---- Connectivity tests ---- */
@@ -585,7 +608,8 @@ async function meKeyUsage(request: Request, env: any): Promise<Response> {
 /// testKey probe response: {ok, name, status} plus a per-provider success
 /// text or the upstream status on failure. The six probe branches used to
 /// each inline this jsonOk shape.
-function keyProbeResult(name: string, res: Response, okText: string): Response {
+// Exported for direct pins (SOLID Round-32; additive — handlers untouched).
+export function keyProbeResult(name: string, res: Response, okText: string): Response {
   return jsonOk({
     ok: res.ok,
     name,
@@ -594,7 +618,8 @@ function keyProbeResult(name: string, res: Response, okText: string): Response {
   });
 }
 
-async function testKey(env: any, name: string, key: string): Promise<Response> {
+// Exported for direct pins (SOLID Round-32; additive — handlers untouched).
+export async function testKey(env: any, name: string, key: string): Promise<Response> {
   if (!key) return jsonOk({ ok: false, name, detail: "Key not configured" });
   try {
     if (name === "DEEPSEEK_API_KEY") {
@@ -731,7 +756,11 @@ async function testKey(env: any, name: string, key: string): Promise<Response> {
   } catch (e: any) {
     return jsonOk({ ok: false, name, detail: "Test failed: " + e.message });
   }
-  return jsonError(400, `Unknown key name: ${name}`, "invalid_request");
+  // Reachable only for an allowlisted name with no probe arm (meTestKeys
+  // gates unknown names earlier): a distinct message so the drift reads as
+  // drift, not as a caller typo. Round-60: the probe-coverage gate fails
+  // first at test time; this is the runtime backstop.
+  return jsonError(400, `No probe for key name: ${name}`, "invalid_request");
 }
 
 export default {
@@ -740,7 +769,11 @@ export default {
   setup(ctx: PluginContext) {
     // meGetRoute resolves the effective model via the translate plugin's
     // resolveAutoModel (dep registered before this setup runs).
-    resolveRouteModel = (ctx.api?.translate as any)?.resolveAutoModel || null;
+    // SOLID Round-2: typed soft-dep read — same null-fallback semantics as
+    // the old `(ctx.api?.translate as any)?.resolveAutoModel || null`.
+    resolveRouteModel =
+      optionalApi<{ resolveAutoModel?: (...args: any[]) => any }>(ctx, "translate")
+        ?.resolveAutoModel || null;
     // Exact method+path match, same as the index.js if/else chain (the
     // registry's route() helper does prefix matching — exact here so
     // /api/me never swallows /api/me/route etc.). Order mirrors index.js.

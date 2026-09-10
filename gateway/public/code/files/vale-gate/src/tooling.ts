@@ -95,6 +95,32 @@ function probeResultJson(prefix: string, res: Response) {
 }
 
 /**
+ * Worker-level env key per passthrough prefix (SOLID Round-52: OCP table —
+ * the nested ternary grew an arm per channel). NOTE the deliberate
+ * difference from model-route's CHANNEL_KEY_RULES: probes spend WORKER keys
+ * (a pre-settings BYOK check), so nv/gmi DO fall back to env here while
+ * routing reads only the user's blob there. Unknown prefixes fall through
+ * to the DeepSeek arm exactly like the old default branch (the AMD test's
+ * BYOK-isolation design depends on that fall-through staying put).
+ */
+const PROBE_ENV_KEYS: Record<string, string> = {
+  or: "OPENROUTER_API_KEY",
+  qw: "QWEN_API_KEY",
+  nv: "NVAPI_KEY",
+  gmi: "GMI_API_KEY",
+  cm: "CMD_API_KEY",
+  amd: "AMD_API_KEY",
+  ds: "DEEPSEEK_API_KEY",
+};
+
+/** OCP extension point: new channels register their worker key here. */
+export function probeEnvKeyName(prefix: string): string {
+  return Object.prototype.hasOwnProperty.call(PROBE_ENV_KEYS, prefix)
+    ? (PROBE_ENV_KEYS[prefix] as string)
+    : "DEEPSEEK_API_KEY";
+}
+
+/**
  * Channel probe for the vale CLI's `use` command (public POST /api/vale-probe).
  *
  * Fires a real max_tokens=1 request through the requested channel using the
@@ -153,20 +179,7 @@ export async function valeProbe(env: any, model: string) {
   // Passthrough channels (ds/qw/or/nv/gmi/amd): reuse the exact route config of
   // /v1/messages.
   const route = pickRoute(prefix, env);
-  const key =
-    prefix === "or"
-      ? env.OPENROUTER_API_KEY || ""
-      : prefix === "qw"
-        ? env.QWEN_API_KEY || ""
-        : prefix === "nv"
-          ? env.NVAPI_KEY || ""
-          : prefix === "gmi"
-            ? env.GMI_API_KEY || ""
-            : prefix === "cm"
-              ? env.CMD_API_KEY || ""
-              : prefix === "amd"
-                ? env.AMD_API_KEY || ""
-                : env.DEEPSEEK_API_KEY || "";
+  const key = env[probeEnvKeyName(prefix)] || "";
   if (!key) return jsonOk({ ok: false, channel: prefix, detail: `${prefix}: key not configured` });
   const upstreamModel = stripBracket(route.stripPrefix ? model.slice(prefix.length + 1) : model);
   let res;

@@ -23,6 +23,7 @@ import {
   QWEN_COMPAT_CHAT,
   AMD_ANTHROPIC,
   AMD_CHAT,
+  OG_WIRE_REMAP,
 } from "./channels.ts";
 
 export interface RouteInfo {
@@ -200,6 +201,19 @@ export function registerRoute(prefix: string, builder: RouteBuilder): void {
 // before sending; strip it here too as a safety net so a literal "[1m]" never hits zen/OpenRouter.
 export function stripBracket(s: string): string {
   return s.replace(/\[[^\]]*\]$/, "");
+}
+
+/**
+ * Map a prefix-stripped model name to the slug the upstream actually accepts.
+ * Currently only og/ has aliases (OG_WIRE_REMAP in channels.ts); every other
+ * prefix passes through unchanged. Call sites: translate (the live /v1 path)
+ * and the tooling probes — same contract as pickRoute/passthroughHeaders.
+ */
+export function wireModelName(prefix: string, stripped: string): string {
+  if (prefix !== "og") return stripped;
+  return Object.prototype.hasOwnProperty.call(OG_WIRE_REMAP, stripped)
+    ? (OG_WIRE_REMAP[stripped] as string)
+    : stripped;
 }
 
 export function pickRoute(

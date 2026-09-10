@@ -21,10 +21,39 @@
  *   too), the HMAC signature verifies, and the user still exists + enabled.
  */
 
-import { getAdminPassword, getUser, type User } from "./store.ts";
+import {
+  getAdminPassword as liveGetAdminPassword,
+  getUser as liveGetUser,
+  type User,
+} from "./store.ts";
 import { parseCookie, verifySessionToken, SESSION_COOKIE } from "./auth.ts";
 import { jsonError } from "./http.ts";
 import { requireAccessSession } from "./access.ts";
+
+/**
+ * Session user-store seam (SOLID Round-5: DIP).
+ *
+ * The resolution flow previously imported the KV-backed store directly, so
+ * every consumer transitively depended on Cloudflare KV and the middle
+ * layer was untestable without a KV stub. High-level policy now depends on
+ * this narrow interface instead:
+ *   - production passes nothing (defaults to `liveSessionStore`, the exact
+ *     previous behavior — all ~25 existing 2-arg call sites compile and
+ *     behave identically);
+ *   - tests inject a fake (no KV, no cache, deterministic).
+ * Keep the surface minimal: only the two reads the flow needs. Anything
+ * wider would drag the abstraction back toward the concrete store (ISP).
+ */
+export interface SessionUserStore {
+  getAdminPassword(env: any): Promise<string>;
+  getUser(env: any, uid: string): Promise<User | null>;
+}
+
+/** Production binding — the previous direct imports, named as one seam. */
+export const liveSessionStore: SessionUserStore = {
+  getAdminPassword: liveGetAdminPassword,
+  getUser: liveGetUser,
+};
 
 export function sessionSecret(env: any, adminPassword: string): string {
   // VERIFY path only (rotation compat): prefer the dedicated SESSION_SECRET
@@ -56,16 +85,24 @@ export function issueSessionSecret(env: any): string | null {
 // store: a logout takes <=60s to propagate to a hot isolate.
 const __notRevoked = new Map<string, { revoked: boolean; exp: number }>();
 
-export async function requireSession(request: Request, env: any): Promise<User | null> {
-  const cookieUser = await requireCookieSession(request, env);
+export async function requireSession(
+  request: Request,
+  env: any,
+  store: SessionUserStore = liveSessionStore,
+): Promise<User | null> {
+  const cookieUser = await requireCookieSession(request, env, store);
   if (cookieUser) return cookieUser;
   // No valid session cookie — fall back to the edge-verified Cloudflare
   // Access identity (option C). No-op unless ACCESS_AUD/TEAM_DOMAIN are set.
   return requireAccessSession(request, env);
 }
 
-async function requireCookieSession(request: Request, env: any): Promise<User | null> {
-  const ap = await getAdminPassword(env);
+async function requireCookieSession(
+  request: Request,
+  env: any,
+  store: SessionUserStore,
+): Promise<User | null> {
+  const ap = await store.getAdminPassword(env);
   if (!ap) return null;
   const cookie = parseCookie(request.headers.get("Cookie") || "")[SESSION_COOKIE];
   if (!cookie) return null;
@@ -90,7 +127,7 @@ async function requireCookieSession(request: Request, env: any): Promise<User | 
     session = await verifySessionToken(ap, cookie);
   }
   if (!session) return null;
-  const user = await getUser(env, session.uid);
+  const user = await store.getUser(env, session.uid);
   if (!user || !user.enabled) return null;
   return user;
 }
@@ -100,8 +137,12 @@ async function requireCookieSession(request: Request, env: any): Promise<User | 
  * the session and requires role === "admin". Returns the user, or a Response
  * the handler should return directly (401 not logged in / 403 non-admin).
  */
-export async function requireAdmin(request: Request, env: any): Promise<User | Response> {
-  const user = await requireSession(request, env);
+export async function requireAdmin(
+  request: Request,
+  env: any,
+  store: SessionUserStore = liveSessionStore,
+): Promise<User | Response> {
+  const user = await requireSession(request, env, store);
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   if (user.role !== "admin") {
     return jsonError(403, "Admin permission required", "authorization_error");

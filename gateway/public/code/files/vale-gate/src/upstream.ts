@@ -32,6 +32,170 @@ export interface RouteInfo {
   upstream: string;
 }
 
+// SOLID Round-1 (OCP): route builders are DATA — adding a channel registers
+// one entry in ROUTE_TABLE instead of editing pickRoute's switch. pickRoute
+// itself is now closed for modification (lookup + default fallback only).
+export type ViaFn = (direct: string, path: string) => string;
+export interface RouteCtx {
+  env: any;
+  prefix: string;
+  usProxy: string | null;
+  requestPath: string;
+  via: ViaFn;
+}
+export type RouteBuilder = (ctx: RouteCtx) => RouteInfo;
+
+function orRoute({ requestPath, via }: RouteCtx): RouteInfo {
+  // (2026-08-22): off = direct to openrouter.ai; on = via the US egress.
+  // requestPath distinguishes the two formats: /v1/messages (Claude Code) and
+  // /v1/chat/completions (DSH). The egress is measured to be a pure pipe — it passes Authorization
+  // through, so BYOK is unaffected. The openrouter-proxy worker was retired 2026-09-07 (zero callers, dead URL).
+  const upstreamPath = requestPath || VERIFY_PATH;
+  return {
+    type: "passthrough",
+    kind: "openrouter", // passes through the user's own OPENROUTER_API_KEY
+    stripPrefix: true,
+    upstream: via("https://openrouter.ai/api" + upstreamPath, upstreamPath),
+  };
+}
+
+function dsRoute({ via }: RouteCtx): RouteInfo {
+  return {
+    type: "passthrough",
+    kind: "deepseek",
+    stripPrefix: true,
+    upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
+  };
+}
+
+function qwRoute({ requestPath, via }: RouteCtx): RouteInfo {
+  // Anthropic endpoint by default (/v1/messages — Claude Code & Anthropic
+  // clients). OpenAI-format requests (/v1/chat/completions — DSH & co.)
+  // must ride the compatible-mode endpoint: the /apps/anthropic endpoint
+  // rejects OpenAI bodies (400 "Request body format invalid").
+  return requestPath === "/v1/chat/completions"
+    ? {
+        type: "passthrough",
+        kind: "qwen",
+        stripPrefix: true,
+        upstream: via(QWEN_COMPAT_CHAT, "/compatible-mode/v1/chat/completions"),
+      }
+    : {
+        type: "passthrough",
+        kind: "qwen",
+        stripPrefix: true,
+        upstream: via(
+          "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
+          "/apps/anthropic/v1/messages",
+        ),
+      };
+}
+
+function ogRoute({ via }: RouteCtx): RouteInfo {
+  return {
+    type: "translate",
+    kind: "opencode",
+    stripPrefix: true,
+    upstream: via("https://opencode.ai/zen/go/v1/chat/completions", "/v1/chat/completions"),
+  };
+}
+
+function nvRoute({ via }: RouteCtx): RouteInfo {
+  // NVIDIA NIM official API — OpenAI format only, dedicated per-key
+  // capacity (no shared free pool). Registered models: nemotron family.
+  const upstreamPath = "/v1/chat/completions";
+  return {
+    type: "passthrough",
+    kind: "nvidia",
+    stripPrefix: true,
+    upstream: via("https://integrate.api.nvidia.com" + upstreamPath, upstreamPath),
+  };
+}
+
+function gmiRoute({ via }: RouteCtx): RouteInfo {
+  // GMI Cloud Inference Engine (api.gmi-serving.com) — OpenAI-compatible
+  // serverless endpoint; MiniMax Week free tier serves MiniMaxAI/MiniMax-M3
+  // and MiniMaxAI/MiniMax-M2.7 free for 14 days (2026-08-24 → 09-06), then
+  // standard pricing. Anthropic-format /v1/messages requests are translated
+  // by the translate plugin (Anthropic → OpenAI → back), same as nv/.
+  const upstreamPath = "/v1/chat/completions";
+  return {
+    type: "passthrough",
+    kind: "gmi",
+    stripPrefix: true,
+    upstream: via("https://api.gmi-serving.com" + upstreamPath, upstreamPath),
+  };
+}
+
+function cmRoute({ via }: RouteCtx): RouteInfo {
+  // Command Code Provider API (api.commandcode.ai/provider) — Command
+  // Code GOAT plan and above have API access (every plan except Go). The
+  // Anthropic /v1/messages endpoint serves claude-* models ONLY (verified
+  // against the live API: deepseek → 400 "Use /provider/v1/chat/completions
+  // for OpenAI and OSS models"), so cm/ rides the OpenAI endpoint: the
+  // translate plugin reshapes Anthropic /v1/messages → chat/completions
+  // (the og pattern), while OpenAI-format /v1/chat/completions passes
+  // through directly. Auth: the user's own CMD_API_KEY as Bearer.
+  return {
+    type: "translate",
+    kind: "commandgoat",
+    stripPrefix: true,
+    upstream: via(CMD_CHAT, "/v1/chat/completions"),
+  };
+}
+
+function amdRoute({ requestPath }: RouteCtx): RouteInfo {
+  // AMD Radeon Cloud (developer.amd.com.cn/radeon) — a free BYOK pool that
+  // speaks BOTH formats natively: Anthropic /v1/messages (thinking blocks,
+  // tool_use and SSE verified against the live API 2026-09-02; accepts
+  // x-api-key or Bearer) and OpenAI /v1/chat/completions (Bearer). So the
+  // route is picked by requestPath, like qw/ — but no translation anywhere.
+  //
+  // Always DIRECT, never the US exit: developer.amd.com.cn is a CN-served
+  // host (a US egress only adds a round the world), and the proxy's TARGETS
+  // map has no amd entry — an unknown target silently falls back to zen,
+  // which would answer with the wrong model AND the wrong key.
+  return requestPath === "/v1/chat/completions"
+    ? {
+        type: "passthrough",
+        kind: "amd",
+        stripPrefix: true,
+        upstream: AMD_CHAT,
+      }
+    : {
+        type: "passthrough",
+        kind: "amd",
+        stripPrefix: true,
+        upstream: AMD_ANTHROPIC,
+      };
+}
+
+function defaultRoute({ via }: RouteCtx): RouteInfo {
+  // No prefix / unknown prefix → DeepSeek official
+  return {
+    type: "passthrough",
+    kind: "deepseek",
+    stripPrefix: false,
+    upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
+  };
+}
+
+export const ROUTE_TABLE: Record<string, RouteBuilder> = {
+  or: orRoute,
+  ds: dsRoute,
+  qw: qwRoute,
+  og: ogRoute,
+  nv: nvRoute,
+  gmi: gmiRoute,
+  cm: cmRoute,
+  amd: amdRoute,
+};
+
+/** OCP extension point: new channels register here — no edit to pickRoute. */
+export function registerRoute(prefix: string, builder: RouteBuilder): void {
+  ROUTE_TABLE[prefix] = builder;
+}
+
 // Claude Code appends a [context-window] marker (e.g. [1m]) to model names and strips it
 // before sending; strip it here too as a safety net so a literal "[1m]" never hits zen/OpenRouter.
 export function stripBracket(s: string): string {
@@ -49,135 +213,18 @@ export function pickRoute(
   // from US edge nodes, avoiding regional restrictions/congestion. target=og|ds|qw|or selects the upstream,
   // the path param carries the upstream relative path (the proxy base already includes the host-level prefix). usProxy is a local
   // per-request value — never mutate the shared env object with it.
-  const via = (direct: string, path: string): string =>
+  const via: ViaFn = (direct: string, path: string): string =>
     usProxy
       ? // audit round F4: prefix is model-derived ARBITRARY text — unencoded
         // it could inject &path=… into the egress URL and re-point the proxy
         // request. Encode (the proxy decodes) so it stays one opaque value.
         `${usProxyBase(env)}/api/zen?target=${encodeURIComponent(prefix)}&path=${encodeURIComponent(path)}`
       : direct;
-  switch (prefix) {
-    case "or": {
-      // The switch now also covers or (2026-08-22): off = direct to openrouter.ai; on = via the US egress.
-      // requestPath distinguishes the two formats: /v1/messages (Claude Code) and
-      // /v1/chat/completions (DSH). The egress is measured to be a pure pipe — it passes Authorization
-      // through, so BYOK is unaffected. The openrouter-proxy worker was retired 2026-09-07 (zero callers, dead URL).
-      const upstreamPath = requestPath || VERIFY_PATH;
-      return {
-        type: "passthrough",
-        kind: "openrouter", // passes through the user's own OPENROUTER_API_KEY
-        stripPrefix: true,
-        upstream: via("https://openrouter.ai/api" + upstreamPath, upstreamPath),
-      };
-    }
-    case "ds":
-      return {
-        type: "passthrough",
-        kind: "deepseek",
-        stripPrefix: true,
-        upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
-      };
-    case "qw":
-      // Anthropic endpoint by default (/v1/messages — Claude Code & Anthropic
-      // clients). OpenAI-format requests (/v1/chat/completions — DSH & co.)
-      // must ride the compatible-mode endpoint: the /apps/anthropic endpoint
-      // rejects OpenAI bodies (400 "Request body format invalid").
-      return requestPath === "/v1/chat/completions"
-        ? {
-            type: "passthrough",
-            kind: "qwen",
-            stripPrefix: true,
-            upstream: via(QWEN_COMPAT_CHAT, "/compatible-mode/v1/chat/completions"),
-          }
-        : {
-            type: "passthrough",
-            kind: "qwen",
-            stripPrefix: true,
-            upstream: via(
-              "https://token-plan.ap-southeast-1.maas.aliyuncs.com/apps/anthropic" + VERIFY_PATH,
-              "/apps/anthropic/v1/messages",
-            ),
-          };
-    case "og":
-      return {
-        type: "translate",
-        kind: "opencode",
-        stripPrefix: true,
-        upstream: via("https://opencode.ai/zen/go/v1/chat/completions", "/v1/chat/completions"),
-      };
-    case "nv": {
-      // NVIDIA NIM official API — OpenAI format only, dedicated per-key
-      // capacity (no shared free pool). Registered models: nemotron family.
-      const upstreamPath = "/v1/chat/completions";
-      return {
-        type: "passthrough",
-        kind: "nvidia",
-        stripPrefix: true,
-        upstream: via("https://integrate.api.nvidia.com" + upstreamPath, upstreamPath),
-      };
-    }
-    case "gmi": {
-      // GMI Cloud Inference Engine (api.gmi-serving.com) — OpenAI-compatible
-      // serverless endpoint; MiniMax Week free tier serves MiniMaxAI/MiniMax-M3
-      // and MiniMaxAI/MiniMax-M2.7 free for 14 days (2026-08-24 → 09-06), then
-      // standard pricing. Anthropic-format /v1/messages requests are translated
-      // by the translate plugin (Anthropic → OpenAI → back), same as nv/.
-      const upstreamPath = "/v1/chat/completions";
-      return {
-        type: "passthrough",
-        kind: "gmi",
-        stripPrefix: true,
-        upstream: via("https://api.gmi-serving.com" + upstreamPath, upstreamPath),
-      };
-    }
-    case "cm":
-      // Command Code Provider API (api.commandcode.ai/provider) — Command
-      // Code GOAT plan and above have API access (every plan except Go). The
-      // Anthropic /v1/messages endpoint serves claude-* models ONLY (verified
-      // against the live API: deepseek → 400 "Use /provider/v1/chat/completions
-      // for OpenAI and OSS models"), so cm/ rides the OpenAI endpoint: the
-      // translate plugin reshapes Anthropic /v1/messages → chat/completions
-      // (the og pattern), while OpenAI-format /v1/chat/completions passes
-      // through directly. Auth: the user's own CMD_API_KEY as Bearer.
-      return {
-        type: "translate",
-        kind: "commandgoat",
-        stripPrefix: true,
-        upstream: via(CMD_CHAT, "/v1/chat/completions"),
-      };
-    case "amd":
-      // AMD Radeon Cloud (developer.amd.com.cn/radeon) — a free BYOK pool that
-      // speaks BOTH formats natively: Anthropic /v1/messages (thinking blocks,
-      // tool_use and SSE verified against the live API 2026-09-02; accepts
-      // x-api-key or Bearer) and OpenAI /v1/chat/completions (Bearer). So the
-      // route is picked by requestPath, like qw/ — but no translation anywhere.
-      //
-      // Always DIRECT, never the US exit: developer.amd.com.cn is a CN-served
-      // host (a US egress only adds a round the world), and the proxy's TARGETS
-      // map has no amd entry — an unknown target silently falls back to zen,
-      // which would answer with the wrong model AND the wrong key.
-      return requestPath === "/v1/chat/completions"
-        ? {
-            type: "passthrough",
-            kind: "amd",
-            stripPrefix: true,
-            upstream: AMD_CHAT,
-          }
-        : {
-            type: "passthrough",
-            kind: "amd",
-            stripPrefix: true,
-            upstream: AMD_ANTHROPIC,
-          };
-    default:
-      // No prefix / unknown prefix → DeepSeek official
-      return {
-        type: "passthrough",
-        kind: "deepseek",
-        stripPrefix: false,
-        upstream: via("https://api.deepseek.com/anthropic" + VERIFY_PATH, "/anthropic/v1/messages"),
-      };
-  }
+  // CLOSED for modification: new prefixes register in ROUTE_TABLE above.
+  const builder: RouteBuilder = Object.prototype.hasOwnProperty.call(ROUTE_TABLE, prefix)
+    ? (ROUTE_TABLE[prefix] as RouteBuilder)
+    : defaultRoute;
+  return builder({ env, prefix, usProxy, requestPath, via });
 }
 
 export function passthroughHeaders(
@@ -230,22 +277,53 @@ export function passthroughHeaders(
 // "opencode"), so ds/qw/or/nv/gmi/cm/amd wires stay untouched and no foreign
 // header leaks to other upstreams.
 const SESSION_SALT = "vale-og-session-v1";
+
+/**
+ * Priority-ordered client conversation id (SOLID Round-4: SRP extraction).
+ *
+ * Pure read of the four identifiers a client may already carry — native
+ * opencode clients (`x-opencode-session` / future DSH builds), DSH's pi-ai
+ * adapter (`x-client-request-id`, stamped per conversation), and
+ * OpenAI/OpenRouter-style ids (`session_id` / `x-session-id`). Returns the
+ * first non-blank value (headers are trimmed), or "" when the client sent
+ * none. Relaying the client's own id keeps one cache namespace per real
+ * conversation upstream.
+ */
+export function clientSessionId(incoming: Headers | HeadersInit | undefined): string {
+  return (
+    headerValue(incoming, "x-opencode-session") ||
+    headerValue(incoming, "x-client-request-id") ||
+    headerValue(incoming, "session_id") ||
+    headerValue(incoming, "x-session-id")
+  );
+}
+
+/**
+ * Stable per-user fallback id (SOLID Round-4: SRP extraction).
+ *
+ * Used only when the client sent no conversation id. Derived WITHOUT KV (no
+ * extra reads/writes): a digest of the uid under a constant application
+ * salt. Stable across isolates and deploys (cache reuse), never a secret —
+ * zen treats the value as a routing hint, not a gate.
+ */
+export function syntheticSessionId(uid: string): string {
+  return `vale-${fnvHex(`${SESSION_SALT}:${uid}`)}`;
+}
+
 export function opencodeSessionHeader(
   incoming: Headers | HeadersInit | undefined,
   uid: string,
 ): { "x-opencode-session": string } | Record<string, never> {
-  const fromClient =
-    headerValue(incoming, "x-opencode-session") ||
-    headerValue(incoming, "x-client-request-id") ||
-    headerValue(incoming, "session_id") ||
-    headerValue(incoming, "x-session-id");
-  if (fromClient) return { "x-opencode-session": fromClient };
-  return { "x-opencode-session": `vale-${fnvHex(`${SESSION_SALT}:${uid}`)}` };
+  // Thin composer (SOLID Round-4): extraction + fallback live above and are
+  // unit-tested in isolation; this keeps the exact historical semantics —
+  // client id wins verbatim, otherwise the synthetic per-user value.
+  return { "x-opencode-session": clientSessionId(incoming) || syntheticSessionId(uid) };
 }
 
 // FNV-1a 64-bit fold into 16 hex chars. Deliberately non-cryptographic: the
-// value is a routing/cache key, not a secret — see opencodeSessionHeader.
-function fnvHex(s: string): string {
+// value is a routing/cache key, not a secret — see syntheticSessionId.
+// Exported for unit tests (was private); the algorithm itself is unchanged.
+export function fnvHex(s: string): string {
   let h1 = 0x811c9dc5;
   let h2 = 0x01000193;
   for (let i = 0; i < s.length; i++) {

@@ -50,7 +50,7 @@ test("health: channels cover all prefixes in priority order", async () => {
     "qw/qwen3.8-max-preview",
     "qw/qwen3.8-flash",
     "og/deepseek-v4-flash",
-    "og/deepseek-flash",
+    "og/deepseek-v4.1-flash",
     "og/gpt-5.6-luna",
     "og/mimo-v2.5",
     "og/ox-alpha-free",

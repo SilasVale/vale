@@ -4,8 +4,19 @@
 // drifted table misroutes silently. Pins each prefix + the US-egress wrap.
 import test from "node:test";
 import assert from "node:assert/strict";
-import { pickRoute, stripBracket, passthroughHeaders, registerRoute, ROUTE_TABLE, opencodeSessionHeader, clientSessionId, syntheticSessionId, fnvHex } from "../src/upstream.ts";
-import { MODELS } from "../src/channels.ts";
+import { pickRoute, stripBracket, passthroughHeaders, registerRoute, ROUTE_TABLE, opencodeSessionHeader, clientSessionId, syntheticSessionId, fnvHex, wireModelName } from "../src/upstream.ts";
+import { MODELS, OG_WIRE_REMAP } from "../src/channels.ts";
+
+test("wireModelName: og display names alias to zen/go lane slugs; others verbatim", () => {
+  assert.equal(wireModelName("og", "deepseek-v4.1-flash"), "deepseek-flash", "clear name → lane slug");
+  assert.equal(wireModelName("og", "deepseek-flash"), "deepseek-flash", "raw lane slug passes through");
+  assert.equal(wireModelName("og", "deepseek-v4-flash"), "deepseek-v4-flash", "no remap entry → verbatim");
+  assert.equal(wireModelName("ds", "deepseek-v4.1-flash"), "deepseek-v4.1-flash", "remap is og-only");
+  // Every remap target must itself be remap-free (no chains).
+  for (const t of Object.values(OG_WIRE_REMAP)) {
+    assert.equal(OG_WIRE_REMAP[t], undefined, `remap target ${t} must not remap again`);
+  }
+});
 
 test("stripBracket trims a trailing [context] marker only", () => {
   assert.equal(stripBracket("og/model[1m]"), "og/model");
