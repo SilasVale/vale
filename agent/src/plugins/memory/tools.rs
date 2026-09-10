@@ -283,3 +283,161 @@ fn tool_export(store: Arc<MemoryStore>) -> ToolDef {
 pub fn open_store(dir: std::path::PathBuf, limits: MemoryLimits) -> Arc<MemoryStore> {
     Arc::new(MemoryStore::new(dir, limits))
 }
+
+#[cfg(test)]
+mod dispatch_tests {
+    //! SOLID Round-64: the dispatch layer (param extraction, validation
+    //! envelopes, sanitization at the tool boundary, unknown-id wording)
+    //! had zero pins — store.rs covers the store, e2e covers live devices,
+    //! but nothing proved the six ToolDef handlers translate between the
+    //! two. Temp-dir store per test; handlers run through the real registry
+    //! builders exactly as production dispatches them.
+    use super::*;
+
+    fn test_store(tag: &str) -> (Arc<MemoryStore>, std::path::PathBuf) {
+        let dir =
+            std::env::temp_dir().join(format!("vale-mem-dispatch-{}-{tag}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        (open_store(dir.clone(), MemoryLimits::default()), dir)
+    }
+
+    fn tool<'a>(tools: &'a [ToolDef], name: &str) -> &'a ToolDef {
+        tools
+            .iter()
+            .find(|t| t.name == name)
+            .unwrap_or_else(|| panic!("missing tool: {name}"))
+    }
+
+    #[tokio::test]
+    async fn save_search_update_delete_export_roundtrip() {
+        let (store, dir) = test_store("roundtrip");
+        let tools = build(store);
+        let save = tool(&tools, "memory_save");
+        let out = save
+            .handler
+            .call(json!({"title": "deploy notes", "content": "restart after update", "tags": ["ops"]}))
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        let id = out["id"].as_str().unwrap().to_string();
+        assert!(id.starts_with("m-"), "server-minted id shape: {id}");
+
+        let hits = tool(&tools, "memory_search")
+            .handler
+            .call(json!({"query": "restart"}))
+            .await
+            .unwrap();
+        assert_eq!(hits["ok"], true);
+        assert_eq!(hits["results"].as_array().unwrap().len(), 1);
+
+        let upd = tool(&tools, "memory_update")
+            .handler
+            .call(json!({"id": id.clone(), "content": "restart after update v2"}))
+            .await
+            .unwrap();
+        assert_eq!(upd["ok"], true);
+        assert_eq!(upd["id"], id.as_str());
+
+        let list = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert_eq!(list["results"].as_array().unwrap().len(), 1);
+
+        let exp = tool(&tools, "memory_export")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert_eq!(exp["ok"], true);
+        assert_eq!(exp["lines"], 1);
+        assert!(exp["export"].as_str().unwrap().contains(&id));
+
+        let del = tool(&tools, "memory_delete")
+            .handler
+            .call(json!({"id": id}))
+            .await
+            .unwrap();
+        assert_eq!(del["deleted"], true);
+        let gone = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            gone["results"].as_array().unwrap().len(),
+            0,
+            "soft-deleted hidden by default"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn save_validates_title_and_content_as_ok_envelopes() {
+        // Validation failures are Ok({ok:false}) values, NOT handler errors —
+        // the MCP layer surfaces them as tool results, never transport errors.
+        let (store, dir) = test_store("validate");
+        let tools = build(store);
+        let save = tool(&tools, "memory_save");
+        for params in [
+            json!({"content": "x"}),
+            json!({"title": "x"}),
+            json!({"title": " ", "content": "x"}),
+        ] {
+            let out = save.handler.call(params).await.unwrap();
+            assert_eq!(out["ok"], false, "missing/blank field rejected");
+        }
+        let search = tool(&tools, "memory_search");
+        let out = search.handler.call(json!({})).await.unwrap();
+        assert_eq!(out["ok"], false, "missing query rejected as value");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn save_sanitizes_key_shaped_title_before_it_is_searchable() {
+        // Review #5 class at the dispatch boundary: a secret-shaped title
+        // (key=value form, the shape the sanitizer redacts) must redact
+        // before persistence — bare prose stays verbatim by design (see
+        // sanitize.rs: no separator means no key boundary).
+        let (store, dir) = test_store("sanitize");
+        let tools = build(store);
+        let out = tool(&tools, "memory_save")
+            .handler
+            .call(json!({"title": "token=abc123hunter", "content": "plain body"}))
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        let hits = tool(&tools, "memory_search")
+            .handler
+            .call(json!({"query": "token"}))
+            .await
+            .unwrap();
+        let found = &hits["results"].as_array().unwrap()[0];
+        let title = found["title"].as_str().unwrap();
+        assert!(
+            !title.contains("abc123hunter"),
+            "secret redacted, got: {title}"
+        );
+        assert!(title.contains("<redacted>"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    #[tokio::test]
+    async fn update_delete_unknown_id_share_one_envelope() {
+        let (store, dir) = test_store("unknown");
+        let tools = build(store);
+        for (name, params) in [
+            ("memory_update", json!({"id": "m-nope", "content": "x"})),
+            ("memory_delete", json!({"id": "m-nope"})),
+        ] {
+            let out = tool(&tools, name).handler.call(params).await.unwrap();
+            assert_eq!(
+                out,
+                json!({"ok": false, "error": "unknown id: m-nope"}),
+                "{name} envelope"
+            );
+        }
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+}
