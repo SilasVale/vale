@@ -2311,7 +2311,11 @@ mod tests {
         assert!(v["approval_required"].is_null());
 
         // (a) The AI can read it off the tool surface it already polls.
-        let listed = handle_request(req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN), st.clone()).await;
+        let listed = handle_request(
+            req_with_token("POST", "/api/tools/terminal_list", TEST_TOKEN),
+            st.clone(),
+        )
+        .await;
         let body = json_body(listed).await;
         let row = body["result"]
             .as_array()
@@ -2322,7 +2326,10 @@ mod tests {
 
         // (b) The trail records the STATEMENT, not just the state.
         let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
-        let events = json_body(resp).await["events"].as_array().cloned().unwrap_or_default();
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let goals: Vec<String> = events
             .iter()
             .filter(|e| e["kind"] == "goal")
@@ -2333,12 +2340,19 @@ mod tests {
         // Clearing is an EVENT too: a withdrawn objective must not leave the
         // previous one looking current.
         let _ = handle_request(
-            req_with_json("POST", &format!("/api/sessions/{sid}/control"), r#"{"goal":""}"#),
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"goal":""}"#,
+            ),
             st.clone(),
         )
         .await;
         let resp = handle_request(req("GET", &format!("/api/sessions/{sid}")), st.clone()).await;
-        let events = json_body(resp).await["events"].as_array().cloned().unwrap_or_default();
+        let events = json_body(resp).await["events"]
+            .as_array()
+            .cloned()
+            .unwrap_or_default();
         let goals: Vec<String> = events
             .iter()
             .filter(|e| e["kind"] == "goal")
@@ -2356,11 +2370,7 @@ mod tests {
     async fn a_non_string_goal_is_rejected() {
         let (st, cfg_path) = state_with_cfg("goal-bad", CFG_YAML_TOKEN_ONLY);
         let resp = handle_request(
-            req_with_json(
-                "POST",
-                "/api/sessions/abc123/control",
-                r#"{"goal":123}"#,
-            ),
+            req_with_json("POST", "/api/sessions/abc123/control", r#"{"goal":123}"#),
             st,
         )
         .await;
