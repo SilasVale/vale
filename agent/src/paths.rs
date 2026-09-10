@@ -402,9 +402,26 @@ pub fn migrate_layout_v2() -> Vec<String> {
         );
     } else {
         let marker = install.join("etc").join(".layout-v2");
-        match std::fs::create_dir_all(marker.parent().unwrap())
-            .and_then(|()| std::fs::write(&marker, b"migrated by vale-agent boot backstop\n"))
-        {
+        // BOOT-PATH RULE (SOLID R110): this function is called FIRST in
+        // `main()`, BEFORE tracing is initialized — a panic here is a device
+        // that never starts and leaves no log at all (the 1.2.223 dark-device
+        // class). `parent()` is `Some` for any real install root, but the
+        // `.unwrap()` that used to sit here made this function's own
+        // "Never fails the boot" contract depend on that path arithmetic
+        // staying true forever. The `None` arm is unreachable today and is
+        // kept as a note instead of a panic, so the contract holds by
+        // construction. Enforced by tests/boot_surface.rs.
+        let written = marker
+            .parent()
+            .ok_or_else(|| "install root has no parent".to_string())
+            .and_then(|dir| {
+                std::fs::create_dir_all(dir)
+                    .and_then(|()| {
+                        std::fs::write(&marker, b"migrated by vale-agent boot backstop\n")
+                    })
+                    .map_err(|e| e.to_string())
+            });
+        match written {
             Ok(()) => notes.push(format!("layout v2 marker written: {}", marker.display())),
             Err(e) => notes.push(format!(
                 "layout v2 marker write failed: {e} (retries next boot)"

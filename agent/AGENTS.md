@@ -338,7 +338,28 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R109 — a documented memory feature does not
+Last updated: 2026-09-10 SOLID-R110 — the BOOT PATH's "never fatal"
+  promise is now a gate, not prose. `migrate_layout_v2()` runs FIRST in
+  `main()`, BEFORE tracing is initialised — so a panic there is a device that
+  never starts and leaves NO log at all (the 1.2.223 dark-device class). It
+  held the boot path's ONLY panic surface: `marker.parent().unwrap()`, in a
+  function whose own doc says "Never fails the boot". Fixed structurally
+  (the unreachable `None` arm is a note, not a panic), then pinned by a new
+  `tests/boot_surface.rs` that scans main.rs / winmain.rs / paths.rs /
+  filelog.rs / bootstrap.rs / state.rs for the panic family. Two details
+  worth knowing: the scanner is brace- AND string-literal-aware because the
+  test modules it must skip contain `format!("{{{{{{ broken…")` — a naive
+  brace count ended the skip region early and reported false positives — and
+  the scanner is ITSELF pinned (planted panic found, production code after a
+  test module still scanned, line numbers preserved), because a gate that
+  cannot fail is not a gate. Its limits are stated in the header rather than
+  implied: it is a line scan, it does not see indirect panics, and the
+  BOOT_PATH list is hand-maintained. Mutation-proven: a planted `.unwrap()`
+  on the boot path fails with its exact line. Agent gates 466 feat-gated /
+  459 default green, clippy -D warnings clean both configs, fmt clean, xwin
+  check OK. Program ledger: docs/solid-program.md. No device rollout.
+
+Previous round: 2026-09-10 SOLID-R109 — a documented memory feature does not
   exist, and now says so. The memory plugin's CLIENT-IDENTITY CAPTURE:
   `tools::set_source` is `pub`, documented as "called by the MCP layer on
   handshake", and has ZERO callers repo-wide — so `SOURCE` keeps its
