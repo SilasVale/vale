@@ -338,7 +338,25 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R105 — byte-budget text clipping has an
+Last updated: 2026-09-10 SOLID-R106 — the timed-out-command KILL POLICY has
+  one owner. `execute_local` carried FOUR `#[cfg]`-gated signal blocks (the
+  SIGTERM block and the SIGKILL block, each with a unix arm and a windows
+  arm) plus TWO hand-written copies of the identical 50 ms exit-poll loop.
+  Now `signal_tree(pid, force)` states the policy once and `wait_for_exit`
+  owns the poll, with the window lengths named (`KILL_GRACE` 3s, `KILL_REAP`
+  5s). This mattered more than the usual DRY win: the unix and windows arms
+  are NEVER compiled together — Linux tests see one, `cargo xwin` the other —
+  so an inline typo in either is invisible to every other platform's gate.
+  First-ever coverage of the round-55 contract ("a timeout kills the TREE,
+  not just the shell"), driving REAL processes and asserting the SIGKILL
+  reaches a BACKGROUNDED GRANDCHILD (`kill -0 -PGID` fails only when every
+  member is gone). Mutation-proven both directions: group-kill → single
+  kill fails "group N still has live members"; SIGTERM → no-op signal fails
+  "SIGTERM must terminate the group". +5 pins. Agent gates 458 feat-gated /
+  451 default green, clippy -D warnings clean both configs, fmt clean, xwin
+  check OK. Program ledger: docs/solid-program.md. No device rollout.
+
+Previous round: 2026-09-10 SOLID-R105 — byte-budget text clipping has an
   owner. "Cut this string to at most N bytes, on a UTF-8 char boundary" was
   written out at EIGHT sites across SIX files (mcp_client ×3, session_log ×2,
   output, playwright, design, plus memory's private helper) in two different

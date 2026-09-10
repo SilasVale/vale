@@ -256,6 +256,76 @@ pub(super) fn tool_jobs(jobs: &JobsMap) -> ToolDef {
 
 // ── Execute ──────────────────────────────────────
 
+/// How long a timed-out command's tree gets to exit on its own after the
+/// graceful signal, before it is killed outright.
+const KILL_GRACE: std::time::Duration = std::time::Duration::from_secs(3);
+/// How long to keep waiting for the tree AFTER the forced signal. A group
+/// stuck in D-state (uninterruptible IO) would otherwise hang the tool
+/// forever — the call returns with whatever output arrived instead.
+const KILL_REAP: std::time::Duration = std::time::Duration::from_secs(5);
+
+/// Signal a whole process TREE, not just the direct child (round-55).
+///
+/// The local shell is spawned with `process_group(0)` on Unix, so the child's
+/// pid IS its group id and a NEGATIVE pid targets every process in it. That
+/// matters because the commands this guards are things like `make` and the
+/// installer: killing only the shell left the real work running orphaned on
+/// the device (round-54). Windows has no process groups here, so `taskkill
+/// /T` walks the child tree instead.
+///
+/// `force = false` is the graceful signal (SIGTERM / plain `taskkill /T`:
+/// SIGKILL straight away left databases and build caches half-written);
+/// `force = true` is the last resort (SIGKILL / `/F`).
+///
+/// Both platform arms live here rather than inline at each call site, so the
+/// policy is stated ONCE. Note the arms are never compiled together — Linux
+/// tests exercise the Unix one and `cargo xwin` the Windows one — which is
+/// exactly why a single owner beats four inline copies.
+async fn signal_tree(pid: u32, force: bool) {
+    let pid = pid.to_string();
+    #[cfg(unix)]
+    {
+        // SIGTERM -15 / SIGKILL -9, addressed to the process GROUP.
+        let sig = if force { "-9" } else { "-15" };
+        let _ = tokio::process::Command::new("kill")
+            .args([sig, "--", &format!("-{pid}")])
+            .output()
+            .await;
+    }
+    #[cfg(windows)]
+    {
+        let mut args: Vec<&str> = vec!["/T", "/PID", pid.as_str()];
+        if force {
+            args.insert(0, "/F");
+        }
+        let _ = tokio::process::Command::new("taskkill")
+            .args(&args)
+            .output()
+            .await;
+    }
+    // Platforms with neither arm: nothing to signal.
+    #[cfg(not(any(unix, windows)))]
+    let _ = (pid, force);
+}
+
+/// Poll until the child exits or `patience` elapses; true when it exited.
+///
+/// Both kill-path waits use this (the grace window and the post-SIGKILL
+/// re-await). They were two hand-written copies of the same 50 ms poll loop —
+/// identical structure, separately maintained.
+async fn wait_for_exit(child: &mut tokio::process::Child, patience: std::time::Duration) -> bool {
+    tokio::time::timeout(patience, async {
+        loop {
+            if child.try_wait().ok().flatten().is_some() {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(50)).await;
+        }
+    })
+    .await
+    .is_ok()
+}
+
 /// Session-mode result cap (1 MB tail). The old code grew `result` to the
 /// command's TOTAL output; `yes` at 1 MB/s for the 3600 s deadline OOM'd the
 /// agent (round-105). The tail is kept — it is what the model needs — and
@@ -492,70 +562,19 @@ async fn execute_local(
     }
 
     if timed_out {
-        // Graceful first, then SIGKILL (round-55): kill -9
-        // straight away left databases/build caches half
-        // written. Unix: SIGTERM to the process group;
-        // Windows: taskkill /T (graceful tree kill).
+        // Graceful → forced → bounded reap (policy in signal_tree /
+        // wait_for_exit). Only signal a child that is still running: a
+        // command that already exited must not have its pid reused.
         if child.try_wait().map(|s| s.is_none()).unwrap_or(false) {
             if let Some(pid) = pid {
-                let pid_str = pid.to_string();
-                #[cfg(unix)]
-                {
-                    let _ = tokio::process::Command::new("kill")
-                        .args(["-15", "--", &format!("-{pid_str}")])
-                        .output()
-                        .await;
-                }
-                #[cfg(windows)]
-                {
-                    let _ = tokio::process::Command::new("taskkill")
-                        .args(["/T", "/PID", &pid_str])
-                        .output()
-                        .await;
-                }
+                signal_tree(pid, false).await;
             }
-            // Grace window: let the tree exit on its own.
-            let graceful = tokio::time::timeout(std::time::Duration::from_secs(3), async {
-                loop {
-                    if child.try_wait().ok().flatten().is_some() {
-                        break;
-                    }
-                    tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                }
-            })
-            .await;
-            if graceful.is_err() {
-                // Still alive — SIGKILL the tree.
+            if !wait_for_exit(&mut child, KILL_GRACE).await {
                 if let Some(pid) = pid {
-                    let pid_str = pid.to_string();
-                    #[cfg(unix)]
-                    {
-                        let _ = tokio::process::Command::new("kill")
-                            .args(["-9", "--", &format!("-{pid_str}")])
-                            .output()
-                            .await;
-                    }
-                    #[cfg(windows)]
-                    {
-                        let _ = tokio::process::Command::new("taskkill")
-                            .args(["/F", "/T", "/PID", &pid_str])
-                            .output()
-                            .await;
-                    }
+                    signal_tree(pid, true).await;
                 }
-                // Bounded re-await (round-55): a group stuck in
-                // D-state (uninterruptible IO) would hang the
-                // tool forever. Wait up to 5s, then return
-                // with the partial output either way.
-                let _ = tokio::time::timeout(std::time::Duration::from_secs(5), async {
-                    loop {
-                        if child.try_wait().ok().flatten().is_some() {
-                            break;
-                        }
-                        tokio::time::sleep(std::time::Duration::from_millis(50)).await;
-                    }
-                })
-                .await;
+                // Bounded re-await: return with the partial output either way.
+                let _ = wait_for_exit(&mut child, KILL_REAP).await;
             }
         }
         // Drain whatever the kill flushed out (bounded).
@@ -1183,7 +1202,10 @@ pub(super) fn tool_execute(
 
 #[cfg(test)]
 mod tests {
-    use super::{bounded_append, find_prompt_marker, poll_output_chunk, tail_append};
+    use super::{
+        bounded_append, find_prompt_marker, poll_output_chunk, signal_tree, tail_append,
+        wait_for_exit,
+    };
     use crate::plugins::terminal::SessionBuf;
     use crate::plugins::terminal::SessionStore;
     use std::sync::{Arc, Mutex};
@@ -1446,5 +1468,118 @@ mod tests {
         bounded_append(&mut out, &mut truncated, "efgh", 8);
         assert_eq!(out, "abcdefgh");
         assert!(!truncated, "exactly max is not an overflow");
+    }
+
+    // ── kill-tree policy (signal_tree / wait_for_exit) ───────
+    //
+    // These drive REAL processes. They are the only coverage of the round-55
+    // contract ("a timeout kills the tree, not just the shell") — previously
+    // the whole policy was inline in execute_local and untested, with the
+    // Unix and Windows arms never compiled together.
+
+    /// Spawn a local shell exactly like `execute_local` does — same shell,
+    /// same `process_group(0)` on Unix, so the test exercises the real
+    /// group-targeting the kill path depends on.
+    fn spawn_shell(script: &str) -> tokio::process::Child {
+        let (shell, flag) = if cfg!(target_os = "windows") {
+            ("cmd", "/C")
+        } else {
+            ("sh", "-c")
+        };
+        let mut cmd = tokio::process::Command::new(shell);
+        cmd.arg(flag)
+            .arg(script)
+            .stdout(std::process::Stdio::null())
+            .stderr(std::process::Stdio::null());
+        #[cfg(unix)]
+        cmd.process_group(0);
+        cmd.spawn().expect("spawn test shell")
+    }
+
+    #[tokio::test]
+    async fn wait_for_exit_sees_a_finished_child() {
+        // `exit 0` finishes immediately: the helper must report the exit well
+        // inside its patience, not merely time out successfully.
+        let mut child = spawn_shell("exit 0");
+        assert!(
+            wait_for_exit(&mut child, std::time::Duration::from_secs(10)).await,
+            "a finished child must be reported as exited"
+        );
+    }
+
+    #[tokio::test]
+    async fn wait_for_exit_gives_up_on_a_stubborn_child() {
+        // A long sleeper must NOT be reported as exited — that is what makes
+        // the bounded re-await bounded (a D-state group cannot hang the tool).
+        let mut child = spawn_shell("sleep 30");
+        let started = std::time::Instant::now();
+        assert!(
+            !wait_for_exit(&mut child, std::time::Duration::from_millis(400)).await,
+            "a running child must not be reported as exited"
+        );
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(10),
+            "the helper must return at its patience, not the child's lifetime"
+        );
+        let _ = child.kill().await;
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn force_signal_kills_the_whole_group_not_just_the_shell() {
+        // THE round-55 contract. The shell backgrounds a grandchild and waits,
+        // so the direct child dying is NOT proof: the grandchild holds the
+        // pipe. Kill the GROUP and the grandchild must go too.
+        let mut child = spawn_shell("sleep 30 & sleep 30");
+        let pid = child.id().expect("child pid");
+        // Let the background grandchild actually start before signalling.
+        tokio::time::sleep(std::time::Duration::from_millis(300)).await;
+
+        signal_tree(pid, true).await;
+
+        assert!(
+            wait_for_exit(&mut child, std::time::Duration::from_secs(10)).await,
+            "the direct child must die from a group SIGKILL"
+        );
+        // `kill -0 -PID` probes the whole group: it fails only when EVERY
+        // member is gone, which is the actual promise being made here.
+        let group_alive = std::process::Command::new("kill")
+            .args(["-0", "--", &format!("-{pid}")])
+            .output()
+            .map(|o| o.status.success())
+            .unwrap_or(false);
+        assert!(
+            !group_alive,
+            "group {pid} still has live members — the kill did not reach the tree"
+        );
+    }
+
+    #[cfg(unix)]
+    #[tokio::test]
+    async fn graceful_signal_is_enough_for_a_cooperative_tree() {
+        // The graceful arm must be a real SIGTERM (a typo there would leave
+        // the grace window pointless and force every timeout to SIGKILL).
+        let mut child = spawn_shell("sleep 30");
+        let pid = child.id().expect("child pid");
+        tokio::time::sleep(std::time::Duration::from_millis(200)).await;
+
+        signal_tree(pid, false).await;
+
+        assert!(
+            wait_for_exit(&mut child, std::time::Duration::from_secs(10)).await,
+            "SIGTERM must terminate the group"
+        );
+    }
+
+    #[tokio::test]
+    async fn signalling_an_already_dead_pid_is_harmless() {
+        // The kill path is best-effort by design (`let _ =`): a pid that
+        // already exited — or a signal binary that refuses — must never turn
+        // a timeout into a tool error.
+        let mut child = spawn_shell("exit 0");
+        let pid = child.id().expect("child pid");
+        assert!(wait_for_exit(&mut child, std::time::Duration::from_secs(10)).await);
+        signal_tree(pid, false).await;
+        signal_tree(pid, true).await;
     }
 }
