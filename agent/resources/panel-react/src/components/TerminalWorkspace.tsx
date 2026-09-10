@@ -11,6 +11,7 @@ import { TrajectoryView } from "./TrajectoryView";
 import { PathView } from "./PathView";
 import { SessionControl } from "./SessionControl";
 import { ApprovalGate } from "./ApprovalGate";
+import { GoalBar } from "./GoalBar";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
 import type { CommandEvent } from "../hooks/useCommandEvents";
@@ -40,6 +41,8 @@ interface Props {
   onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
+  /** State the session's goal, or clear it with an empty string. */
+  onSetGoal: (sid: string, goal: string) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
   token: string;
@@ -53,7 +56,7 @@ interface Props {
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
-  onSetApproval, onDecideApproval, onRevokeGrants,
+  onSetApproval, onDecideApproval, onRevokeGrants, onSetGoal,
   registerWrite, cmdEvents, token, density, sseState,
   controlledView, onControlledViewChange,
 }: Props) {
@@ -77,6 +80,10 @@ export function TerminalWorkspace({
       <SessionControl
         held={!!activeSession.heldByHuman}
         onSet={(human) => onSetControl(activeSession.sid, human)}
+      />
+      <GoalBar
+        goal={activeSession.goal}
+        onSet={(g) => onSetGoal(activeSession.sid, g)}
       />
       <ApprovalGate
         armed={!!activeSession.approvalRequired}
@@ -147,6 +154,7 @@ export function TerminalWorkspace({
                 events={cmdEvents.events}
                 sessionKind={activeSession?.kind}
                 sessionLabel={activeSession?.label}
+                goal={activeSession?.goal}
               />
             ) : trajOpen && activeSid ? (
               <TrajectoryView key={activeSid} events={cmdEvents.events} />
@@ -191,6 +199,7 @@ export function TerminalWorkspace({
               events={cmdEvents.events}
               sessionKind={activeSession?.kind}
               sessionLabel={activeSession?.label}
+              goal={activeSession?.goal}
             />
           ) : trajOpen && activeSid ? (
             <TrajectoryView key={activeSid} events={cmdEvents.events} />

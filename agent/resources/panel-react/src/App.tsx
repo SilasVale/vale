@@ -192,6 +192,7 @@ export function App() {
     onSetApproval: sessions.setApproval,
     onDecideApproval: sessions.decideApproval,
     onRevokeGrants: sessions.revokeGrants,
+    onSetGoal: sessions.setGoal,
     registerWrite,
     token,
     plugins,

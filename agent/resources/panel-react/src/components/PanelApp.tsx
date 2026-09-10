@@ -32,6 +32,8 @@ interface Props {
   onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
+  /** State the session's goal, or clear it with an empty string. */
+  onSetGoal: (sid: string, goal: string) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   status: string;
@@ -97,6 +99,7 @@ export function PanelApp(props: Props) {
                 onSetApproval={props.onSetApproval}
                 onDecideApproval={props.onDecideApproval}
                 onRevokeGrants={props.onRevokeGrants}
+                onSetGoal={props.onSetGoal}
                 registerWrite={props.registerWrite}
                 cmdEvents={props.cmdEvents}
                 token={props.token}

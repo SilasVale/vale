@@ -13,6 +13,14 @@ import { callApi, callTool } from "../lib/api";
 /** Grants arrive as a plain array of first words. Anything that is not a
  *  non-empty string is dropped rather than rendered: the UI must never show a
  *  grant it could not revoke by the same string. */
+/** A goal is a non-empty string or nothing. An empty or whitespace-only value
+ *  from the server would render as a blank objective, which is worse than no
+ *  objective: it looks like one was set. */
+function mapGoal(s: any): string | null {
+  const g = s?.goal;
+  return typeof g === "string" && g.trim().length > 0 ? g : null;
+}
+
 function mapGrants(s: any): string[] {
   const g = s?.approval_grants;
   if (!Array.isArray(g)) return [];
@@ -52,6 +60,10 @@ export interface Session {
    *  the operator approved, so the panel's job is to SHOW them: a grant nobody
    *  can see is one nobody can judge or revoke, and these decide what runs. */
   approvalGrants: string[];
+  /** What the operator asked this session to achieve, if they said. Server-owned:
+   *  the goal is the anchor a run is judged against, so the panel must show the
+   *  stored value rather than whatever was last typed. */
+  goal: string | null;
 }
 
 interface SessionRuntime {
@@ -117,7 +129,7 @@ export function useSessions(connected: boolean) {
             if (!existing) {
               next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
-                approvalGrants: mapGrants(s) });
+                approvalGrants: mapGrants(s), goal: mapGoal(s) });
             } else if (existing.closed) {
               // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
               // whose sid reappears live. A fast AI session (open → one
@@ -127,13 +139,14 @@ export function useSessions(connected: boolean) {
               // reappearance means the session is real: un-tombstone it.
               const revived = { ...existing, closed: false, closedAt: null,
                 heldByHuman: !!s.held_by_human, approvalRequired: !!s.approval_required,
-                pendingApproval: mapPending(s), approvalGrants: mapGrants(s) };
+                pendingApproval: mapPending(s), approvalGrants: mapGrants(s), goal: mapGoal(s) };
               next[next.indexOf(existing)] = revived;
             } else if (
               existing.heldByHuman !== !!s.held_by_human ||
               existing.approvalRequired !== !!s.approval_required ||
               existing.pendingApproval?.id !== mapPending(s)?.id
               || existing.approvalGrants.join("\u0000") !== mapGrants(s).join("\u0000")
+              || existing.goal !== mapGoal(s)
             ) {
               // The hold is server-owned and can change WITHOUT a sessions-changed
               // event (this panel's own control button, or another client).
@@ -146,6 +159,7 @@ export function useSessions(connected: boolean) {
                 approvalRequired: !!s.approval_required,
                 pendingApproval: mapPending(s),
                 approvalGrants: mapGrants(s),
+                goal: mapGoal(s),
               };
             }
           }
@@ -210,7 +224,7 @@ export function useSessions(connected: boolean) {
           for (const s of missing) {
             next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
-                approvalGrants: mapGrants(s) });
+                approvalGrants: mapGrants(s), goal: mapGoal(s) });
           }
           if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
             const liveTail = next.filter((x) => !x.closed);
@@ -272,7 +286,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [] }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null }];
       });
       setActiveSid(sid);
       return sid;
@@ -460,6 +474,27 @@ export function useSessions(connected: boolean) {
     }
   }, []);
 
+  /** State the session's goal, or clear it with an empty string.
+   *
+   *  The SERVER's stored value is what lands in state, so a goal that was trimmed
+   *  or capped comes back as what is actually in force rather than as what was
+   *  typed. */
+  const setGoal = useCallback(async (sid: string, goal: string) => {
+    try {
+      const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/control`, {
+        method: "POST",
+        body: JSON.stringify({ goal }),
+      });
+      const stored = typeof r?.goal === "string" && r.goal.trim() ? r.goal : null;
+      setSessions((prev) => prev.map((s) => (s.sid === sid ? { ...s, goal: stored } : s)));
+      setStatusState(stored ? "goal set" : "goal cleared");
+      return stored;
+    } catch (e: any) {
+      setStatusState(`goal failed: ${e?.message ?? e}`);
+      throw e;
+    }
+  }, []);
+
   /** Revoke one grant, or all of them. The SERVER's list is the answer, so a
    *  revoke that did not land cannot leave the panel showing it as gone. */
   const revokeGrants = useCallback(async (sid: string, grant?: string) => {
@@ -482,5 +517,5 @@ export function useSessions(connected: boolean) {
     }
   }, []);
 
-  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl, setApproval, decideApproval, revokeGrants };
+  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl, setApproval, decideApproval, revokeGrants, setGoal };
 }

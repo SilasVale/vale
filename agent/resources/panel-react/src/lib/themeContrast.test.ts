@@ -203,6 +203,11 @@ describe("recessed content surfaces", () => {
       // Measured before: --muted 4.31 and --faint 2.33 on the chip surface.
       ['.approval-grant code', "--chrome-ink-dim"],
       ['.approval-grant-x', "--chrome-ink-dim"],
+      // The goal bar: the invitation must be readable enough to take, and the
+      // primary Save carries white text (which is why it uses --accent-solid —
+      // the brand orange gives white only 4.30).
+      ['.path-goal-label', "--accent-on-soft"],
+      ['.path-goal-text', "--accent-on-soft"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);
@@ -216,8 +221,15 @@ describe("recessed content surfaces", () => {
     // Every readable-text token must exist in BOTH blocks: a :root-only
     // declaration freezes against the light value (the computed-value trap the
     // other tests in this file document).
+    // White-on-solid buttons need a background dark enough to carry white text.
+    // Both measured 4.30 with their plain counterpart, under AA at button size.
+    const save = blockOf(css, ".goal-save");
+    expect(save, "the primary goal action must use --accent-solid for white text")
+      .toContain("var(--accent-solid)");
+    expect(save).not.toMatch(/background:\s*var\(--accent\)/);
+
     const dark = blockOf(css, 'body[data-theme="dark"]');
-    for (const t of ["--success-text", "--danger-on-soft", "--warn-ink"]) {
+    for (const t of ["--success-text", "--danger-on-soft", "--warn-ink", "--accent-solid"]) {
       expect(blockOf(css, ":root"), `:root must define ${t}`).toContain(`${t}:`);
       expect(dark, `dark must restate ${t}`).toContain(`${t}:`);
     }

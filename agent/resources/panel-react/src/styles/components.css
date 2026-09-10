@@ -365,6 +365,103 @@
               background var(--ds-transition-duration-fast) var(--ds-ease-in-out);
 }
 .view-switch-btn:hover { color: var(--chrome-ink); }
+/* ── Goal bar (design beat 1, dispatch) ──
+   The operator's statement of what the session is FOR. Quiet when unset (most
+   sessions are someone poking at a shell, and an unset goal must not nag) and
+   prominent when set, because it is then the most important context about the
+   session. */
+#goal-bar {
+  display: inline-flex;
+  align-items: center;
+  gap: 7px;
+  max-width: 460px;
+  padding: 5px 11px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface);
+  font: 600 11px var(--font);
+  line-height: 1;
+  cursor: pointer;
+  color: var(--chrome-ink-dim);
+  text-align: left;
+}
+/* --chrome-ink-dim, not --faint: this is an INVITATION, and --faint measured 2.56
+   here — an affordance nobody can read is one nobody takes. */
+#goal-bar.no-goal { border-style: dashed; color: var(--chrome-ink-dim); }
+#goal-bar.no-goal:hover { color: var(--chrome-ink-dim); border-color: var(--faint); }
+#goal-bar.has-goal {
+  border-color: var(--accent);
+  background: var(--accent-soft);
+  color: var(--accent-on-soft);
+}
+.goal-label {
+  flex: none;
+  font-size: 9.5px;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  opacity: 0.85;
+}
+/* The objective is the payload: wrap rather than ellipsise. A goal truncated to
+   "provision the ONU on VL…" is not something anyone can act on. */
+.goal-text {
+  flex: 1;
+  min-width: 0;
+  font-weight: 600;
+  white-space: normal;
+  overflow-wrap: anywhere;
+}
+#goal-bar.editing { cursor: default; padding: 3px 4px 3px 10px; gap: 5px; }
+.goal-input {
+  flex: 1;
+  min-width: 180px;
+  border: none;
+  background: none;
+  outline: none;
+  font: 12px var(--font);
+  color: var(--ink);
+  padding: 3px 2px;
+}
+.goal-save, .goal-clear {
+  flex: none;
+  font: 600 11px var(--font);
+  padding: 3px 9px;
+  border-radius: 999px;
+  cursor: pointer;
+  border: 1px solid var(--line-strong);
+  background: var(--surface);
+  color: var(--muted);
+}
+/* White on --accent-solid, not on --accent: the brand orange gives white text
+   4.30, under AA at this size, and this is the primary action. */
+.goal-save { background: var(--accent-solid); border-color: var(--accent-solid); color: #fff; }
+.goal-save:disabled, .goal-clear:disabled { opacity: 0.5; cursor: default; }
+.goal-clear:hover:not(:disabled) { color: var(--danger-on-soft); border-color: var(--danger); }
+
+/* The goal in the PATH header — beside the summary, never as a verdict. */
+.path-goal {
+  flex: none;
+  display: flex;
+  align-items: baseline;
+  gap: 8px;
+  padding: 7px 14px;
+  border-bottom: 1px solid var(--line);
+  background: var(--accent-soft);
+}
+.path-goal-label {
+  flex: none;
+  font-size: 9.5px;
+  font-weight: 650;
+  letter-spacing: 0.06em;
+  text-transform: uppercase;
+  color: var(--accent-on-soft);
+}
+.path-goal-text {
+  font-size: 12px;
+  font-weight: 600;
+  color: var(--accent-on-soft);
+  overflow-wrap: anywhere;
+}
+
 /* ── Approval gate (design beat 3) ──
    Two shapes: a quiet arm toggle, and the prompt itself. The prompt is the only
    element in this panel that asks the operator to AUTHORISE something, so it is

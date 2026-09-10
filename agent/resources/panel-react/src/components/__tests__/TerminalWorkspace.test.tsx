@@ -24,7 +24,7 @@ const session = (over: Partial<Session & { active: boolean }> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], ...over,
+  pendingApproval: null, approvalGrants: [], goal: null, ...over,
 });
 
 const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {}) => ({
@@ -38,6 +38,7 @@ const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {
   onSetApproval: vi.fn(() => Promise.resolve(false)),
   onDecideApproval: vi.fn(() => Promise.resolve(true)),
   onRevokeGrants: vi.fn(() => Promise.resolve([])),
+  onSetGoal: vi.fn(() => Promise.resolve(null)),
   registerWrite: vi.fn(() => Object.assign(vi.fn(), {})),
   cmdEvents: { cards: [], events: [] },
   token: "tok",

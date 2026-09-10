@@ -40,7 +40,7 @@ export function summaryDuration(s: PathSummary): string {
   return s.untimed > 0 ? `at least ${base}` : base;
 }
 
-export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
+export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal }: {
   events: CommandEvent[];
   /** Select a step — the caller scrolls/highlights it in the timeline. */
   onJumpToStep?: (step: PathStep) => void;
@@ -48,6 +48,11 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
    *  were run against. */
   sessionKind?: string;
   sessionLabel?: string;
+  /** What the operator asked for, if they said. Shown BESIDE the outcome, never
+   *  turned into a verdict: the agent cannot know whether an objective was met,
+   *  and inferring it from a command stream is the confident guess this design
+   *  keeps refusing to make. */
+  goal?: string | null;
 }) {
   const rounds = useTrajectory(events);
   const path = useMemo(() => derivePath(rounds, events), [rounds, events]);
@@ -109,6 +114,12 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel }: {
 
   return (
     <div className="path-view">
+      {goal && (
+        <div className="path-goal" title="What this session was asked to achieve">
+          <span className="path-goal-label">Goal</span>
+          <span className="path-goal-text">{goal}</span>
+        </div>
+      )}
       <header className="path-summary">
         <div className="path-summary-main">
           <span className="path-summary-n">{summary.steps}</span>

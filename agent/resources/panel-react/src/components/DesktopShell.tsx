@@ -40,6 +40,8 @@ interface Props {
   onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
+  /** State the session's goal, or clear it with an empty string. */
+  onSetGoal: (sid: string, goal: string) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser", target?: string, extra?: Record<string, unknown>) => void;
   onConnConnect: (kind: "ssh" | "serial", target: string, extra: Record<string, unknown>) => Promise<unknown>;
@@ -62,7 +64,7 @@ const PAGE_TITLES: Record<Page, string> = {
 
 export function DesktopShell({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
-  onSetApproval, onDecideApproval, onRevokeGrants,
+  onSetApproval, onDecideApproval, onRevokeGrants, onSetGoal,
   registerWrite, onNewSession, onConnConnect, connModal, onConnClose,
   status, sseState, token, plugins, cmdEvents,
 }: Props) {
@@ -271,6 +273,7 @@ export function DesktopShell({
                 onSetApproval={onSetApproval}
                 onDecideApproval={onDecideApproval}
                 onRevokeGrants={onRevokeGrants}
+                onSetGoal={onSetGoal}
                 registerWrite={registerWrite}
                 cmdEvents={cmdEvents}
                 token={token}

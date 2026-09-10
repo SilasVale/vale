@@ -21,7 +21,7 @@ const session = (over: Record<string, unknown> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], ...over,
+  pendingApproval: null, approvalGrants: [], goal: null, ...over,
 });
 
 const registerWrite = vi.fn(() => () => {});
