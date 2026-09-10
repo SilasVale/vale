@@ -1,5 +1,6 @@
 import { useEffect, useRef, useState } from "react";
 import type { CommandCard as CardData } from "../hooks/useCommandEvents";
+import { copyText } from "../lib/clipboard";
 import { Icon } from "../ui/Icon";
 
 // dsh ToolCallTree-style command card (round-admin-ui Task 4): StateDot +
@@ -36,25 +37,6 @@ export function cardState(card: CardData): { state: "running" | "ok" | "fail" | 
     case "closed": return { state: "muted", label: "Closed", compact: "closed" };
     default: return { state: "muted", label: card.reason || "Ended", compact: card.reason || "ended" };
   }
-}
-
-/** Copy with a clipboard-API fallback (the LAN panel may not be a secure
- *  context, where navigator.clipboard is undefined). */
-function copyText(text: string): Promise<void> {
-  if (navigator.clipboard?.writeText) {
-    return navigator.clipboard.writeText(text).catch(() => {});
-  }
-  return new Promise((resolve) => {
-    const ta = document.createElement("textarea");
-    ta.value = text;
-    ta.style.position = "fixed";
-    ta.style.opacity = "0";
-    document.body.appendChild(ta);
-    ta.select();
-    try { document.execCommand("copy"); } catch {}
-    ta.remove();
-    resolve();
-  });
 }
 
 export function CopyButton({ text, title = "Copy output" }: { text: string; title?: string }) {

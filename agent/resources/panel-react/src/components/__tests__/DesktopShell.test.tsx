@@ -8,7 +8,10 @@ import { Shell } from "../Shell";
 import type { Session } from "../../hooks/useSessions";
 import { callApi } from "../../lib/api";
 
-vi.mock("../../lib/api", () => ({
+// Partial mock via importOriginal — see the note in SettingsPage.test.tsx: a
+// factory listing only the used exports breaks when a new consumer appears.
+vi.mock("../../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/api")>()),
   callApi: vi.fn(() => Promise.resolve({})),
   callTool: vi.fn(() => Promise.resolve({})),
 }));

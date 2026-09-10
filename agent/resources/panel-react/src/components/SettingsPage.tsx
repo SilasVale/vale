@@ -1,10 +1,12 @@
 import { useEffect, useState } from "react";
 import { callApi } from "../lib/api";
+import { ConnectCard } from "./ConnectCard";
 
 // SettingsPage — device settings as a first-class page (both densities).
-// Cards: Session buffer, Gateway (optional cloud config — register the device
-// with a gateway console + optional free cloudflared tunnel), Memory,
-// Terminal, Transport.
+// Cards: Connect an AI client (onboarding — first, because nothing else on this
+// page matters until a client is pointed here), Session buffer, Gateway
+// (optional cloud config — register the device with a gateway console +
+// optional free cloudflared tunnel), Memory, Terminal, Transport.
 export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
   const [bufferMb, setBufferMb] = useState("8");
   const [status, setStatus] = useState("");
@@ -169,6 +171,12 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
     <div className="desktop-settings">
       <h2>Settings</h2>
       <p className="muted">Device: local agent on 127.0.0.1:18080</p>
+
+      {/* Onboarding FIRST. Until an AI client is pointed here, none of the rest
+          of this page matters — the measured gap this card closes was that a
+          new user's first screen was a terminal and the product's promise was
+          invisible. See docs/adr/proposal-game-design.md §4. */}
+      <ConnectCard />
 
       <div className="settings-section">
         <h3>Gateway</h3>

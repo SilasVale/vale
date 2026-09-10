@@ -6,7 +6,14 @@ import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { SettingsPage } from "../SettingsPage";
 import { callApi } from "../../lib/api";
 
-vi.mock("../../lib/api", () => ({
+// Partial mock via importOriginal, NOT a hand-written factory. A factory that
+// lists only the exports a test happens to use breaks the moment a NEW
+// component under SettingsPage reaches for another export — which is exactly
+// what happened when ConnectCard began reading getHost/getToken: three
+// unrelated memory-card tests failed with "No getHost export is defined on the
+// mock". Spreading the real module keeps the mock correct by construction.
+vi.mock("../../lib/api", async (importOriginal) => ({
+  ...(await importOriginal<typeof import("../../lib/api")>()),
   callApi: vi.fn(),
 }));
 const mockCallApi = callApi as unknown as ReturnType<typeof vi.fn>;

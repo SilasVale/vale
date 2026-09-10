@@ -1923,6 +1923,55 @@ code {
 .settings-row { margin-top: 8px; }
 .settings-status { margin-top: 8px; }
 
+/* ── Connect an AI client (onboarding card) ──
+   The first thing on the Settings page and, for a new install, the only card
+   whose content the user cannot get anywhere else. Styled with the same
+   restrained vocabulary as the rest of this sheet: no new colours, no
+   decoration — the tool counts and the snippet carry the weight. */
+.connect-lede { margin: 0 0 10px; font-size: 12.5px; color: var(--muted); line-height: 1.55; }
+.connect-lede b { color: var(--ink); }
+.connect-muted { margin: 6px 0 0; font-size: 12px; color: var(--faint); }
+.connect-total { font-size: 13px; color: var(--muted); margin-bottom: 7px; }
+.connect-total b { font-size: 16px; color: var(--ink); font-weight: 650; }
+.connect-families { list-style: none; margin: 0; padding: 0; }
+.connect-families li {
+  display: flex; align-items: baseline; gap: 8px;
+  padding: 4px 0; font-size: 12.5px;
+}
+.connect-fam-label { flex: none; width: 84px; color: var(--ink); font-weight: 600; }
+.connect-fam-n {
+  flex: none; min-width: 24px; text-align: right;
+  font: 600 12px var(--font-mono); color: var(--accent-ink);
+}
+.connect-fam-blurb { color: var(--muted); }
+.connect-tabs { display: flex; gap: 5px; margin-bottom: 9px; flex-wrap: wrap; }
+.connect-tab {
+  font-size: 12px; padding: 4px 11px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line); background: var(--surface); color: var(--muted);
+}
+.connect-tab:hover { border-color: var(--faint); color: var(--ink); }
+.connect-tab.on { background: var(--ink); border-color: var(--ink); color: var(--surface); }
+.connect-where { margin: 0 0 7px; font-size: 12px; color: var(--faint); }
+.connect-snippet {
+  margin: 0; padding: 10px 12px; border: 1px solid var(--line);
+  border-radius: 10px; background: var(--surface-recessed);
+  font: 11.5px/1.6 var(--font-mono); color: var(--ink);
+  white-space: pre-wrap; word-break: break-all; max-height: 190px; overflow: auto;
+}
+.connect-actions { margin-top: 9px; }
+.connect-actions button {
+  font-size: 12px; padding: 5px 11px; border-radius: 8px; cursor: pointer;
+  border: 1px solid var(--line-strong); background: var(--surface); color: var(--muted);
+}
+.connect-actions button:hover:not(:disabled) { color: var(--ink); border-color: var(--faint); }
+.connect-actions button:disabled { opacity: .5; cursor: default; }
+.connect-probe { margin: 8px 0 0; font-size: 12.5px; font-weight: 600; }
+/* The two probe outcomes reuse the status tokens rather than raw colours, so
+   they follow the theme like every other state in this sheet. */
+.connect-probe.ok { color: var(--success); }
+.connect-probe.fail { color: var(--danger); }
+.connect-foot { margin-top: 9px; }
+
 
 
 /* ── Browser evidence empty state (token color; no inline styles) ── */
