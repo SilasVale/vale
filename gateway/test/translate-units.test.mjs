@@ -123,14 +123,28 @@ test("checkRateLimit: 48/minute per token, then 429 (fresh token, no sleeps)", a
   assert.equal(checkRateLimit(kv, "POST", "/v1/messages", "r27-min-other"), null, "other token unaffected");
 });
 
-test("checkRateLimit: 4096-bucket cap evicts oldest (isolation across tokens)", async () => {
+test("checkRateLimit: 4096-bucket cap evicts oldest, retains newest (both sides)", async () => {
+  // SOLID Round-49: pinning ONLY the evicted side is vacuous — a recount
+  // from 0 looks identical to a first sight with or without the cap. The
+  // distinguishing case is a HIGH-count bucket old enough to be evicted:
+  // with the cap it recounts (null); without it stays blocked (429).
   const kv = { KEYS: {} };
-  for (let i = 0; i < 4097; i++) {
-    checkRateLimit(kv, "POST", "/v1/messages", `r27-cap-${i}`);
+  for (let i = 0; i < 48; i++) {
+    checkRateLimit(kv, "POST", "/v1/messages", "r49-old");
   }
+  for (let i = 0; i < 4097; i++) {
+    checkRateLimit(kv, "POST", "/v1/messages", `r49-fill-${i}`);
+  }
+  // 4098 distinct buckets > 4096 cap → r49-old (oldest) evicted.
   assert.equal(
-    checkRateLimit(kv, "POST", "/v1/messages", "r27-cap-0"),
+    checkRateLimit(kv, "POST", "/v1/messages", "r49-old"),
     null,
-    "evicted oldest recounts from 0",
+    "evicted high-count bucket recounts from 0 (cap works)",
   );
+  for (let i = 0; i < 48; i++) {
+    checkRateLimit(kv, "POST", "/v1/messages", "r49-new");
+  }
+  const retained = checkRateLimit(kv, "POST", "/v1/messages", "r49-new");
+  assert.ok(retained instanceof Response, "newest high-count bucket still blocked");
+  assert.equal(retained.status, 429);
 });
