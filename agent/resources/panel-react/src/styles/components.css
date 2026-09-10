@@ -460,6 +460,57 @@
 }
 .approval-refuse:hover:not(:disabled) { color: var(--danger); border-color: var(--danger); }
 .approval-note { margin: 0; font-size: 11px; color: var(--warn-ink); }
+/* "Always allow <word>" — the grant action. Carries the WORD it will cover in
+   its own label, so the operator consents to a breadth they can read rather than
+   to "remember this" in the abstract. */
+.approval-remember {
+  font-weight: 600;
+  margin-left: auto;
+}
+.approval-remember b {
+  font-family: var(--font-mono);
+  font-weight: 700;
+}
+.approval-remember:hover:not(:disabled) { color: var(--accent-on-soft); border-color: var(--accent); }
+
+/* The grants in force, beside the armed toggle. Visible on purpose: these decide
+   what runs unasked, so a grant nobody can see is one nobody can judge. */
+.approval-grants {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+  flex-wrap: wrap;
+}
+.approval-grant {
+  display: inline-flex;
+  align-items: center;
+  gap: 2px;
+  padding: 1px 3px 1px 7px;
+  border-radius: 999px;
+  border: 1px solid var(--line);
+  background: var(--surface-chip);
+}
+/* --chrome-ink-dim, not --muted: this word is WHAT RUNS UNSKED, and --muted on
+   the chip surface measured 4.31 in light — under AA for an 11px mono label. */
+.approval-grant code {
+  font: 11px var(--font-mono);
+  color: var(--chrome-ink-dim);
+}
+/* The revoke control is an ACTION, not decoration: it takes a permission away.
+   --faint measured 2.33 here, which made the one thing that can undo a grant the
+   least visible thing on the row. */
+.approval-grant-x {
+  border: none;
+  background: none;
+  cursor: pointer;
+  font: 600 12px var(--font);
+  line-height: 1;
+  padding: 2px 4px;
+  border-radius: 999px;
+  color: var(--chrome-ink-dim);
+}
+.approval-grant-x:hover:not(:disabled) { color: var(--danger-on-soft); }
+.approval-grant-x:disabled { opacity: 0.5; cursor: default; }
 .approval-note b { font-weight: 700; }
 
 /* ── Session control handoff (agent §D5) ──

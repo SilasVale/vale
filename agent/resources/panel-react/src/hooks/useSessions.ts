@@ -10,6 +10,15 @@ import { callApi, callTool } from "../lib/api";
  *  uses. One helper because THREE call sites need it (first sight, revive,
  *  refresh) and three hand-written mappings would drift — the panel would then
  *  show a prompt for a command the agent had already released. */
+/** Grants arrive as a plain array of first words. Anything that is not a
+ *  non-empty string is dropped rather than rendered: the UI must never show a
+ *  grant it could not revoke by the same string. */
+function mapGrants(s: any): string[] {
+  const g = s?.approval_grants;
+  if (!Array.isArray(g)) return [];
+  return g.filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
+}
+
 function mapPending(s: any): Session["pendingApproval"] {
   const p = s?.pending_approval;
   if (!p || typeof p.id !== "string") return null;
@@ -39,6 +48,10 @@ export interface Session {
    *  decision is actually being waited for — the agent clears it on every exit
    *  path, so a rendered prompt is always a live question. */
   pendingApproval: { id: string; command: string; expiresInMs: number } | null;
+  /** First words allowed without asking. Server-owned and derived from commands
+   *  the operator approved, so the panel's job is to SHOW them: a grant nobody
+   *  can see is one nobody can judge or revoke, and these decide what runs. */
+  approvalGrants: string[];
 }
 
 interface SessionRuntime {
@@ -103,7 +116,8 @@ export function useSessions(connected: boolean) {
             const existing = next.find((x) => x.sid === s.id);
             if (!existing) {
               next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
-                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s) });
+                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
+                approvalGrants: mapGrants(s) });
             } else if (existing.closed) {
               // round-245 (terminal-display audit HIGH-1): REVIVE a tombstone
               // whose sid reappears live. A fast AI session (open → one
@@ -113,12 +127,13 @@ export function useSessions(connected: boolean) {
               // reappearance means the session is real: un-tombstone it.
               const revived = { ...existing, closed: false, closedAt: null,
                 heldByHuman: !!s.held_by_human, approvalRequired: !!s.approval_required,
-                pendingApproval: mapPending(s) };
+                pendingApproval: mapPending(s), approvalGrants: mapGrants(s) };
               next[next.indexOf(existing)] = revived;
             } else if (
               existing.heldByHuman !== !!s.held_by_human ||
               existing.approvalRequired !== !!s.approval_required ||
               existing.pendingApproval?.id !== mapPending(s)?.id
+              || existing.approvalGrants.join("\u0000") !== mapGrants(s).join("\u0000")
             ) {
               // The hold is server-owned and can change WITHOUT a sessions-changed
               // event (this panel's own control button, or another client).
@@ -130,6 +145,7 @@ export function useSessions(connected: boolean) {
                 heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required,
                 pendingApproval: mapPending(s),
+                approvalGrants: mapGrants(s),
               };
             }
           }
@@ -193,7 +209,8 @@ export function useSessions(connected: boolean) {
           const next = [...prev];
           for (const s of missing) {
             next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
-                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s) });
+                approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
+                approvalGrants: mapGrants(s) });
           }
           if (!prev.some((x) => x.active) && next.some((x) => !x.closed && x.active === false)) {
             const liveTail = next.filter((x) => !x.closed);
@@ -255,7 +272,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [] }];
       });
       setActiveSid(sid);
       return sid;
@@ -410,17 +427,32 @@ export function useSessions(connected: boolean) {
    *  `decided: false` means there was nothing left to decide — the agent gave up
    *  or another client answered first. That is NOT success, so the status says
    *  so rather than leaving the operator believing their click landed. */
-  const decideApproval = useCallback(async (sid: string, id: string, approve: boolean) => {
+  const decideApproval = useCallback(async (
+    sid: string,
+    id: string,
+    approve: boolean,
+    grant = false,
+  ) => {
     try {
       const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/approval`, {
         method: "POST",
-        body: JSON.stringify({ id, approve }),
+        body: JSON.stringify({ id, approve, grant }),
       });
       if (!r?.decided) {
         setStatusState("that request was already resolved");
         return false;
       }
-      setStatusState(approve ? "approved" : "refused");
+      // Grants come back on the decision's own response, so the list updates
+      // immediately rather than one poll later.
+      if (Array.isArray(r?.approval_grants)) {
+        const g: string[] = r.approval_grants;
+        setSessions((prev) =>
+          prev.map((s) => (s.sid === sid ? { ...s, approvalGrants: g } : s)),
+        );
+      }
+      setStatusState(
+        approve ? (grant ? "approved, and remembered" : "approved") : "refused",
+      );
       return true;
     } catch (e: any) {
       setStatusState(`decision failed: ${e?.message ?? e}`);
@@ -428,5 +460,27 @@ export function useSessions(connected: boolean) {
     }
   }, []);
 
-  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl, setApproval, decideApproval };
+  /** Revoke one grant, or all of them. The SERVER's list is the answer, so a
+   *  revoke that did not land cannot leave the panel showing it as gone. */
+  const revokeGrants = useCallback(async (sid: string, grant?: string) => {
+    try {
+      const r = await callApi(`/api/sessions/${encodeURIComponent(sid)}/grants`, {
+        method: "POST",
+        body: JSON.stringify(grant === undefined ? { all: true } : { grant }),
+      });
+      const g: string[] = Array.isArray(r?.approval_grants) ? r.approval_grants : [];
+      setSessions((prev) =>
+        prev.map((s) => (s.sid === sid ? { ...s, approvalGrants: g } : s)),
+      );
+      setStatusState(
+        grant === undefined ? "all allowances revoked" : `no longer allowing ${grant}`,
+      );
+      return g;
+    } catch (e: any) {
+      setStatusState(`revoke failed: ${e?.message ?? e}`);
+      throw e;
+    }
+  }, []);
+
+  return { sessions, activeSid, status, setStatus, openSession, closeSession, activate, exportSession, runtimes, setControl, setApproval, decideApproval, revokeGrants };
 }

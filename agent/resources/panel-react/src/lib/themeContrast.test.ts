@@ -198,6 +198,11 @@ describe("recessed content surfaces", () => {
       ['.approval-title', "--warn-ink"],
       ['.approval-left', "--warn-ink"],
       ['.approval-note', "--warn-ink"],
+      // The grant row: the word is WHAT RUNS UNSKED and the x is the only way to
+      // undo it, so neither may be the least readable thing on the line.
+      // Measured before: --muted 4.31 and --faint 2.33 on the chip surface.
+      ['.approval-grant code', "--chrome-ink-dim"],
+      ['.approval-grant-x', "--chrome-ink-dim"],
     ];
     for (const [sel, token] of textSites) {
       const block = blockOf(css, sel);

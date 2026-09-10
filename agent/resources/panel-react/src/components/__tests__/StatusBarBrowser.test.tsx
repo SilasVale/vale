@@ -18,8 +18,7 @@ const sess = (over: Record<string, unknown> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null,
-  ...over,
+  pendingApproval: null, approvalGrants: [], ...over,
 });
 
 afterEach(() => {

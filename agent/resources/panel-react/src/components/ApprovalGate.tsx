@@ -29,11 +29,15 @@ function secondsLeft(expiresInMs: number, elapsedMs: number): number {
   return Math.max(0, Math.ceil((expiresInMs - elapsedMs) / 1000));
 }
 
-export function ApprovalGate({ armed, pending, onArm, onDecide }: {
+export function ApprovalGate({ armed, pending, grants, onArm, onDecide, onRevoke }: {
   armed: boolean;
   pending: PendingApproval | null;
+  /** First words currently allowed without asking. */
+  grants: string[];
   onArm: (required: boolean) => Promise<unknown>;
-  onDecide: (id: string, approve: boolean) => Promise<unknown>;
+  onDecide: (id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
+  /** Revoke one word, or every one when omitted. */
+  onRevoke: (grant?: string) => Promise<unknown>;
 }) {
   const [busy, setBusy] = useState(false);
   const [elapsed, setElapsed] = useState(0);
@@ -80,6 +84,20 @@ export function ApprovalGate({ armed, pending, onArm, onDecide }: {
             disabled={busy}
             onClick={() => void run(() => onDecide(pending.id, true))}
           >Run it</button>
+          {/* The grant names the WORD it will cover, derived from the command
+              above — so the operator consents to a breadth they can read, not to
+              "remember this" in the abstract. Hidden when the command is not a
+              simple one: there would be nothing safe to remember, and offering
+              it would imply otherwise. */}
+          {firstWord(pending.command) && (
+            <button
+              type="button"
+              className="approval-remember"
+              disabled={busy}
+              title={`Allow every "${firstWord(pending.command)}" command in this session without asking again`}
+              onClick={() => void run(() => onDecide(pending.id, true, true))}
+            >Always allow <b>{firstWord(pending.command)}</b></button>
+          )}
           <button
             type="button"
             className="approval-refuse"
@@ -97,6 +115,7 @@ export function ApprovalGate({ armed, pending, onArm, onDecide }: {
   }
 
   return (
+    <>
     <button
       type="button"
       id="approval-arm"
@@ -113,5 +132,39 @@ export function ApprovalGate({ armed, pending, onArm, onDecide }: {
       <span className="ag-dot" data-state={armed ? "armed" : "off"} />
       {armed ? "Asking first" : "Ask before each command"}
     </button>
+    {armed && grants.length > 0 && (
+      <span className="approval-grants" title="These commands run without asking">
+        {grants.map((g) => (
+          <span key={g} className="approval-grant">
+            <code>{g}</code>
+            <button
+              type="button"
+              className="approval-grant-x"
+              disabled={busy}
+              aria-label={`Stop allowing ${g}`}
+              title={`Stop allowing ${g} commands`}
+              onClick={() => void run(() => onRevoke(g))}
+            >×</button>
+          </span>
+        ))}
+      </span>
+    )}
+    </>
   );
+}
+
+/** The word a grant would cover, or null when the command is not a simple one.
+ *
+ *  A CLIENT-SIDE MIRROR of `approval.rs::grant_for`, used only to decide whether
+ *  to OFFER the control and what to label it. The server derives the real grant
+ *  from the stored command, so a divergence here can mislabel a button or hide
+ *  one — it cannot widen a permission. Kept deliberately conservative and in sync
+ *  with the Rust list; the two are cross-checked by a test.
+ */
+const UNSAFE_CHARS = /[;&|\n\r`$<>(){}"'\\*?[\]!#~]/;
+
+export function firstWord(cmd: string): string | null {
+  const t = cmd.trim();
+  if (!t || UNSAFE_CHARS.test(t)) return null;
+  return t.split(/\s+/)[0] || null;
 }

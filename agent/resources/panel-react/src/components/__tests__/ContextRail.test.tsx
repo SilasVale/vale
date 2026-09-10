@@ -21,8 +21,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null,
-  ...over,
+  pendingApproval: null, approvalGrants: [], ...over,
 });
 
 const plugins = (over: Partial<Plugins> = {}): Plugins => ({

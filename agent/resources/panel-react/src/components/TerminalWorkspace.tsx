@@ -37,7 +37,9 @@ interface Props {
   /** Arm/disarm the approval gate for a session. */
   onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
   /** Answer a pending approval request. */
-  onDecideApproval: (sid: string, id: string, approve: boolean) => Promise<unknown>;
+  onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
+  /** Revoke one approval grant, or every one when omitted. */
+  onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
   registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
   token: string;
@@ -51,7 +53,7 @@ interface Props {
 
 export function TerminalWorkspace({
   sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
-  onSetApproval, onDecideApproval,
+  onSetApproval, onDecideApproval, onRevokeGrants,
   registerWrite, cmdEvents, token, density, sseState,
   controlledView, onControlledViewChange,
 }: Props) {
@@ -79,8 +81,12 @@ export function TerminalWorkspace({
       <ApprovalGate
         armed={!!activeSession.approvalRequired}
         pending={activeSession.pendingApproval}
+        grants={activeSession.approvalGrants}
         onArm={(required) => onSetApproval(activeSession.sid, required)}
-        onDecide={(id, approve) => onDecideApproval(activeSession.sid, id, approve)}
+        onDecide={(id, approve, grant) =>
+          onDecideApproval(activeSession.sid, id, approve, grant)
+        }
+        onRevoke={(grant) => onRevokeGrants(activeSession.sid, grant)}
       />
     </>
   ) : null;
