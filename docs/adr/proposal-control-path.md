@@ -1,8 +1,9 @@
 # Proposal: control path — let the operator hold the AI's decision tree
 
 Status: **Proposal (unnumbered draft — not adopted)** ｜ Scope: `agent/` control plane +
-panel path view ｜ Written 2026-09-10 ｜ Prototype:
-`agent/resources/panel-react/prototype/control-path.html` (throwaway)
+panel path view ｜ Written 2026-09-10 ｜ Prototype: branch `prototype/control-path`
+(commit `11d0f977`) — a throwaway single-file demo, deliberately NOT on `main`;
+check it out from that branch, it is a primary source, not production code
 
 ## Goal
 
