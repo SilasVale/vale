@@ -176,11 +176,27 @@ behaviour from it.
 > outcome — `approval_denied` and `approval_timeout` — deliberately distinct, for
 > the same reason `human_in_control` is distinct from `session_busy`.
 >
-> What is NOT built: §D1's capability scopes, and §D2's resumable `pending` /
-> `resume_token` return. Both matter for the same reason — an armed session
-> currently asks about EVERY command, so on a long run the gate is noisy, and a
-> client that gives up at its own timeout cannot resume the question. Those are
-> the next pieces; nothing here contradicts the design below.
+> **§D1 was built DIFFERENTLY, deliberately.** The noise problem it exists to
+> solve is fixed — an approved command family stops asking — but not by risk
+> classification. §D1 proposed approving by read/write/destructive LEVEL, which
+> needs a classifier for arbitrary shell text; this crate has none (measured: zero
+> risk/readonly/destructive logic in the terminal plugin), and inventing one is
+> the wrong trade for a safety gate whose errors are asymmetric — a write
+> misclassified as a read does not ask, and nobody learns the gate was bypassed.
+>
+> What shipped instead derives the allowance from what the operator ACTUALLY SAW
+> AND APPROVED: the first word of the command on screen, offered as "Always allow
+> <word>". Only a SIMPLE command (no shell metacharacter) is grantable or covered,
+> so `display version && rm -rf /` still asks; a grant matches the whole first
+> word; the client sends a boolean, never a prefix; grants die when the gate is
+> disarmed and are revocable one by one. See `agent/src/tools/terminal/approval.rs`.
+>
+> The cost is stated rather than hidden: allowing `git` from `git status` also
+> covers `git push --force`. That is why the UI names the word, lists the grants,
+> and why the feature stays opt-in.
+>
+> What is still NOT built: §D2's resumable `pending` / `resume_token` return. A
+> client that gives up at its own timeout cannot yet resume the question.
 
 Staged so each step is independently useful and the risky part is last.
 

@@ -78,9 +78,12 @@ So the remaining work splits cleanly, and only one half is agent-side:
   * **Dispatch** needs a new agent concept AND, for anything beyond a session
     label, cooperation from AI clients (the intent layer, §P3). It is the one
     beat that cannot be finished here.
-  * **Capability scopes** are agent-side and self-contained. §D1 and §D3 remain
-    the design; they are the next piece if the whole-step gate proves too noisy
-    in real use — which is an empirical question, not a design one.
+  * **Capability scopes** are now BUILT, as approval GRANTS rather than §D1's risk
+    classification: approving a command may also allow its first word for the rest
+    of the session, so a run of `display …` asks once instead of every time. The
+    divergence from §D1 is recorded in `proposal-control-path.md` with the reason —
+    a risk classifier's errors are asymmetric in the dangerous direction, while a
+    grant is derived from a command the operator actually read.
 
 ### 2.1 The structural gap the loop exposes
 
