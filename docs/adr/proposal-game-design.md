@@ -192,12 +192,28 @@ and it is the user's to answer, not the author's to assume.
 |---|---|
 | Six-beat loop, named and measured | **done** (this doc) |
 | Four laws, each with evidence | **done** (this doc) |
-| Law 1 enforced and pinned | **done** — P1, `src/lib/statePalette.test.ts`, mutation-proven |
-| Onboarding (biggest hole) | not started |
-| Unified activity signal | not started |
-| Device mascot | not started |
+| Law 1 enforced and pinned | **done** — `src/lib/statePalette.test.ts`, mutation-proven (3 mutants, each caught) |
+| Onboarding (§4.1, the biggest hole) | **done** — `ConnectCard.tsx`, 8 tests, 3 mutants caught (`91359f85`) |
+| A defect Law 1's fix exposed | **done** — recessed panes were near-white-on-near-white in dark mode, contrast measured **1.12** at 7 pre-existing sites; now 15.71 (`40d06025`, pinned by `themeContrast.test.ts`) |
+| Unified activity signal (§4.2) | not started |
+| Device mascot (§4.3) | not started |
 | Path view (post-hoc record) | prototype only, on branch `prototype/control-path` |
-| Control plane (Law 2's mechanism) | proposal only |
+| Control plane (Law 2's mechanism) | proposal only (`proposal-control-path.md`) |
+
+Two notes on the completed items, both about VERIFICATION rather than code:
+
+1. The dark-mode defect passed a hand-built visual gallery, because that gallery
+   redefined the CSS variables itself instead of using the app's real
+   `body[data-theme="dark"]`. A verification method that supplies its own inputs
+   verifies nothing. It was found only by rendering the real markup under the
+   real selector.
+2. The first fix for it also failed — `--surface-recessed: var(--bg)` declared
+   only in `:root` freezes against the light theme, because custom properties
+   inherit as computed values. Re-measurement caught it (still 1.12); the test
+   now pins the restatement, and removing it fails 2 of 3 assertions.
+
+Both are instances of the same discipline this document argues for: state what
+was MEASURED, and make the pin fail before trusting it.
 
 ## 9. Relationship to other documents
 
