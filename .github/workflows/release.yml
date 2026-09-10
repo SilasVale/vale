@@ -134,6 +134,16 @@ jobs:
           fi
           mkdir -p "$HOME/llvm18"
           tar xf "$TB" -C "$HOME/llvm18" --strip-components=1
+          # This tarball is built for ubuntu-18.04 and links libtinfo.so.5,
+          # which the 24.04 runner does not ship (it has .so.6 only) — clang
+          # dies with "error while loading shared libraries". Supply focal's
+          # ncurses5 library beside it (dpkg-deb -x, no sudo) and export it for
+          # every later step, so CI's clang/lld run against the same sonames the
+          # local release box resolves.
+          curl -fsSL -o /tmp/libtinfo5.deb \
+            http://archive.ubuntu.com/ubuntu/pool/universe/n/ncurses/libtinfo5_6.2-0ubuntu2.1_amd64.deb
+          dpkg-deb -x /tmp/libtinfo5.deb "$HOME/llvm18-compat"
+          echo "LD_LIBRARY_PATH=$HOME/llvm18-compat/lib/x86_64-linux-gnu" >> "$GITHUB_ENV"
           "$HOME/llvm18/bin/clang" --version | head -1
       # cargo-xwin resolves its tools from ~/.cache/cargo-xwin — mirror the
       # local box's layout exactly (clang / lld-link / llvm-rc out of the LLVM
