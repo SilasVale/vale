@@ -694,8 +694,14 @@ const commands = {
       if (fs.existsSync(path.join(pwDir, "node.exe"))) {
         console.log("setup: playwright bundle staged (node.exe + node_modules verified)");
       } else {
-        console.error("setup: FATAL -- playwright bundle expanded but node.exe is STILL missing; browser tools cannot run. Check AV/lock interference and re-run vale setup.");
-        process.exit(1);
+        // NEVER fatal. The browser bundle is an OPTIONAL component, but this
+        // branch hard-failed (exit 1) the whole agent install the moment
+        // 1.2.311 started shipping the zip — its trigger is AV quarantining
+        // playwright\node.exe (documented on d1). Drop the half-staged tree so
+        // the agent cleanly sees "no bundle" and carry on: the agent core
+        // does not need playwright.
+        console.error("setup: WARNING -- playwright bundle staged WITHOUT node.exe (AV/lock interference?); browser tools stay disabled, agent install continues.");
+        try { fs.rmSync(pwDir, { recursive: true, force: true }); } catch { /* best-effort */ }
       }
     } else {
       console.log("setup: vale-playwright.zip not in package (browser tools disabled)");
