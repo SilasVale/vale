@@ -70,17 +70,30 @@ both cases the reason was a conflation rather than a missing capability:
   `terminal_list` — a call every client already makes, carrying fields it already
   parses. No new tool, no protocol change, nothing asked of any client.
 
-The genuinely separate, still-unbuilt piece is the **intent layer**: an AI
-declaring its own plan, per-step intent, and the alternatives it rejected. That is
-what would turn the path view's steps into a real decision tree — and unlike the
-two beats above, it cannot be faked or approximated agent-side, because the data
-does not exist until a client writes it.
+The genuinely separate piece is the **intent layer**, and my previous note about
+it was wrong in the same way the dispatch note was. It said the intent layer
+"cannot be approximated agent-side, because the data does not exist until a client
+writes it". That is true of the DATA and false of the SURFACE — and I had used the
+first to justify not building the second. A willing client had nowhere to put its
+reasoning.
+
+So the surface now exists: `terminal_execute` takes optional `intent` (why this
+command) and `considered` (the alternatives), both recorded on the command's audit
+event, shown on the path, and carried into saved recipes.
+
+What remains is genuinely different in kind, and is now stated so it cannot be
+confused with the above: an AI's own PLAN — the sequence of steps and its
+reasoning about the sequence — as opposed to per-step reasoning supplied at the
+moment each step runs. The path shows what happened, what it was for, and (when
+the client says) why each step and what it passed over. It does not yet show the
+plan as a plan.
 
 ### 2.1 The structural gap the loop exposes
 
 ```
 what the operator means      GOAL      "get this ONU provisioned"   <- now STORED
-what the AI decides          PLAN      <- still exists NOWHERE
+what the AI decides          PLAN      per-step: <- now STORED (intent/considered)
+                                       as a plan: <- still NOWHERE
 what Vale records            TOOL CALL 49 primitives, all of them
 ```
 
@@ -91,10 +104,12 @@ still missing is the middle row — the AI's own PLAN — which is the intent la
 and cannot be approximated agent-side.
 
 **That middle row is what "the path" was always pointing at**, and the honest
-statement of where it stands is: the path view shows what HAPPENED and what it was
-FOR, and cannot yet show what was CONSIDERED. E2's observation still holds —
-`terminal_jobs` proves the job shape is buildable — but the plan is not a shape
-problem; it is data only a client can supply.
+statement of where it stands is now: the path view shows what HAPPENED, what it was
+FOR, and — when the client sends one — WHY each step and what it passed over. What
+it still cannot show is the plan AS a plan: the intended sequence, and the agent's
+reasoning about the sequence rather than about one step. E2's observation still
+holds — `terminal_jobs` proves the job shape is buildable — but a plan is not a
+shape problem; it is data only a client can supply.
 
 ## 3. Four laws (each with its evidence)
 
