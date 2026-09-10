@@ -338,7 +338,28 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-10 SOLID-R102 — the web auth gate is now FAIL-CLOSED
+Last updated: 2026-09-10 SOLID-R103 — the ROUTER layer is now covered.
+  R102 ended by noting an honest gap: its pins call `handle_request`
+  directly, so they say nothing about the axum composition in `mcp::bind`
+  (`nest_service("/mcp", TokenGate) + fallback_service(WebPanel)`) — a
+  routing edit would leave every test green. New
+  `tests/router_auth_integration.rs` drives a REAL server over real HTTP
+  with no rmcp client (the point is routing, not the MCP protocol):
+  `/mcp` must be gated by its Tower layer (missing AND wrong token), the
+  fallback branch must reach the web gate (GET and POST — the old
+  `needs_auth` flag short-circuited GETs), and `/`, `/panel/`, `/desktop/`
+  must keep serving. Both failure directions are mutation-proven: dropping
+  `TokenGate` from the nest fails the /mcp case ("/mcp served without a
+  token"), re-applying R102's broken classification fails the fallback case
+  ("/api/status served without a token through the fallback"). Auditing the
+  ledger for this round also caught a self-accounting error: R102 was
+  recorded as +3 pins but ADDED 2 test functions and MODIFIED one — the row
+  and the cumulative totals are corrected. Agent gates 441 feat-gated / 434
+  default green, clippy -D warnings clean both configs, fmt clean, xwin
+  check OK. Program ledger: docs/solid-program.md.
+  No device rollout this round.
+
+Previous round: 2026-09-10 SOLID-R102 — the web auth gate is now FAIL-CLOSED
   BY CONSTRUCTION. `handle_request` wrapped it in a `needs_auth` flag that
   re-classified routes (`method != GET || path.starts_with("/api") || path ==
   "/mcp"`), but the early returns above already decide exactly which requests
