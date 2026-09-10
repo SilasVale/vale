@@ -2119,6 +2119,7 @@ mod tests {
     #[tokio::test]
     async fn term_sse_streams_output() {
         use http_body_util::BodyExt;
+        let _sse = crate::web::sse::SSE_TEST_LOCK.lock().await;
         let st = state();
         let resp = handle_request(req("GET", "/api/events/term"), st.clone()).await;
         assert_eq!(resp.status(), StatusCode::OK);
@@ -2691,6 +2692,12 @@ mod tests {
     /// every viewer forever after 64 total connections.
     #[tokio::test]
     async fn sse_viewer_cap_holds_and_releases_per_connection() {
+        // This test DRAINS the process-global pool, so it takes the shared lock
+        // every other pool-touching test also takes. Without it the parallel
+        // SSE tests receive 503 — the exact starvation the sse.rs NOTE used to
+        // forbid by banning a drain test outright, which in turn made the cap's
+        // enforcement untestable (and hid the R124 bug).
+        let _sse = crate::web::sse::SSE_TEST_LOCK.lock().await;
         let st = state();
         let max = crate::web::sse::SSE_MAX_CONNECTIONS;
 

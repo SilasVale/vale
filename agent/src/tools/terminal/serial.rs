@@ -306,3 +306,68 @@ impl Drop for SerialBackend {
         }
     }
 }
+
+#[cfg(test)]
+mod tx_tests {
+    use super::*;
+
+    /// The serial TX path, proven to reach the WIRE (SOLID R130).
+    ///
+    /// WHY THIS EXISTS: `serial` had no round-trip coverage at all — the only
+    /// tests were `serial_pool_new` and "list_ports does not panic", neither of
+    /// which proves a byte can leave the device. That gap is why a report of
+    /// "serial can't input" could not be answered from the suite.
+    ///
+    /// It needs a real tty: the test opens `VALE_TEST_SERIAL_PORT` through the
+    /// PRODUCTION path (`SerialBackend::open` → `write_async`, exactly what
+    /// `terminal_write` drives) and the caller verifies the bytes arrive on the
+    /// other end. Skips when the env var is unset, so CI is unaffected.
+    ///
+    /// RUN IT (creates a pty pair, runs this test, checks the master side):
+    ///
+    /// ```text
+    /// python3 - <<'EOF'
+    /// import pty, os, subprocess, threading, time
+    /// m, s = pty.openpty(); sp = os.ttyname(s); got = []
+    /// def rd():
+    ///     os.set_blocking(m, False); end = time.time() + 12
+    ///     while time.time() < end:
+    ///         try:
+    ///             d = os.read(m, 4096)
+    ///             if d:
+    ///                 got.append(d)
+    ///                 if b"TX-PROBE" in b"".join(got): return
+    ///         except BlockingIOError: time.sleep(0.05)
+    /// t = threading.Thread(target=rd); t.start()
+    /// env = dict(os.environ, VALE_TEST_SERIAL_PORT=sp)
+    /// env.pop("CC", None); env.pop("CXX", None)
+    /// subprocess.run(["cargo","test","--features","terminal,keyring","--lib","--",
+    ///                 "serial_tx_reaches_the_wire","--nocapture","--test-threads=1"],
+    ///                cwd="agent", env=env)
+    /// t.join(timeout=3)
+    /// print("WIRE:", b"".join(got))
+    /// EOF
+    /// ```
+    ///
+    /// THE WAIT AT THE END IS LOAD-BEARING, and it is a lesson from writing
+    /// this: the writer is a separate std thread, so a test that writes and
+    /// returns immediately exits the process before the frame is sent — which
+    /// looks exactly like a silently-dropped write. The first version of this
+    /// test "reproduced" a TX bug that did not exist for that reason.
+    #[tokio::test]
+    async fn serial_tx_reaches_the_wire() {
+        let Ok(port) = std::env::var("VALE_TEST_SERIAL_PORT") else {
+            return; // no tty provided — skip (CI)
+        };
+        let pool = std::sync::Arc::new(SerialPool::new(115200, 200));
+        let (tx, _rx) = tokio::sync::mpsc::channel::<TermOutput>(64);
+        let be = SerialBackend::open(pool, &port, None, None, None, false, tx, "tx-probe".into())
+            .await
+            .expect("opening the provided tty must succeed");
+        be.write_async(b"TX-PROBE-12345\n")
+            .await
+            .expect("write_async must accept the frame");
+        // Let the writer thread actually run before the process exits.
+        tokio::time::sleep(std::time::Duration::from_millis(800)).await;
+    }
+}

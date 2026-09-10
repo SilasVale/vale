@@ -32,6 +32,19 @@ async fn send_bounded(tx: &mpsc::Sender<Result<Bytes, Infallible>>, bytes: Bytes
         .unwrap_or(true)
 }
 
+/// Serializes tests that touch the process-global SSE viewer pool.
+///
+/// The counter is GLOBAL, so a test that fills it makes every other test that
+/// opens a stream receive 503 — or panic inside `test_guard()`. The suite
+/// previously avoided this by never draining the pool at all, which also meant
+/// the cap's ENFORCEMENT could not be tested (and R124 found the cap did not
+/// work). A shared lock buys both: the cap test may drain, and the tests that
+/// merely need one slot now WAIT instead of racing.
+///
+/// This is a test-only fixture — production acquires the counter directly.
+#[cfg(test)]
+pub(crate) static SSE_TEST_LOCK: tokio::sync::Mutex<()> = tokio::sync::Mutex::const_new(());
+
 static SSE_CONNECTIONS: AtomicUsize = AtomicUsize::new(0);
 pub(crate) const SSE_MAX_CONNECTIONS: usize = 64;
 pub(crate) struct SseConnectionGuard;
@@ -290,10 +303,12 @@ mod sse_tests {
     //! sends + sender-drop, so no timers are involved (the 30s heartbeat
     //! arm is intentionally untested — it would take 30s).
     //!
-    //! NOTE: SseConnectionGuard tests never drain the 64-slot pool: the
-    //! process-global counter is shared with the parallel endpoint tests
-    //! (term_sse_streams_output holds a real guard) — a drain-to-None test
-    //! would starve them into 503s.
+    //! NOTE: the counter is process-global, so tests that take a slot hold
+    //! SSE_TEST_LOCK. Before R128 the rule was "never drain the pool", because
+    //! a drain starved the parallel endpoint tests into 503s — but that also
+    //! made the cap's ENFORCEMENT untestable, which is how the R124 bug (a cap
+    //! that did not hold) survived. The lock lets the cap test drain while the
+    //! single-slot tests wait.
     use super::*;
 
     async fn body_bytes(resp: Response) -> String {
@@ -312,6 +327,7 @@ mod sse_tests {
 
     #[test]
     fn guard_acquire_release_cycle() {
+        let _sse = SSE_TEST_LOCK.blocking_lock();
         let g = SseConnectionGuard::acquire();
         assert!(g.is_some(), "a free pool must grant a slot");
         drop(g);
@@ -323,6 +339,7 @@ mod sse_tests {
 
     #[test]
     fn guard_two_concurrent_holds_coexist() {
+        let _sse = SSE_TEST_LOCK.blocking_lock();
         let a = SseConnectionGuard::acquire();
         let b = SseConnectionGuard::acquire();
         assert!(a.is_some() && b.is_some(), "two holds must both grant");
@@ -337,6 +354,7 @@ mod sse_tests {
 
     #[tokio::test]
     async fn response_carries_sse_headers() {
+        let _sse = SSE_TEST_LOCK.lock().await;
         let (_tx, rx) = tokio::sync::broadcast::channel::<String>(16);
         let (encode, lagged) = frames();
         let resp = sse_response(rx, encode, lagged, None, test_guard()).await;
@@ -349,6 +367,7 @@ mod sse_tests {
 
     #[tokio::test]
     async fn initial_frame_comes_first_then_close_ends_stream() {
+        let _sse = SSE_TEST_LOCK.lock().await;
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(16);
         let (encode, lagged) = frames();
         let resp = sse_response(
@@ -365,6 +384,7 @@ mod sse_tests {
 
     #[tokio::test]
     async fn live_items_encode_in_fifo_order() {
+        let _sse = SSE_TEST_LOCK.lock().await;
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(16);
         tx.send("a".to_string()).unwrap();
         tx.send("b".to_string()).unwrap();
@@ -376,6 +396,7 @@ mod sse_tests {
 
     #[tokio::test]
     async fn lagged_receiver_gets_lagged_frame() {
+        let _sse = SSE_TEST_LOCK.lock().await;
         // cap-2 channel, 5 sends, zero recvs before handoff: the receiver
         // is lagged by exactly 3 when the pump task takes over.
         let (tx, rx) = tokio::sync::broadcast::channel::<String>(2);
@@ -423,9 +444,11 @@ mod sse_tests {
 
     #[test]
     fn acquire_sse_guard_ok_path_holds_a_slot() {
-        // The Err (503) arm is intentionally unreached: draining the shared
-        // 64-slot pool would starve the parallel endpoint tests (see NOTE
-        // above). This pins the Ok wiring — a granted guard is a real hold.
+        let _sse = SSE_TEST_LOCK.blocking_lock();
+        // Pins the Ok wiring — a granted guard is a real hold. The Err (503)
+        // arm is covered by the cap test in mod.rs, which is allowed to drain
+        // the pool because it holds SSE_TEST_LOCK (see NOTE above); this test
+        // takes the same lock so a concurrent drain cannot fail it.
         let g = acquire_sse_guard();
         assert!(g.is_ok(), "a free pool must grant through the helper");
         drop(g);
