@@ -56,6 +56,9 @@ import {
   VERIFY_PATH,
   museResponsesExit,
   usProxyBase,
+  isResponsesOnlyModel,
+  reasoningMaxRawFor,
+  reasoningMaxParsedFor,
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
@@ -317,7 +320,20 @@ export function oxAlphaReasoningDefault(
   upstreamModel: string,
   body: string,
 ): string {
-  if (routeKind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
+  // TWO gates, deliberately kept separate (SOLID R120):
+  //   * WHICH MODEL is a registry fact — `reasoningMaxRawFor` reads the
+  //     model's own `reasoningMax: "raw"` facet, so the ox-alpha spelling
+  //     lives in MODEL_REGISTRY and not here.
+  //   * WHICH CHANNEL is a routing fact, and stays a kind literal: the
+  //     model facet says "I default reasoning effort"; the route says "I am
+  //     the channel that forwards raw text". Collapsing them would make the
+  //     model record assert something about routing it does not own.
+  // The kind gate is redundant TODAY (or/stealth/ox-alpha is the only "raw"
+  // record and it rides this kind) — pinned as redundant rather than deleted,
+  // because `translate-units.test.mjs` asserts it and because removing it
+  // would be a behaviour change if a second "raw" model ever lands on another
+  // channel.
+  if (reasoningMaxRawFor(upstreamModel) && routeKind === "openrouter") {
     return rawWithOxAlphaReasoningDefault(body);
   }
   return body;
@@ -1028,7 +1044,7 @@ async function handleGatewayImpl(
     // unregistered muse-spark versions must not reach the upstream).
     if (
       !MODELS.some((m) => m.id === model) ||
-      !upstreamModel.startsWith("muse-spark-") ||
+      !isResponsesOnlyModel(upstreamModel) ||
       prefix2 !== "og"
     ) {
       return jsonError(
@@ -1280,7 +1296,7 @@ async function handleGatewayImpl(
   // reasoning param — mirror the or/ rule on this translate path: respect a
   // client-sent reasoning, else default effort=max (2026-08-22). Claude Code's
   // Anthropic `thinking` param is not mapped; the default covers it.
-  if (upstreamModel === "ox-alpha-free" && openaiReq.reasoning === undefined) {
+  if (reasoningMaxParsedFor(upstreamModel) && openaiReq.reasoning === undefined) {
     openaiReq.reasoning = { effort: "max" };
   }
   const translateKey = route.kind === "commandgoat" ? byok.cmd : byok.opencodeGo;
