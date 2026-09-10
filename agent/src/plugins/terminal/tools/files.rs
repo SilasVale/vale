@@ -222,3 +222,54 @@ fn sftp_handler() -> impl vale_agent_core::ToolHandler + 'static {
         }
     }
 }
+
+#[cfg(test)]
+mod tests {
+    //! SOLID Round-99: the SFTP builders had zero dispatch pins — live SSH
+    //! is correctly untestable headless, but two layers precede any
+    //! network: the non-terminal stub (clean error, both configs' paths
+    //! identical) and require_str validation (missing fields reject before
+    //! connect). Unknown ops and op-specific checks need a session — left
+    //! to live devices, explicitly.
+    use super::*;
+    use serde_json::json;
+
+    #[cfg(not(feature = "terminal"))]
+    #[tokio::test]
+    async fn sftp_stub_errors_cleanly_on_both_names() {
+        for name in ["terminal_sftp", "sftp"] {
+            let res = tool_sftp(name)
+                .handler
+                .call(json!({"op": "list", "host": "h", "user": "u", "remote_path": "/"}))
+                .await;
+            assert!(
+                matches!(res, Err(vale_agent_core::DeviceError::Internal { .. })),
+                "{name} stub must error, never panic or hang: {res:?}"
+            );
+        }
+    }
+
+    #[cfg(feature = "terminal")]
+    #[tokio::test]
+    async fn sftp_validation_rejects_before_connect() {
+        // No SSH server exists in CI — these must fail on validation alone
+        // (require_str precedes SshSession::connect in the handler). Full
+        // params would attempt SSH and are NOT exercised headless: the
+        // connect itself is the untestable part, not the validation.
+        for name in ["terminal_sftp", "sftp"] {
+            for params in [
+                json!({}),
+                json!({"host": "h", "user": "u", "remote_path": "/"}),
+                json!({"op": "list", "user": "u", "remote_path": "/"}),
+                json!({"op": "list", "host": "h", "remote_path": "/"}),
+                json!({"op": "list", "host": "h", "user": "u"}),
+            ] {
+                let res = tool_sftp(name).handler.call(params.clone()).await;
+                assert!(
+                    matches!(res, Err(vale_agent_core::DeviceError::InvalidParams { .. })),
+                    "{name} must reject without connecting: {res:?}"
+                );
+            }
+        }
+    }
+}
