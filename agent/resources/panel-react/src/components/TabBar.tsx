@@ -1,6 +1,7 @@
 // react-jsx: no React import needed
 import { useState } from "react";
 import type { Session } from "../hooks/useSessions";
+import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
 import { Icon } from "../ui/Icon";
 
 /** Per-session main-area view (round-admin-ui Task 5): the terminal pane +
@@ -20,13 +21,21 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
   // two-step confirm, copied from the memory_delete pattern (MemoryPage):
   // first click arms ("close?"), second executes. Cancel disarms.
   const [confirmSid, setConfirmSid] = useState<string | null>(null);
+  // Keep the ACTIVE tab on screen: every activation here is programmatic
+  // (close selects a neighbour, the AI opens sessions, a deep link selects),
+  // and none of those scroll the strip — see the hook's header.
+  const tabsRef = useActiveTabVisible(activeSid, sessions.length);
   return (
     <div className="tabrow">
-      <div id="tabs" role="tablist" aria-label="Terminal sessions">
+      <div id="tabs" role="tablist" aria-label="Terminal sessions" ref={tabsRef}>
         {sessions.map((s) => (
           <div
             key={s.sid}
             className={`tab ${s.closed ? "closed" : ""} ${s.sid === activeSid ? "active" : ""}`}
+            // The hook finds the active tab by this attribute rather than by
+            // id: a session id in a selector needs escaping (`:` / `@` are
+            // common) and `CSS.escape` is absent in jsdom.
+            data-active={s.sid === activeSid ? "1" : undefined}
             // round-161: closed tabs are visually dead AND honestly labelled —
             // activation rejects closed sessions (round-113 unmounted their
             // panes), so a click was a silent no-op before.

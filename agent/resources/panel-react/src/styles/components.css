@@ -295,7 +295,15 @@
 }
 .tab-dot[data-kind="ssh"] { background: var(--lane-ds); }
 .tab-dot[data-kind="serial"] { background: var(--lane-or); }
-.tab-name { white-space: nowrap; }
+/* Capped like .dtab-name (R131). This one had NO limit at all, so a single
+   session named after a long path could push every other tab out of reach —
+   the panel's strip scrolled, but one tab could occupy the whole row. */
+.tab-name {
+  white-space: nowrap;
+  max-width: 112px;
+  overflow: hidden;
+  text-overflow: ellipsis;
+}
 .tab-export, .tab-close {
   margin-left: 5px;
   font-size: 11px;

@@ -99,7 +99,15 @@
 .dtab-dot[data-kind="ssh"] { background: var(--lane-ds, #4f6bed); }
 .dtab-dot[data-kind="serial"] { background: var(--lane-or, #d97706); }
 .dtab-name {
-  max-width: 150px;
+  /* 112px, not 150px (R131). Measured budget: a 1840px window leaves ~1412px
+     for the strip and a tab costs (name + dot + gaps + padding + close), so
+     150px fitted ~6 tabs and the seventh was already clipped — the reported
+     "tabs fill the row and push the content away". 112px still fits a session
+     label's meaningful part (shell names, user@host, serial:port) and lifts the
+     count to ~8, while the strip keeps scrolling for the rest. The ellipsis is
+     what makes the cap safe: a long label degrades to a readable prefix
+     instead of widening the tab. */
+  max-width: 112px;
   overflow: hidden;
   text-overflow: ellipsis;
   white-space: nowrap;

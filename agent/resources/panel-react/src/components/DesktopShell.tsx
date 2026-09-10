@@ -10,6 +10,7 @@
 // rounded corners + shadow — the desktop app reads as surfaces, not bars.
 import { useEffect, useRef, useState } from "react";
 import type { Session } from "../hooks/useSessions";
+import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
 import { callApi } from "../lib/api";
 import { IconRail } from "./IconRail";
 import { Shell, type Page } from "./Shell";
@@ -62,6 +63,12 @@ export function DesktopShell({
   // two-step confirm, copied from the memory_delete pattern (MemoryPage):
   // first click arms ("close?"), second executes. Cancel disarms.
   const [confirmCloseSid, setConfirmCloseSid] = useState<string | null>(null);
+  // Same rule as the panel's TabBar (one owner, see the hook's header): the
+  // active tab must stay on screen when the activation is programmatic. That
+  // counts double here — the desktop strip is narrower than the panel's, so
+  // overflow arrives sooner.
+  const openTabs = sessions.filter((s) => !s.closed);
+  const tabsRef = useActiveTabVisible(activeSid, openTabs.length);
   // stage-n: agent version + vitals for the status strip — /api/status is
   // polled every 15 s (the electron tray shows the same data; CPU% is a
   // server-side delta metric so it needs repeated samples to appear).
@@ -158,13 +165,14 @@ export function DesktopShell({
             {page === "terminal" && (
               <>
                 {/* Session tabs (compact pill strip inside the header) */}
-                <div className="desktop-tabs" role="tablist" aria-label="Terminal sessions">
-                  {sessions.filter((s) => !s.closed).map((s) => (
+                <div className="desktop-tabs" role="tablist" aria-label="Terminal sessions" ref={tabsRef}>
+                  {openTabs.map((s) => (
                     <div
                       key={s.sid}
                       role="tab"
                       aria-selected={s.sid === activeSid}
                       className={`dtab ${s.sid === activeSid ? "active" : ""}`}
+                      data-active={s.sid === activeSid ? "1" : undefined}
                       title={s.sid}
                       onClick={() => onActivate(s.sid)}
                     >
