@@ -151,6 +151,11 @@ const TERMINAL_TOOLS: McpTool[] = [
           description:
             "Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something.",
         },
+        plan_step: {
+          type: "integer",
+          description:
+            "Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step.",
+        },
       },
       required: ["session_id", "input"],
     },
@@ -222,6 +227,25 @@ const TERMINAL_TOOLS: McpTool[] = [
       properties: {
         ...DEVICE_PARAM,
         session_id: { type: "string" },
+      },
+      required: ["session_id"],
+    },
+  },
+  {
+    name: "terminal_plan",
+    description:
+      "Declare, revise, clear or read this session's PLAN — the steps you intend to take, in order. Call it before starting a multi-step task so the operator can see what you are about to do and judge it; call it again with a revised list when the plan changes. Pass an empty array to clear it. With `plan` omitted it just returns the current plan. Steps are short labels, not explanations — put the reasoning for a specific command in terminal_execute's `intent`, and name the step a command advances with terminal_execute's `plan_step`.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        session_id: { type: "string", description: "The session this plan is for." },
+        plan: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "The steps, in order (max 24, each a short line). An empty array CLEARS the plan. Omit the key entirely to read the current plan without changing it.",
+        },
       },
       required: ["session_id"],
     },
