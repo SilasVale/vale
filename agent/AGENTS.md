@@ -471,10 +471,18 @@ Last updated: 2026-09-11 round 15 (THE DELIVERY GAP IS CLOSED — 1.2.321 is on
   Gates: agent 547 default / 596 feat-gated, clippy -D warnings clean both
   configs, fmt clean, xwin OK; gateway 759; panel 383 + build. Released 1.2.321;
   tag v1.2.321 cut via the API so CI builds the GitHub asset.
-  STILL OPEN: the tag's CI run was in flight when this round ended, so
-  `publish-release.sh --audit-only 1.2.321` (the CDN-vs-GitHub dual-builder
-  audit) has not run; keep-latest (deleting the v1.2.320 release + tag) is
-  manual and also not done. Both are on the publish script's own checklist.
+  THE PUBLISH CHECKLIST IS COMPLETE, verified item by item: CI on the tag went
+  GREEN (both `CI` and `release` workflows); the GitHub release v1.2.321 exists
+  with its tgz asset (6,658,733 B); the dual-builder audit PASSES — "every
+  source-derived file matches byte-for-byte", with only `vale-agent.exe`
+  differing by TOOLCHAIN (4dfff449… local vs 7de13775… CI), which is the
+  documented long-tail difference the audit exists to tolerate, and the CDN
+  stays authoritative for devices; and keep-latest ran — v1.2.319 and v1.2.320
+  releases + tags deleted (HTTP 204 each), leaving exactly ONE release and ONE
+  tag, matching the repo's recorded state.
+  ROLLBACK NOTE: `vale rollback` for a device still needs the CDN tgz, and the
+  last-5-per-minor prune kept 1.2.317-321 there, so the rollback window is
+  intact even though only the newest GitHub release remains.
 
 Previous round: 2026-09-11 round 14 (the approval gate becomes ANSWERABLE). Three
   commits: 78ff244a (panel), ecd267b1 (agent). The round before this one is
