@@ -488,7 +488,87 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 21 (the archive the corpus never had, a silent
+Last updated: 2026-09-11 round 22 (one seq counter, a reader that orders by it,
+and a flake carried since round 11 finally killed — then RELEASED). Commit:
+6fa4313f, plus 1.2.326.
+  (1) `seq` WAS NOT UNIQUE, AND CONSUMERS DEPEND ON IT. The counter was
+  per-INSTANCE (`SessionLogger::new` built a fresh map, seeded from disk only on
+  first use), so a long-lived logger's counter went stale the moment any other
+  instance wrote:
+      plugin: start    -> seq 1, counter now 1                   (disk: 1)
+      web:    asked    -> fresh logger seeds disk (1) -> seq 2   (disk: 1,2)
+      plugin: approved -> its counter is 1, so it hands out 2    <-- DUPLICATE
+  DETERMINISTIC, not racy: `sessions_logger()` builds a logger per web call, so
+  a gate question arriving after a command starts is enough to hit it.
+  Reproduced as `[1, 2, 2]`, then on d1 as an out-of-order file (below). The
+  panel keeps `seq` as its "nothing new" watermark AND as a React key, so a
+  repeat is a dropped event and a duplicated row at once.
+  Fixed with ONE process-global counter keyed by dir+sid — the POSITIVE form of
+  the `JobsMap` lesson: that incident was two maps where there should have been
+  one, and a global whose whole job is to BE the one map cannot repeat it.
+  THE EXISTING UNIQUENESS TEST DID NOT CATCH THIS, and why is the useful part:
+  it ends every command first, and `log_command_end` FLUSHES, so each new logger
+  seeded from a disk that was already current. It passed for a reason that had
+  nothing to do with the invariant it names. My first replacement test was ALSO
+  wrong — I assumed the collision needed an unflushed write, measured the disk,
+  found `command/start` flushes, and only then found the real sequence (a STALE
+  counter, not a stale disk).
+  (2) THE READER RETURNED FLUSH ORDER, NOT `seq` ORDER — found by driving the
+  real binary rather than by reading. Two instances write the same file with
+  INDEPENDENT buffers, so events interleave on disk in the order they flushed.
+  On d1 the trail read `1, 2, 4, 5, 6, 3, 7, …`: seq 3 was a buffered `output`
+  that landed six events late, because the plugin's persistent `BufWriter`
+  flushes only at command boundaries (round-58) while a web write flushes
+  immediately. `read_events` returned that order verbatim, and an event numbered
+  BELOW the watermark is treated as already seen — the panel would silently drop
+  it. Fixed by sorting stably on `seq` at READ: the write order across
+  independent buffers is not something the writer can control without
+  serialising every append, and the reader is where the ordering promise is
+  consumed. Pinned by `reading_a_session_orders_by_seq_not_by_flush_time`, which
+  failed with the device's own `[1, 2, 4, 3]`.
+  BOTH halves are mutation-proven: reverting the counter to per-instance fails
+  with `[1, 2, 2]`; removing the read sort fails with `[1, 2, 4, 3]`.
+  (3) A FLAKE CARRIED IN THIS LOG SINCE ROUND 11 IS ADDRESSED. It was recorded
+  for ten rounds as "left for its own", and this round it cost a real diagnostic
+  cycle: a red run whose test NAME I had not captured. Cause: closing a listening
+  socket is not instantaneous with respect to a concurrent `connect()`, so
+  sampling ONCE straight after `drop(listener)` failed roughly one full run in
+  six. The post-drop assertion now polls with a 5s budget.
+  HONEST LIMIT, stated rather than glossed: I could not isolate a mutation that
+  reaches the POLLED assertion alone. Making the probe unconditionally healthy
+  trips the test's FIRST assertion; keeping the listener bound trips the probe's
+  own behaviour under repeated connections (the backlog fills, connects then time
+  out, and it reports unhealthy for a different reason — it passed in 5.37s,
+  which at least proves the loop runs its full budget). Observed rate went
+  ~1-in-6 -> 1-in-10 -> 0-in-12, and I did not capture that one failure's
+  identity, so the claim is that the IDENTIFIED mechanism is fixed, not that the
+  test can no longer fail.
+  (4) RELEASED 1.2.326, carrying rounds 21 AND 22 — two rounds of agent + panel
+  work that were on no device, which is the gap this log has recorded before.
+  CI and the release workflow green on the tag; keep-latest left ONE release and
+  ONE tag; the last-5 window still holds 1.2.322-326.
+  VERIFIED ON d1 BY EFFECT, feature by feature: `release: 1.2.326` with the
+  receipt reading `update requested 1.2.325 -> 1.2.326`; the memory meter answers
+  `memory_entries=6 memory_bytes=230 cap=10000`; `/api/sessions/<missing>` answers
+  `found=False ok=True` (the API says "no record" instead of implying "recorded
+  nothing"); and `/api/sessions` returns **617 sessions** — the corpus the new
+  Archive page reads.
+  (5) THE DUAL-BUILDER AUDIT REPORTED **WARN** AGAIN, and per round 20 that is
+  the STRONGER verdict: the OK path tolerates a differing `vale-agent.exe`, while
+  WARN is reached only when EVERY source-derived file matches INCLUDING the exe.
+  Two consecutive releases have now converged this way, so the byte-identity goal
+  step 6 of the release docs exists to reach appears to be holding rather than
+  being a one-off.
+  (6) STILL OPEN from round 21's audit, deliberately not fixed here: the
+  audit corpus' close-time trim to 2000 lines is invisible to
+  `/api/sessions/{sid}` (and the panel's own comment claims it "returns the FULL
+  audit log"); a LIVE session file has no write-time bound on event COUNT while
+  each refetch re-reads the whole file; and `terminal_history` can list one
+  session twice in a narrow window. Each needs its own evidence.
+  Gates: agent 564 default / 615 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; panel 465 + build.
+
+Previous round: 2026-09-11 round 21 (the archive the corpus never had, a silent
   session that read as a dead one, and an API that could not say "no record").
   Commits: e4e389aa + 29698045 (the meter and the silent session), bde07b0f (the
   archive + the `found` flag), fdfda96f (the false read claim).
