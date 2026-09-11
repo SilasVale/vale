@@ -281,27 +281,27 @@ rollback path had always done and the update path never had.
 
 ## 5.2 What is NOT built (as of 2026-09-11)
 
-Everything this document describes is implemented, tested and committed. **None of
-it is on a device.** That distinction was invisible from inside the work and was
-found by auditing the claims against the running system rather than against the
-tree:
+Four items, and they split cleanly into "needs a product decision" and "needs a
+client we do not control". None of them is a gap in what §1–§4 describe; they are
+extensions the design names and deliberately leaves open.
 
-| Check | Repo | Live d1 |
-|---|---|---|
-| device tools | 50 | **49** |
-| `terminal_plan` | present | **absent** |
-| `terminal_execute` params | `intent`, `considered`, `plan_step`, … | `command, quiet_ms, run_in_background, session_id, timeout_secs` |
-| `terminal_list` fields | `held_by_human`, `goal`, `plan`, `approval_grants`, … | `id, kind, label, shell` |
+| Item | Why it is not built |
+|---|---|
+| `proposal-control-path.md` §D2 — resumable `pending` / `resume_token` | Needs a durability design: a client that gives up at its own timeout currently cannot resume the question. No blocker, just unstarted. |
+| §D3 — boundary pause + a real `stopping` state | Needs §D1-style scopes to have a boundary to pause AT; the whole-step gate shipped instead, and this is its refinement. |
+| §D4 second half — an AI QUERYING path state | Today the AI learns of a hold or a refusal by BEING refused. It cannot ask "what is the operator doing here". Small, but nobody has needed it yet. |
+| An AI's own PLAN DECOMPOSITION (the intent layer, P3) | **Cannot be built agent-side.** The agent now stores and renders a plan; deciding one is the client's job, and no client sends one yet. |
 
-The last release is **1.2.319** (2026-09-10T07:43Z) and the repo version is still
-1.2.319, so beats 1, 3 and 5 and the whole intent/plan layer exist only in git.
-Delivery is the npm channel (`scripts/publish-release.sh <ver>` → CDN →
-`vale update` on the device), which is documented in `agent/AGENTS.md`; it was
-simply never run for this work.
+The last row is the one worth being precise about, because it is the only item
+that is not merely unstarted. The path shows what HAPPENED, what it was FOR (the
+operator's goal), what was INTENDED (the agent's declared plan), why each step,
+and what was passed over. What no amount of agent-side work can add is an agent
+DECIDING that plan — that is data only a client can supply, and the schema now
+has somewhere to put it.
 
-Recorded here rather than in a commit message because it is the difference between
-"the design is finished" and "someone can use it", and only the first is currently
-true.
+Also still absent, and stated in §2.1: the plan is a SEQUENCE, not a TREE. The
+alternatives recorded are those for commands that RAN, not those that were legal
+and never attempted.
 
 ## 6. The one test every proposal must pass
 
