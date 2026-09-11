@@ -112,8 +112,10 @@ SHA=$(sha256sum vale-agent-1.2.N.tgz | cut -d' ' -f1)
 printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" > ../../index/public/vale-agent/version.json
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
-# 4. On the device (PowerShell), exactly two commands:
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
+# 4. On the device (PowerShell), exactly two commands — WITH the --prefix (see the
+#    Install/update block above: without it the install lands elsewhere, reports
+#    success, and `vale update` silently ships the OLD release):
+npm i -g --prefix (Split-Path (Get-Command vale).Source) https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
 vale update
 ```
 

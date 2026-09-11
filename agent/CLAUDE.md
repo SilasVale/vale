@@ -92,8 +92,14 @@ SHA=$(sha256sum vale-agent-1.2.N.tgz | cut -d' ' -f1)
 printf '{"version":"1.2.N","tarball":"vale-agent-latest.tgz","updated":"%s","sha256":"%s"}\n' "$(date -u +%Y-%m-%dT%H:%M:%SZ)" "$SHA" > ../../index/public/vale-agent/version.json
 cd ../../index && CLOUDFLARE_API_TOKEN=$(cat ~/.cloudflare-token) npx wrangler deploy
 
-# 4. On the device (PowerShell), exactly two commands:
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
+# 4. On the device (PowerShell), exactly two commands — WITH the --prefix. Plain
+#    `npm i -g <url>` installs to npm's DEFAULT global prefix, which is NOT where
+#    `vale` lives when the agent runs as SYSTEM (observed on d1: `vale` resolved to
+#    D:\Vale\components\npm-global\vale.ps1 while `npm prefix -g` was
+#    C:\WINDOWS\system32\config\systemprofile\AppData\Roaming\npm). The install
+#    reports success, `vale update` stages the OLD exe, and the device silently
+#    stays on its previous release with no error anywhere.
+npm i -g --prefix (Split-Path (Get-Command vale).Source) https://agent.saisi.online/vale-agent/vale-agent-latest.tgz   (or pin the version)
 vale update
 ```
 
