@@ -201,6 +201,15 @@ pub fn evidence_dir() -> PathBuf {
     data_dir().join("pwout")
 }
 
+/// RUN identity log directory (device-level, beside sessions + evidence).
+///
+/// Device-level rather than per-session because a run spans the terminal AND the
+/// browser, and the embedded browser has no session ownership at all — a run is
+/// what an AI EXECUTION is, not what a terminal session is.
+pub fn runs_dir() -> PathBuf {
+    data_dir().join("runs")
+}
+
 pub fn config_file() -> PathBuf {
     etc_dir().join("config.yaml")
 }

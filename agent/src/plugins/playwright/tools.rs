@@ -131,7 +131,8 @@ fn tool_browser_run_script() -> ToolDef {
             "type": "object",
             "properties": {
                 "script": {"type": "string", "description": "JavaScript source (CommonJS). Follow the browser_pw_info template (VALE_BROWSER_HELPER acquireBrowser) so actions show live when a view is watched."},
-                "timeout_secs": {"type": "integer", "description": "Execution timeout in seconds (default 120, max 600)."}
+                "timeout_secs": {"type": "integer", "description": "Execution timeout in seconds (default 120, max 600)."},
+                "run_id": {"type": "string", "description": "Optional: the id returned by run_begin, naming the execution this browser action belongs to. One run spans browser actions AND terminal commands, so this is what lets an operator see a coherent piece of work instead of the day's traffic. This is NOT VALE_RUN_ID (the per-call env stem used for screenshot namespacing) — pass back the id run_begin gave you."}
             },
             "required": ["script"]
         }),
@@ -155,6 +156,16 @@ fn tool_browser_run_script() -> ToolDef {
                     .map(|rd| rd.filter_map(|e| e.ok()).filter(|e| e.file_name().to_string_lossy().ends_with(".png")).map(|e| e.file_name().to_string_lossy().to_string()).collect())
                     .unwrap_or_default();
                 let script_src = params.get("script").and_then(|v| v.as_str()).unwrap_or("").to_string();
+                // The RUN this action belongs to, when the client declared one.
+                // Trimmed and capped like every other client string; an
+                // over-long id is bounded rather than rejected, because losing
+                // the action over it would be worse than losing the grouping.
+                let run_id: Option<String> = params
+                    .get("run_id")
+                    .and_then(|v| v.as_str())
+                    .map(str::trim)
+                    .filter(|s| !s.is_empty())
+                    .map(|s| crate::text::clip(s, 200).to_string());
                 if script_src.trim().is_empty() {
                     return Ok(to_value_or_empty(json!({"error": "script is required"})));
                 }
@@ -231,6 +242,11 @@ fn tool_browser_run_script() -> ToolDef {
                     "screenshots": after,
                     "stdout_tail": tail(&stdout_full),
                     "stderr_tail": tail(&stderr_full),
+                    // The run, so this action lands on the same timeline as the
+                    // commands it was part of. Omitted entirely when absent —
+                    // an ungrouped action must read as ungrouped, not as an
+                    // action belonging to a run named "".
+                    "run_id": run_id,
                 }));
                 Ok(to_value_or_empty(json!({
                     "exit_code": exit_code,

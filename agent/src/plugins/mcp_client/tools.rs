@@ -592,7 +592,13 @@ fn mcp_action_summary(tool: &str, args: &serde_json::Value) -> String {
 /// aiActive pulse and the action timeline light up for plain
 /// mcp_client_call flows too (previously ONLY run_script wrote it — MCP
 /// sessions looked DEAD to the panel by construction).
-fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: bool) {
+fn record_mcp_action(
+    tool: &str,
+    args: &serde_json::Value,
+    dur_ms: u128,
+    ok: bool,
+    run_id: Option<&str>,
+) {
     if !tool.starts_with("browser_") {
         return;
     }
@@ -611,6 +617,10 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
             "screenshots": [],
             "stdout_tail": "",
             "stderr_tail": "",
+            // The declared run, when the caller sent one on the CALL (not inside
+            // `arguments`). Omitted entirely when absent so an ungrouped action
+            // reads as ungrouped rather than as a run named "".
+            "run_id": run_id,
         }),
     );
     // round-252: event-driven AI-actions feed — panels refresh on this push
@@ -1326,6 +1336,18 @@ pub fn mcp_client_call() -> ToolDef {
                 .get("arguments")
                 .cloned()
                 .unwrap_or_else(|| json!({}));
+            // The RUN this browser work belongs to. Read from the TOP-LEVEL
+            // params, NOT from `arguments`: `arguments` is forwarded verbatim to
+            // playwright-mcp, which knows nothing about runs, so an id nested
+            // there would be silently dropped at the bridge and the run would
+            // show commands and ZERO browser actions — indistinguishable from
+            // "the AI did not use the browser".
+            let run_id: Option<String> = params
+                .get("run_id")
+                .and_then(|v| v.as_str())
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::text::clip(s, 200).to_string());
 
             let mut guard = SESSION.lock().await;
             let sess = guard.as_mut().ok_or_else(|| DeviceError::InvalidParams {
@@ -1384,7 +1406,13 @@ pub fn mcp_client_call() -> ToolDef {
             }
             track_page_url(sess, &result);
             // one-browser fix: the panel's action timeline now sees MCP work
-            record_mcp_action(&tool, &args, t0.elapsed().as_millis(), true);
+            record_mcp_action(
+                &tool,
+                &args,
+                t0.elapsed().as_millis(),
+                true,
+                run_id.as_deref(),
+            );
 
             // playwright-mcp 1.6x saves screenshots to %TEMP%\.playwright-mcp
             // and returns a text REFERENCE instead of inline image content.

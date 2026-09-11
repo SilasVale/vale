@@ -19,6 +19,7 @@
   {
     "name": "browser_run_script",
     "params": [
+      "run_id",
       "script",
       "timeout_secs"
     ],
@@ -113,6 +114,22 @@
       "target"
     ],
     "plugin": "design"
+  },
+  {
+    "name": "run_begin",
+    "params": [
+      "goal",
+      "label"
+    ],
+    "plugin": "runs"
+  },
+  {
+    "name": "run_end",
+    "params": [
+      "outcome",
+      "run_id"
+    ],
+    "plugin": "runs"
   },
   {
     "name": "secret_delete",
@@ -266,6 +283,7 @@
       "intent",
       "plan_step",
       "quiet_ms",
+      "run_id",
       "run_in_background",
       "session_id",
       "timeout_secs"
@@ -324,6 +342,7 @@
     "name": "terminal_plan",
     "params": [
       "plan",
+      "run_id",
       "session_id"
     ],
     "plugin": "terminal"

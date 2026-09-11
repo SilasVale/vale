@@ -48,6 +48,23 @@ const DEVICE_PARAM: Record<string, unknown> = {
   },
 };
 
+/**
+ * The `run_id` parameter, shared by every browser control tool.
+ *
+ * One definition rather than seven copies: these tools all reach the device
+ * through the SAME bridge (`mcp-browser.ts`), and the bridge lifts `run_id` out
+ * of the playwright arguments to the device call's top level. A tool whose
+ * schema omitted it could not be attributed to a run — and a per-tool copy is
+ * how such an omission survives review.
+ */
+const RUN_PARAM: Record<string, unknown> = {
+  run_id: {
+    type: "string",
+    description:
+      "Optional: the id returned by run_begin, naming the execution this browser action belongs to. One run spans browser actions AND terminal commands, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id run_begin gave you.",
+  },
+};
+
 const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_open",
@@ -156,6 +173,11 @@ const TERMINAL_TOOLS: McpTool[] = [
           description:
             "Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step.",
         },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim.",
+        },
       },
       required: ["session_id", "input"],
     },
@@ -245,6 +267,11 @@ const TERMINAL_TOOLS: McpTool[] = [
           items: { type: "string" },
           description:
             "The steps, in order (max 24, each a short line). An empty array CLEARS the plan. Omit the key entirely to read the current plan without changing it.",
+        },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this plan belongs to. A declared plan belongs to the run that declared it, so passing the id lets an operator see what a run said it would do next to what it actually did.",
         },
       },
       required: ["session_id"],
@@ -425,6 +452,11 @@ const TERMINAL_TOOLS: McpTool[] = [
         ...DEVICE_PARAM,
         script: { type: "string" },
         timeout_secs: { type: "integer" },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this browser action belongs to. One run spans browser actions AND terminal commands. This is NOT VALE_RUN_ID (the per-call env stem used for screenshot namespacing) — pass back the id run_begin gave you.",
+        },
       },
       required: ["script"],
     },
@@ -493,6 +525,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         url: { type: "string" },
       },
       required: ["url"],
@@ -505,6 +538,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
       },
       required: [],
     },
@@ -516,6 +550,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         full_page: { type: "boolean" },
       },
       required: [],
@@ -529,6 +564,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         element_ref: {
           type: "integer",
           description: "snapshot ref number (rendered as e<N> target)",
@@ -544,6 +580,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         element_ref: { type: "integer" },
         text: { type: "string" },
       },
@@ -557,6 +594,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         condition: { type: "string" },
         timeout_s: { type: "integer" },
       },
@@ -570,12 +608,69 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
       },
       required: [],
     },
   },
 ];
 
+/**
+ * RUN IDENTITY — declaring the boundaries of one AI execution on the device.
+ *
+ * A run crosses the terminal/browser boundary, so these belong to no existing
+ * group; they are device-direct (relayed to `/api/tools/<name>`) and must also
+ * match `isDeviceDirectTool()` in mcp.ts, which is a SEPARATE gate: registering
+ * here without that predicate reaches `throw ToolErr(TOOL_ERROR, "No route for
+ * registered tool …")` at call time.
+ *
+ * `run_id` is a LABEL the device mints, never a credential — see
+ * `agent/src/runs.rs`. The console advertises these so a model can group its own
+ * work; the gateway stores nothing.
+ */
+const RUNS_TOOLS: McpTool[] = [
+  {
+    name: "run_begin",
+    description:
+      "Declare the start of ONE run — one execution of your work on this device — and get back the `run_id` that names it. Call it when you begin a piece of work that spans more than a single command, then pass the id to run_end when you stop. The device cannot tell two AIs apart (the token identifies the device, not the caller), so this declared boundary is what lets an operator see that a set of commands and browser actions belonged to one execution rather than to the day's whole traffic. The id is minted by the device and embeds its start time; store it and pass it back verbatim.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        label: {
+          type: "string",
+          description:
+            'Optional: a short human-readable name for this run, e.g. "provision the ONU on VLAN 100". Shown to the operator, so keep it to a phrase. A blank label is recorded as absent, not as an empty string.',
+        },
+        goal: {
+          type: "string",
+          description:
+            "Optional: the objective this run is pursuing, when you know it. Distinct from the session goal the OPERATOR sets — one goal can span several runs (a retry after a failure), and a run can have no goal at all.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "run_end",
+    description:
+      "Declare that a run started with run_begin is finished, so an operator sees a closed interval instead of work that never stopped. Pass back the `run_id` run_begin gave you. A run left unclosed is NOT an error — the device renders it as open with the extent of the events it actually carries, because a client may still be working, may have stopped, or the agent may have restarted. `known` in the reply says whether this id was ever minted here; it is information for you, never a permission.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        run_id: { type: "string", description: "The id returned by run_begin." },
+        outcome: {
+          type: "string",
+          description:
+            'Optional: how it ended, in a word or a short phrase ("done", "failed: ONU did not register"). Omit it rather than guessing — an absent outcome is rendered as nothing, never as a failure.',
+        },
+      },
+      required: ["run_id"],
+    },
+  },
+];
+
 export function allMcpTools(): McpTool[] {
-  return [...TERMINAL_TOOLS, ...SYSTEM_TOOLS, ...BROWSER_TOOLS];
+  return [...TERMINAL_TOOLS, ...SYSTEM_TOOLS, ...BROWSER_TOOLS, ...RUNS_TOOLS];
 }

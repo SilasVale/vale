@@ -34,7 +34,18 @@ async fn list_tools_via_http() {
     let client = ().serve(transport).await.expect("connect client");
 
     let tools = client.list_tools(None).await.expect("list_tools");
-    assert_eq!(tools.tools.len(), 50, "27 terminal (incl. terminal_env + terminal_jobs + terminal_plan + terminal_sftp + terminal_forget_saved + terminal_secret_* aliases) + agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* + 9 system_* (round-266 added system_file_stat, round-340 added system_file_download, round-341 added system_file_upload)");
+    assert_eq!(tools.tools.len(), 52, "27 terminal (incl. terminal_env + terminal_jobs + terminal_plan + terminal_sftp + terminal_forget_saved + terminal_secret_* aliases) + agent_update + page_view + 4 mcp_client_* + 2 playwright + 6 memory_* + 9 system_* (round-266 added system_file_stat, round-340 added system_file_download, round-341 added system_file_upload) + 2 runs_* (run_begin + run_end — the AI-execution identity pair)");
+
+    // The run tools are reachable over the REAL MCP transport, not merely
+    // registered: an id minted here is what every other layer groups by, so a
+    // tool that exists in the registry but not on the wire would make the whole
+    // feature dead on arrival.
+    for name in ["run_begin", "run_end"] {
+        assert!(
+            tools.tools.iter().any(|t| t.name == name),
+            "{name} must be listed over MCP — the AI's only channel to this device"
+        );
+    }
     let _ = client.cancel().await;
 }
 

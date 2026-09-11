@@ -15,7 +15,12 @@ test("mcp tools: all tools take a device param", () => {
   // 30 -> 31 when `terminal_plan` was registered: the plan surface is a TOOL
   // the AI client calls, so leaving it out would have made the whole feature
   // unreachable from console MCP (unlisted = uncalled).
-  assert.equal(tools.length, 31);
+  //
+  // 31 -> 33 when `run_begin`/`run_end` were registered: run identity is the
+  // same shape of decision. The device mints the id and stamps it onto the
+  // records; if the console cannot CALL run_begin, a console-driven execution
+  // can never be attributed — and the console is the primary consumer.
+  assert.equal(tools.length, 33);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, "object");
     assert.ok(t.inputSchema.properties.device, `${t.name} must take device`);

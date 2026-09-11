@@ -249,6 +249,12 @@ where
     }
 }
 
+/// How many run boundaries `/api/operation` carries. Bounded for the same
+/// reason the events are: one request must not walk an unbounded log. A reader
+/// that needs older boundaries can page with `since_ms` once the runs carry a
+/// stamp it can filter on.
+const RUNS_IN_TIMELINE: usize = 50;
+
 /// Evidence-feed endpoints (/api/browser/actions, pwshots, pwshot) —
 /// extracted from handle_request (round-28 SRP): the READ side of the
 /// AI-evidence drawer. Returns None when the path is not one of ours.
@@ -271,6 +277,54 @@ async fn handle_browser_evidence(path: &str, query: Option<&str>) -> Option<Resp
             StatusCode::OK,
             "application/json",
             Body::from(serde_json::json!({"actions": actions}).to_string()),
+        ));
+    }
+    // The device's MERGED operation timeline — terminal audit + browser actions
+    // on one ordered axis. Device-level by design (see crate::operation): the
+    // embedded browser has no session ownership, and an AI's "one operation"
+    // crosses sessions.
+    //
+    // `since_ms` lets a poller ask only for what it has not seen; `limit` bounds
+    // the reply. Both default, so a bare GET returns the recent timeline.
+    if path == "/api/operation" {
+        let since_ms = query_param(query, "since_ms")
+            .and_then(|v| v.parse::<u64>().ok())
+            .unwrap_or(0);
+        let limit = query_param(query, "limit")
+            .and_then(|v| v.parse::<usize>().ok())
+            .unwrap_or(200)
+            .min(1000);
+        let events = crate::operation::merged_operation(
+            &crate::paths::sessions_dir(),
+            &pwout,
+            since_ms,
+            limit,
+        );
+        return Some(built_response(
+            StatusCode::OK,
+            "application/json",
+            Body::from(
+                serde_json::json!({
+                    "events": events,
+                    // The run boundaries the events sit inside. Deliberately a
+                    // SEPARATE array rather than a join: the runs log is
+                    // best-effort (a device with an unwritable runs dir still
+                    // records events), so an event may carry a run_id with no
+                    // begin, and a run may exist with no events. Joining here
+                    // would hide one of those cases inside the other. Grouping
+                    // is the reader's job.
+                    "runs": crate::runs::recent(&crate::paths::runs_dir(), RUNS_IN_TIMELINE),
+                    "since_ms": since_ms,
+                    // The newest stamp in the reply, so a poller can pass it back
+                    // as `since_ms` without parsing the events itself.
+                    "cursor_ms": events
+                        .last()
+                        .and_then(|e| e.get("ts_ms"))
+                        .and_then(|v| v.as_u64())
+                        .unwrap_or(since_ms),
+                })
+                .to_string(),
+            ),
         ));
     }
     if path == "/api/browser/pwshots" {
@@ -494,7 +548,13 @@ async fn route_pre_dispatch(
     if *method == Method::GET
         && (path == "/api/browser/pwshots"
             || path == "/api/browser/pwshot"
-            || path == "/api/browser/actions")
+            || path == "/api/browser/actions"
+            // The merged operation timeline. Listed HERE so it goes through the
+            // check_auth above with the rest: it carries commands, goals and
+            // plans from every session, i.e. strictly MORE than the actions feed
+            // it sits beside. Reaching handle_browser_evidence without this list
+            // would 404; reaching it without the guard would leak the device.
+            || path == "/api/operation")
     {
         if let Err(resp) = check_auth(headers, state) {
             return Some(*resp);
@@ -1560,6 +1620,21 @@ mod tests {
             .unwrap()
     }
 
+    /// As [`req_anon`], with a JSON body.
+    ///
+    /// Exists because the shape that matters for the credential rule is
+    /// "a WELL-FORMED request carrying a plausible run id, and no token" — the
+    /// old anonymous helper could only send an empty body, so an id could never
+    /// appear in the request being refused.
+    fn req_anon_with_json(method: &str, path: &str, body: &str) -> Request<Body> {
+        Request::builder()
+            .method(method)
+            .uri(path)
+            .header("content-type", "application/json")
+            .body(Body::from(body.to_string()))
+            .unwrap()
+    }
+
     fn req_with_token(method: &str, path: &str, token: &str) -> Request<Body> {
         Request::builder()
             .method(method)
@@ -2110,7 +2185,10 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         // terminal + update + mcp-client + design + playwright + memory + system
-        assert_eq!(v["plugins"].as_array().unwrap().len(), 7);
+        // + runs (the AI-execution identity surface, added with the run feature:
+        // a plugin registered but not listed here would keep its tools out of
+        // /api/spec, i.e. invisible to every client that discovers through it).
+        assert_eq!(v["plugins"].as_array().unwrap().len(), 8);
     }
 
     #[tokio::test]
@@ -2545,6 +2623,303 @@ mod tests {
         );
 
         st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// THE OPERATION TIMELINE, end to end: a terminal command and a browser
+    /// action written through their REAL producers come back on ONE axis.
+    ///
+    /// The unit pins prove the merge function; this proves the ROUTE reaches it
+    /// with the right directories and the right auth — a route with the wrong
+    /// dir or the wrong guard would leave every other test green.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn the_operation_route_merges_terminal_and_browser_records() {
+        let (st, cfg_path) = state_with_cfg("operation-e2e", CFG_YAML_TOKEN_ONLY);
+
+        // A real terminal command, through the real tool surface.
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &serde_json::json!({
+                    "session_id": sid,
+                    // Unique per RUN, not just per session: the sessions dir
+                    // persists across runs, so a fixed probe string matches an
+                    // older run's event too and the assertion below picks the
+                    // wrong one (it did, on the second run).
+                    "command": format!("echo operation-probe-{sid}"),
+                    "intent": "the terminal half of the timeline",
+                })
+                .to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // A real browser action, through the shared evidence writer.
+        //
+        // The dir is created FIRST, as every real producer does before writing
+        // evidence. `append_action_line` is best-effort by contract — a missing
+        // directory must never fail the tool call that produced the action — so
+        // skipping this makes the append a silent no-op and the test would blame
+        // the merge for a missing file. (It did, on the first run.)
+        let ev_dir = crate::paths::evidence_dir();
+        std::fs::create_dir_all(&ev_dir).unwrap();
+        crate::evidence::append_action_line(
+            &ev_dir,
+            crate::now_millis(),
+            &serde_json::json!({"script": "mcp: browser_navigate url=http://probe", "exit_code": 0}),
+        );
+
+        let resp = handle_request(req("GET", "/api/operation"), st.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        let events = v["events"].as_array().cloned().unwrap_or_default();
+
+        let sources: Vec<&str> = events.iter().filter_map(|e| e["source"].as_str()).collect();
+        assert!(
+            sources.contains(&"terminal") && sources.contains(&"browser"),
+            "the timeline must carry BOTH feeds, got {sources:?}"
+        );
+        // The terminal half keeps its reasoning AND its session attribution.
+        let cmd = events
+            .iter()
+            .find(|e| e["command"] == format!("echo operation-probe-{sid}"))
+            .expect("the command is on the timeline");
+        assert_eq!(cmd["intent"], "the terminal half of the timeline");
+        assert_eq!(cmd["session"].as_str(), Some(sid.as_str()));
+        // The browser half has no session — the browser is device-level.
+        let act = events
+            .iter()
+            .find(|e| e["source"] == "browser")
+            .expect("the browser action is on the timeline");
+        assert!(act["session"].is_null());
+
+        // Ordered by the explicit millisecond stamp, and the cursor matches the
+        // newest entry so a poller can pass it straight back.
+        let stamps: Vec<u64> = events.iter().filter_map(|e| e["ts_ms"].as_u64()).collect();
+        let mut sorted = stamps.clone();
+        sorted.sort_unstable();
+        assert_eq!(stamps, sorted, "the timeline must be time-ordered");
+        assert_eq!(
+            v["cursor_ms"].as_u64(),
+            stamps.last().copied(),
+            "cursor_ms must be the newest stamp in the reply"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// RUN IDENTITY, end to end through the REAL tool surface: `run_begin` mints
+    /// an id, a command carries it, and `/api/operation` returns both the run
+    /// record and the stamped event so a reader can group them.
+    ///
+    /// This is the test the whole feature exists for. The unit pins prove the
+    /// log and the merge separately; only this proves the three layers agree on
+    /// ONE string — and the layers are hand-mirrored (a tool schema, an audit
+    /// field, an allowlist mapping), which is exactly where this repo has been
+    /// bitten before: a name registered on one side and unknown on the other is
+    /// silent with every other gate green.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_run_declared_through_the_tool_surface_groups_the_work_it_names() {
+        let (st, cfg_path) = state_with_cfg("run-e2e", CFG_YAML_TOKEN_ONLY);
+
+        // 1. Declare the run through the tool the AI actually calls.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/run_begin",
+                &serde_json::json!({
+                    "label": "provision the ONU",
+                    "goal": "get it online",
+                })
+                .to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true, "run_begin answers the in-band envelope");
+        let run_id = v["result"]["run_id"]
+            .as_str()
+            .expect("run_begin must return the minted id")
+            .to_string();
+        assert!(run_id.starts_with("run-"), "id shape: {run_id}");
+
+        // 2. Do some work inside it.
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+        let probe = format!("echo run-probe-{sid}");
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &serde_json::json!({
+                    "session_id": sid,
+                    "command": probe,
+                    "intent": "the work inside the run",
+                    "run_id": run_id,
+                })
+                .to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+
+        // 3. A command with NO run id must stay unattributed — the property that
+        //    keeps the grouping honest rather than merely plausible.
+        let loose = format!("echo loose-{sid}");
+        handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &serde_json::json!({"session_id": sid, "command": loose}).to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+
+        // 4. Read the timeline the operator reads.
+        let resp = handle_request(req("GET", "/api/operation"), st.clone()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+
+        let runs = v["runs"].as_array().cloned().unwrap_or_default();
+        let run = runs
+            .iter()
+            .find(|r| r["run_id"] == run_id.as_str() && r["kind"] == "run/begin")
+            .expect("the declared run is on the timeline");
+        assert_eq!(run["label"], "provision the ONU");
+        assert_eq!(run["goal"], "get it online");
+
+        let events = v["events"].as_array().cloned().unwrap_or_default();
+        let mine = events
+            .iter()
+            .find(|e| e["command"] == probe)
+            .expect("the command is on the timeline");
+        assert_eq!(
+            mine["run_id"].as_str(),
+            Some(run_id.as_str()),
+            "the command must carry the id run_begin minted — if this fails the id \
+             is minted and forgotten, and no view can ever group the work"
+        );
+
+        let other = events
+            .iter()
+            .find(|e| e["command"] == loose)
+            .expect("the unattributed command is on the timeline too");
+        assert!(
+            other["run_id"].is_null(),
+            "a command sent without a run must NOT be absorbed into one"
+        );
+
+        // 5. Close it, and confirm the closure is visible.
+        handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/run_end",
+                &serde_json::json!({"run_id": run_id, "outcome": "done"}).to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        let v = json_body(handle_request(req("GET", "/api/operation"), st.clone()).await).await;
+        let runs = v["runs"].as_array().cloned().unwrap_or_default();
+        assert_eq!(
+            runs.iter()
+                .find(|r| r["kind"] == "run/end" && r["run_id"] == run_id.as_str())
+                .expect("run_end is recorded")["outcome"],
+            "done"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// A run id is a LABEL: presenting one grants NOTHING.
+    ///
+    /// The behavioural half of the rule `runs.rs` states in prose and pins by
+    /// source scan. The device has one token and possession of it IS the identity
+    /// (`web/panel.rs`), so an unauthenticated caller who presents a REAL,
+    /// well-formed id minted by this very device must still be refused.
+    #[tokio::test]
+    async fn a_run_id_never_grants_access() {
+        let (st, cfg_path) = state_with_cfg("run-auth", CFG_YAML_TOKEN_ONLY);
+
+        let real = crate::runs::begin(&crate::paths::runs_dir(), Some("real"), None);
+        let resp = handle_request(
+            req_anon_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &serde_json::json!({"command": "id", "session_id": "s1", "run_id": real})
+                    .to_string(),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "a run id must never stand in for the device token"
+        );
+
+        let resp = handle_request(req_anon("GET", "/api/operation"), st.clone()).await;
+        assert_eq!(resp.status(), StatusCode::UNAUTHORIZED);
+
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// The route is AUTH-GATED — it carries every session's commands, goals and
+    /// plans, so an anonymous read is the whole device's activity history.
+    #[tokio::test]
+    async fn the_operation_route_refuses_an_anonymous_read() {
+        let (st, cfg_path) = state_with_cfg("operation-auth", CFG_YAML_TOKEN_ONLY);
+        let resp = handle_request(req_anon("GET", "/api/operation"), st).await;
+        assert_eq!(
+            resp.status(),
+            StatusCode::UNAUTHORIZED,
+            "the operation timeline must never be readable without a token"
+        );
         let _ = std::fs::remove_file(cfg_path);
     }
 
@@ -3438,6 +3813,9 @@ mod tests {
             ("GET", "/api/events/term"),
             ("GET", "/api/browser/pwshots"),
             ("GET", "/api/browser/actions"),
+            // Carries commands, goals and plans from EVERY session, so it is
+            // strictly more sensitive than the actions feed beside it.
+            ("GET", "/api/operation"),
             ("GET", "/api/browser/pwshot"),
             ("GET", "/mcp"),
             ("POST", "/mcp"),

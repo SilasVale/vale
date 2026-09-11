@@ -384,13 +384,13 @@ test("contract: device-direct partition matches the bridge-vs-device dispatch", 
   for (const t of allMcpTools()) {
     const n = t.name;
     if (isDeviceDirectTool(n)) {
-      // Device-direct: the terminal_/secret_/system_ families plus the two
-      // bundled-runner tools. callTool routes on THIS predicate now (it used
-      // to re-implement it inline, which is how a registered tool could still
-      // fall through to the bridge and die there).
+      // Device-direct: the terminal_/secret_/system_ families, the run_* run
+      // boundaries, plus the two bundled-runner tools. callTool routes on THIS
+      // predicate now (it used to re-implement it inline, which is how a
+      // registered tool could still fall through to the bridge and die there).
       assert.ok(
         n.startsWith("terminal_") || n.startsWith("secret_") ||
-          n.startsWith("system_") ||
+          n.startsWith("system_") || n.startsWith("run_") ||
           n === "browser_pw_info" || n === "browser_run_script",
         `device-direct misclassification: ${n}`,
       );

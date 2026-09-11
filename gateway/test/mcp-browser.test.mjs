@@ -59,6 +59,56 @@ test("browser tool routes to the device mcp_client_call API with mapped name + b
   assert.equal(calls[0].init.headers.Authorization, "Bearer devtok");
 });
 
+// RUN IDENTITY AND THE BRIDGE (round: run feature). A `run_id` reaches the
+// gateway as an ordinary argument of a browser tool, but the DEVICE reads it
+// from the top level of the mcp_client_call body — `arguments` is forwarded
+// verbatim to playwright-mcp, which knows nothing about runs. Nested, the id
+// would be dropped silently and a run would show its commands with ZERO browser
+// actions: indistinguishable from "the AI never opened the browser", which is
+// the exact silent-absence class this repo keeps paying for. So the lift is
+// pinned in BOTH directions.
+test("run_id is lifted OUT of the playwright arguments to the device call's top level", async () => {
+  const { calls, impl } = makeFetch(() => okJson({ title: "Vale" }));
+  await withFetch(impl, () =>
+    callTool(
+      { name: "browser_click" },
+      {},
+      DEVICE,
+      { device: "d1", element_ref: 6, run_id: "run-1700000000000-abc123" },
+    ),
+  );
+  assert.equal(calls.length, 1);
+  const body = JSON.parse(calls[0].init.body);
+  assert.equal(
+    body.run_id,
+    "run-1700000000000-abc123",
+    "the device reads run_id from the TOP level — this is what makes the " +
+      "browser half of a run visible at all",
+  );
+  assert.ok(
+    !("run_id" in body.arguments),
+    "run_id must NOT also ride into playwright-mcp's own arguments, which " +
+      "would forward an unknown key to a server that has no concept of runs",
+  );
+  // The rest of the arguments still pass through untouched — bar the
+  // documented element_ref -> target translation (round-138), which this
+  // asserts so a lift that accidentally ate other keys fails here.
+  assert.equal(body.arguments.target, "e6");
+});
+
+test("a browser call with no run_id sends no run_id key at all", async () => {
+  const { calls, impl } = makeFetch(() => okJson({ title: "Vale" }));
+  await withFetch(impl, () =>
+    callTool({ name: "browser_open" }, {}, DEVICE, { device: "d1", url: "https://example.com" }),
+  );
+  const body = JSON.parse(calls[0].init.body);
+  assert.ok(
+    !("run_id" in body),
+    "an unattributed action must read as unattributed — an explicit null or " +
+      "empty string would let it be grouped with a run named ''",
+  );
+});
+
 // round-475 (coverage-driven): the device-tool divert arm (browser_pw_info /
 // browser_run_script go to the DEVICE agent, not the playwright bridge)
 // had ZERO pins.

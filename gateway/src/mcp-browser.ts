@@ -116,10 +116,20 @@ export async function callMcpClientBridge(
     delete pmArgs.element_ref;
   }
   const invoke = async (): Promise<any> => {
+    // RUN IDENTITY: the run_id belongs to the DEVICE CALL, not to
+    // playwright-mcp. It rides `arguments` (which is a verbatim spread of the
+    // caller's args) but must be lifted OUT to the top level, because the
+    // device reads it from `params.run_id` — nested inside `arguments` it would
+    // reach playwright-mcp, which knows nothing about runs, and be dropped. A
+    // silently dropped id shows a run with commands and ZERO browser actions:
+    // indistinguishable from "the AI never used the browser".
+    const { run_id, ...pwArgs } = pmArgs as Record<string, unknown>;
+    const deviceCall: Record<string, unknown> = { tool: pmTool, arguments: pwArgs };
+    if (run_id != null) deviceCall.run_id = run_id;
     const res = await fetch(`${base}/api/tools/mcp_client_call`, {
       method: "POST",
       headers,
-      body: JSON.stringify({ tool: pmTool, arguments: pmArgs }),
+      body: JSON.stringify(deviceCall),
       signal: AbortSignal.timeout(Math.min(callBudgetMs, budgetLeftMs())),
     });
     // The agent's tool API always returns 200 + {ok:false,error,code} (web.rs api_call_tool);

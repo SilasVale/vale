@@ -220,7 +220,8 @@ pub(super) fn tool_plan(ctx: &super::ctx::ToolCtx) -> ToolDef {
         "Declare, revise, clear or read this session's PLAN — the steps you intend to take, in order. Call it before starting a multi-step task so the operator can see what you are about to do and judge it; call it again with a revised list when the plan changes. Pass an empty array to clear it. With `plan` omitted it just returns the current plan. Steps are short labels, not explanations — put the reasoning for a specific command in terminal_execute's `intent`, and name the step a command advances with terminal_execute's `plan_step`.",
         json!({"type":"object","properties":{
             "session_id":{"type":"string","description":"The session this plan is for."},
-            "plan":{"type":"array","items":{"type":"string"},"description":"The steps, in order (max 24, each a short line). An empty array CLEARS the plan. Omit the key entirely to read the current plan without changing it."}
+            "plan":{"type":"array","items":{"type":"string"},"description":"The steps, in order (max 24, each a short line). An empty array CLEARS the plan. Omit the key entirely to read the current plan without changing it."},
+            "run_id":{"type":"string","description":"Optional: the id returned by run_begin, naming the execution this plan belongs to. A declared plan belongs to the run that declared it, so passing the id lets an operator see what a run said it would do next to what it actually did."}
         },"required":["session_id"]}),
         move |params: Value| {
             let mgr = mgr.clone();
@@ -257,7 +258,9 @@ pub(super) fn tool_plan(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     .collect();
 
                 let stored = mgr.term_set_plan(sid, &steps).await?;
-                logger.log_plan(sid, &stored);
+                // The run this plan belongs to, when the client named one.
+                let run_id = params.get("run_id").and_then(|v| v.as_str());
+                logger.log_plan_run(sid, &stored, run_id);
                 Ok(json!({ "session_id": sid, "plan": stored, "revised": true }))
             }
         },
@@ -693,7 +696,7 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated, still_running}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX and `still_running=true` — the command is STILL RUNNING, continue with terminal_read(offset=read_from) until you see the prompt/exit. NEVER re-run a command or open a new session just because a partial was returned: the output arrives in the SAME session's buffer; opening new sessions (terminal_open) while old commands run is what causes output to look interleaved/queued. Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 3s, serial 4s, pty 1s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
-        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."},"intent":{"type":"string","description":"Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself."},"considered":{"type":"array","items":{"type":"string"},"description":"Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something."},"plan_step":{"type":"integer","description":"Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step."}},"required":["command"]}),
+        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."},"intent":{"type":"string","description":"Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself."},"considered":{"type":"array","items":{"type":"string"},"description":"Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something."},"plan_step":{"type":"integer","description":"Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step."},"run_id":{"type":"string","description":"Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
@@ -762,6 +765,16 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                                 .collect::<Vec<_>>()
                         })
                         .filter(|c| !c.is_empty());
+                    // The RUN this command belonged to, as declared by
+                    // run_begin. An ATTRIBUTE, never an authorization input —
+                    // see crate::runs for the rule and its pin. Unknown ids are
+                    // accepted verbatim: the runs log is best-effort, so a
+                    // client that lost its begin record must not lose its
+                    // commands too.
+                    let run_id: Option<String> = params
+                        .get("run_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     // Absolute position of the first post-command byte.
                     // All tracking is byte-exact against the raw buffer, so
                     // UTF-8 lossy conversion and 1MB eviction can never
@@ -951,12 +964,13 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     // A command that never reached the shell must not leave a
                     // dangling start that crash recovery reports as
                     // "interrupted" (round-55).
-                    logger.log_command_start_full(
+                    logger.log_command_start_run(
                         &sid,
                         &command,
                         intent.as_deref(),
                         considered.as_deref(),
                         plan_step,
+                        run_id.as_deref(),
                     );
                     let quiet_dur = std::time::Duration::from_millis(quiet_ms);
                     // Background mode: return immediately with the read cursor

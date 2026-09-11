@@ -248,6 +248,19 @@ src/
                    `prepare_append` (version header on a fresh file, terminate
                    a torn final line) + `has_torn_tail`. Shared by the audit
                    trail and the memory store.
+  operation.rs     the device's MERGED operation timeline (crate-private):
+                   terminal audit + browser actions on ONE ordered axis,
+                   served by GET /api/operation. Orders on `ts_ms` only — the
+                   two feeds stamp `ts` in different units, so a record
+                   lacking the explicit millisecond stamp is DROPPED rather
+                   than placed by guess. Device-level, not session-level: the
+                   embedded browser has no session ownership.
+  runs.rs          RUN identity, one AI execution's mint/end log
+                   (crate-private): `begin`/`end`/`recent` over an
+                   append-only runs.jsonl. The id is minted DEVICE-side and
+                   is a LABEL, NEVER A CREDENTIAL — nothing here returns an
+                   authorization decision, and `run_id_is_never_a_credential`
+                   pins that.
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    managers own their locks internally (inside AppState only
@@ -280,7 +293,11 @@ src/
                    output/secrets/connections; mod.rs owns registry assembly
                    + the exact tool order); memory/ (store.rs = the JSONL
                    knowledge store, whose append hygiene comes from
-                   crate::jsonl)
+                   crate::jsonl); runs/ (the RUN IDENTITY tool surface —
+                   run_begin/run_end, a thin shell over crate::runs: begin
+                   MINTS the id device-side, end ACCEPTS one and reports
+                   `known`. MCP tools rather than a route because the caller
+                   IS the AI and MCP is its only channel here)
   tools/           terminal/ (TerminalManager + TermBackend trait; pty.rs,
                    ssh.rs, serial.rs, secrets.rs, stub.rs), serial.rs, ssh.rs
 vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_token via

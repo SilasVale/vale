@@ -12,6 +12,8 @@ pub use vale_agent_core::{
 
 pub mod bootstrap;
 pub mod register;
+/// RUN identity — one AI execution's mint/end log (a label, never a credential).
+pub(crate) mod runs;
 
 /// Seconds since the UNIX epoch (0 on clock errors). Shared by the
 /// audit-log writers (filelog.rs, session_log.rs) and the memory store —
@@ -103,6 +105,8 @@ pub mod filelog;
 pub(crate) mod jsonl;
 pub mod mcp;
 pub mod metrics;
+/// The device's merged operation timeline (terminal audit + browser actions).
+pub(crate) mod operation;
 pub mod paths;
 pub mod plugins;
 pub mod session_log;

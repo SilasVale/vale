@@ -81,6 +81,11 @@ const INTENT_MAX_BYTES: usize = 512;
 const CONSIDERED_MAX: usize = 8;
 /// Longest single alternative, in bytes — a button label, not a paragraph.
 const CONSIDERED_ITEM_MAX_BYTES: usize = 160;
+/// Longest `run_id` we keep, in bytes. A minted id is ~30 bytes; this is
+/// generous headroom for a client that hands back something larger, and it is
+/// a CAP rather than a rejection because the run is an attribute of the
+/// command, not a condition for running it.
+const RUN_ID_MAX_BYTES: usize = 200;
 
 /// Stream-trim a session JSONL: keep the version header + the LAST
 /// command/start (recovery needs it to detect an interrupted command) and
@@ -224,6 +229,19 @@ pub struct SessionEvent {
     /// happened, and this records what did not.
     #[serde(skip_serializing_if = "Option::is_none")]
     pub considered: Option<Vec<String>>,
+    /// command/start only: the RUN this command belonged to, as declared by the
+    /// client through `run_begin`.
+    ///
+    /// A run is one AI EXECUTION (see `crate::runs`). It is recorded here as an
+    /// ATTRIBUTE, never as an identity: the device has one token and possession
+    /// of it IS the identity, so this string can only ever describe work, never
+    /// authorize it. `run_id_is_never_a_credential` pins that rule at its source.
+    ///
+    /// Stored verbatim-but-bounded: the client supplies it, so it is trimmed and
+    /// byte-capped by the same discipline as `intent` above — an uncapped remote
+    /// string riding every audit read is a remote memory amplifier.
+    #[serde(skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
 }
 
 impl SessionEvent {
@@ -256,6 +274,23 @@ impl SessionEvent {
         considered: Option<&[String]>,
         plan_step: Option<u32>,
     ) -> Self {
+        Self::command_start_run(seq, command, intent, considered, plan_step, None)
+    }
+
+    /// As [`SessionEvent::command_start_full`], plus the RUN it belongs to.
+    ///
+    /// One more argument rather than a builder: every existing caller keeps a
+    /// compiling signature, and the run is the last thing the trail learned.
+    /// `run_id` is trimmed and byte-capped like `intent` — it arrives from the
+    /// same remote client.
+    pub fn command_start_run(
+        seq: u64,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+        plan_step: Option<u32>,
+        run_id: Option<&str>,
+    ) -> Self {
         Self {
             seq,
             ts: crate::unix_now(),
@@ -285,6 +320,10 @@ impl SessionEvent {
                         .collect::<Vec<_>>()
                 })
                 .filter(|c: &Vec<String>| !c.is_empty()),
+            run_id: run_id
+                .map(str::trim)
+                .filter(|s| !s.is_empty())
+                .map(|s| crate::text::clip(s, RUN_ID_MAX_BYTES).to_string()),
         }
     }
     pub fn output(seq: u64, text: String) -> Self {
@@ -302,6 +341,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
     pub fn command_end(seq: u64, exit_code: Option<i32>, reason: Option<&str>) -> Self {
@@ -319,6 +359,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
     pub fn status(seq: u64, status: &str) -> Self {
@@ -336,6 +377,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
 
@@ -379,6 +421,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
 
@@ -417,6 +460,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
 
@@ -446,6 +490,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
 
@@ -479,6 +524,7 @@ impl SessionEvent {
             plan_step: None,
             intent: None,
             considered: None,
+            run_id: None,
         }
     }
 }
@@ -735,6 +781,27 @@ impl SessionLogger {
         );
     }
 
+    /// As [`SessionLogger::log_command_start_full`], plus the RUN it belongs to.
+    ///
+    /// The run is the last thing the trail learned and the only piece of it that
+    /// says which EXECUTION the command belonged to — see `crate::runs`. Kept as
+    /// its own function so the four existing call shapes stay untouched.
+    pub fn log_command_start_run(
+        &self,
+        sid: &str,
+        command: &str,
+        intent: Option<&str>,
+        considered: Option<&[String]>,
+        plan_step: Option<u32>,
+        run_id: Option<&str>,
+    ) {
+        let command = cap_command(command);
+        self.log(
+            sid,
+            SessionEvent::command_start_run(0, &command, intent, considered, plan_step, run_id),
+        );
+    }
+
     pub fn log_command_start(&self, sid: &str, command: &str) {
         // audit round: the 4 KiB cap existed for OUTPUT only — a single
         // multi-MB command line (`python -c '<payload>'`) rode the trail
@@ -787,6 +854,20 @@ impl SessionLogger {
     /// Record a plan declaration. Best-effort like every write here.
     pub fn log_plan(&self, sid: &str, steps: &[String]) {
         self.log(sid, SessionEvent::plan(0, steps));
+    }
+
+    /// As [`SessionLogger::log_plan`], plus the RUN that declared the plan.
+    ///
+    /// A declared plan belongs to the execution that declared it: without the
+    /// id, a run's timeline shows the commands it ran but not what it said it
+    /// was going to do — which is half of the comparison the plan exists for.
+    pub fn log_plan_run(&self, sid: &str, steps: &[String], run_id: Option<&str>) {
+        let mut ev = SessionEvent::plan(0, steps);
+        ev.run_id = run_id
+            .map(str::trim)
+            .filter(|s| !s.is_empty())
+            .map(|s| crate::text::clip(s, RUN_ID_MAX_BYTES).to_string());
+        self.log(sid, ev);
     }
 
     /// Record a change to the approval posture. Best-effort like every write here.
