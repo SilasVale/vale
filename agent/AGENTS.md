@@ -201,9 +201,20 @@ plainest answer to "did the update take?".
 
 `vale update` now appends an `update requested X -> Y` receipt to
 `vale-update.log` BEFORE the handoff. So one file separates the cases the
-connection drop conflates: receipt present + `update start` absent ⇒ the command
-reached the device and the swap never launched; NEITHER present ⇒ the command
-never ran. Re-running is always safe — the operation is idempotent.
+connection drop conflates. Read it as a THREE-way distinction, because the
+Rust `agent_update` path (the console/auto channel) writes `update start` to
+this same log too, but has no receipt — it has its own tool-result channel:
+
+| `update requested` | `update start` | what it means |
+|---|---|---|
+| present | absent | the CLI reached the device, the swap never launched — re-run |
+| present | present | the CLI's swap launched; check `copy ok=` / `task restarted` below it |
+| absent | present | the swap was launched by `agent_update` (Rust), not by the CLI |
+| absent | absent | the command never reached the device at all |
+
+The busy marker is cleared by a completed swap, so a marker still present past
+the 10-minute window means the swap died before its cleanup. Re-running is
+always safe — the operation is idempotent.
 
 `vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
 (last-5-per-minor keeps the recent line), `npm install -g --prefix
