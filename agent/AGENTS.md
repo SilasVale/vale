@@ -216,11 +216,40 @@ The busy marker is cleared by a completed swap, so a marker still present past
 the 10-minute window means the swap died before its cleanup. Re-running is
 always safe — the operation is idempotent.
 
+**WHAT THE ROUND-17 EVIDENCE ACTUALLY PROVES** (worked out afterwards; the log
+originally said only "cause not established"). The marker is the FIRST statement
+of `update()`, and every branch of that block either creates it or exits 1 — so a
+run that reached `update()` ALWAYS leaves a marker. Observed on d1: no marker, no
+staged exe, no swap script, no log line. A marker would also have made the SECOND
+attempt refuse (fresh <10 min), and it did not. So the CLI-side explanations are
+EXCLUDED: **the CLI never executed on that device.** Why is still unknown, but the
+investigation belongs at the MCP tool-call transport, not in the script — and that
+is a real narrowing, because three plausible explanations were eliminated rather
+than guessed away.
+
+**A FAILED SWAP CANNOT BE DETECTED FROM THE CLI'S EXIT CODE.** `vale update`
+returns 0 the moment the WMI handoff is ACCEPTED — `ReturnValue=0` means a process
+was created, and the script has not yet written its first line. Every decision
+that matters (the fail-closed migration gate, the 12× copy retry, the `$ok`-gated
+marker write, the task restart) happens after, in a WmiPrvSE-parented process
+whose exit code nobody reads. So: **no path returns non-zero for a failed swap.**
+`vale rollback` used to depend on that exit code and wrote its version marker
+unconditionally as a result — claiming a version the device was not running, which
+makes every UI lie AND makes `agent_update` answer `up_to_date` forever. It now
+reads the marker BACK and requires it to show the staged version before pinning.
+`vale update` itself still returns on handoff, deliberately: it can block without
+risk only where the caller already blocks (`rollback` does).
+
 `vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
 (last-5-per-minor keeps the recent line), `npm install -g --prefix
 <components\npm-global> <tgz>`, then runs the TARGET build's own `vale update`
-so the staged exe IS the rollback build; finally writes `etc\.rollback-pin` +
-syncs `etc\.vale-release` (healing a pre-v2 split-brain marker). `agent_update`
+so the staged exe IS the rollback build. It then **reads `etc\.vale-release`
+back and requires it to show the target version** (bounded 90 s) before writing
+`etc\.rollback-pin` and deleting a pre-v2 root-level marker. An unproven swap
+writes NO pin, NO marker, and exits non-zero naming the version the device is
+actually on — see "A FAILED SWAP CANNOT BE DETECTED FROM THE CLI'S EXIT CODE"
+above for why the old unconditional write was a lie that could strand a device.
+`agent_update`
 (Rust) returns `{"status":"pinned"}` for any remote version other than the pin
 while the pin exists; `force:true` on agent_update or `vale rollback --clear`
 removes it. `vale update` does NOT clear the pin (it swaps what npm-global
