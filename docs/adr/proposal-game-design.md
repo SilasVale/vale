@@ -253,7 +253,33 @@ running; onboarding decides whether anyone runs at all.
 | WebGL / 3D / GPU compositing in the shell | E8: already produced an uncatchable silent blank |
 | Card-game skin as the primary metaphor | the *table* vocabulary (hand / stack / settle) is useful; the *game* (deckbuilding, luck, win-lose) is not. Adopted only as far as "legal options + visible state + settle one at a time" |
 
-## 5.1 What is NOT delivered (verified 2026-09-11)
+## 5.1 Delivery status — SHIPPED 2026-09-11 as 1.2.320
+
+**Delivered.** Everything this document describes is now on the device. The
+initial audit that produced this section found the opposite, and the comparison
+is the point:
+
+| Check | Repo | d1 BEFORE | d1 AFTER 1.2.320 |
+|---|---|---|---|
+| device tools | 50 | 49 | **50** |
+| `terminal_plan` | present | absent | **present** |
+| `terminal_execute` params | `intent`, `considered`, `plan_step`, … | 5 old ones | **all 8** |
+| `terminal_list` fields | `goal`, `plan`, `held_by_human`, … | 4 old ones | **all 9** |
+
+Verified on the live device after the update: the goal and the plan both
+round-trip through the real routes, and every governance field appears on
+`terminal_list`.
+
+A SECOND defect surfaced while shipping, and it is worth recording because it has
+the same shape as the gap itself — success reported, nothing changed. The
+documented device command was `npm i -g <url>`, but on a device whose agent runs
+as SYSTEM that installs to npm's default global prefix, which is not where `vale`
+lives. npm said "changed 1 package", `vale update` ran the OLD CLI from the other
+prefix, and the device stayed on its previous release with no error anywhere. The
+guides now pass `--prefix (Split-Path (Get-Command vale).Source)` — which the
+rollback path had always done and the update path never had.
+
+## 5.2 What is NOT built (as of 2026-09-11)
 
 Everything this document describes is implemented, tested and committed. **None of
 it is on a device.** That distinction was invisible from inside the work and was

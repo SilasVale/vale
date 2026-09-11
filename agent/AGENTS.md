@@ -429,6 +429,26 @@ Last updated: 2026-09-11 game-design round 12 (doc coherence, a job-object
   ever happened for this work. Recorded in the design doc §5.1 because it is
   the difference between "the design is finished" and "someone can use it".
   Agent gates 12+12, clippy both, fmt, xwin. Commits: 1836dffb, 2441b856.
+  (4) RELEASED 1.2.320 AND UPDATED d1, with the user's approval. Publish went
+  through scripts/publish-release.sh (pack -> stage -> sha256 manifest -> last-5
+  prune -> wrangler deploy -> smoke: /api/version returned v1.2.320 with the
+  versioned + latest sha verified). Verified ON THE DEVICE afterwards: 50 tools,
+  `terminal_plan` present, `terminal_execute` advertising all 8 params, and a
+  real goal+plan round-trip through the live routes; `terminal_list` now carries
+  approval_grants/approval_required/goal/held_by_human/id/kind/label/plan/shell.
+  (5) A SECOND SILENT-SUCCESS DEFECT, found by following my own docs on d1: the
+  documented `npm i -g <url>` installs to npm's DEFAULT global prefix, which is
+  NOT where `vale` lives when the agent runs as SYSTEM (observed: (Get-Command
+  vale).Source = D:\Vale\components\npm-global\vale.ps1 while `npm prefix -g`
+  = C:\WINDOWS\system32\config\systemprofile\AppData\Roaming\npm). npm
+  reported success, `vale update` ran the OLD 1.2.316 CLI from the other prefix,
+  and the device silently stayed on its previous release — exe mtime and
+  etc\.vale-release were the only evidence. Both guides now use `--prefix
+  (Split-Path (Get-Command vale).Source)`, which `vale rollback` had always done
+  and the update path never had. Commits: 3ed26cf3 + b081e80d (the release).
+  NOTE: no installer was rebuilt (no makensis on this box), so the manifest is
+  tgz-only for 1.2.320 — fresh installs still work via the npm channel; the
+  installer fields are absent rather than stale, which is the fail-safe case.
 
 Previous round: 2026-09-11 game-design round 11 (the PLAN, + an
   evidence-loss bug it uncovered). `terminal_plan` lets the agent declare
