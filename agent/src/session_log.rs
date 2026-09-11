@@ -533,10 +533,35 @@ impl SessionEvent {
 /// so concurrent tools (drainer + execute) can log without serializing on
 /// callers; file appends are atomic enough for line-level integrity (each
 /// event is written in a single write()).
+/// The per-session `seq` counters, SHARED BY EVERY INSTANCE.
+///
+/// `seq` is documented as per-session monotonic and consumers depend on it:
+/// the panel uses it as a React key AND as its "nothing new" watermark, so a
+/// repeat is a dropped event and a duplicated row at once.
+///
+/// It used to be per-INSTANCE (`SessionLogger::new` built a fresh map), and the
+/// counter is only seeded from disk on FIRST use — so a long-lived logger's
+/// counter went stale the moment any other instance wrote:
+///
+///   plugin: start   -> seq 1, counter now 1                     (disk: 1)
+///   web:    asked   -> fresh logger seeds disk (1) -> seq 2     (disk: 1,2)
+///   plugin: approved-> its counter is 1, so it hands out 2      <-- DUPLICATE
+///
+/// Deterministic, not racy: `sessions_logger()` builds a logger per web call,
+/// so a gate question arriving after a command starts is enough to hit it.
+/// Reproduced as `[1, 2, 2]` before this change.
+///
+/// ONE map for the whole process, keyed by dir+sid, is the fix — and it is the
+/// POSITIVE form of the `JobsMap` lesson: that incident was two maps where
+/// there should have been one, and a global whose whole job is to BE the one
+/// map cannot repeat it. Tests are unaffected because they use distinct temp
+/// dirs, which are part of the key.
+static SEQ: std::sync::LazyLock<Mutex<HashMap<String, u64>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
 #[derive(Clone)]
 pub struct SessionLogger {
     dir: PathBuf,
-    seq: std::sync::Arc<Mutex<HashMap<String, u64>>>,
     /// Persistent per-session writers (round-58): batch output chunks, flush
     /// on command boundaries. Bounded — capped at the session count.
     files: std::sync::Arc<Mutex<HashMap<String, std::io::BufWriter<std::fs::File>>>>,
@@ -547,7 +572,6 @@ impl SessionLogger {
         let _ = std::fs::create_dir_all(&dir);
         Self {
             dir,
-            seq: std::sync::Arc::new(Mutex::new(HashMap::new())),
             files: std::sync::Arc::new(Mutex::new(HashMap::new())),
         }
     }
@@ -577,9 +601,9 @@ impl SessionLogger {
     /// file is trimmed to ~2000 lines at close, and the read happens once rather
     /// than per event.
     fn next_seq(&self, sid: &str) -> u64 {
-        let mut seqs = self.seq.lock().unwrap_or_else(|p| p.into_inner());
+        let mut seqs = SEQ.lock().unwrap_or_else(|p| p.into_inner());
         let n = seqs
-            .entry(sid.to_string())
+            .entry(format!("{}\0{sid}", self.dir.display()))
             .or_insert_with(|| self.max_seq_on_disk(sid));
         *n += 1;
         *n
@@ -910,6 +934,26 @@ impl SessionLogger {
             }
             events.push(v);
         }
+        // ORDER BY `seq`, NOT BY WHEN THE BYTES LANDED.
+        //
+        // Two logger instances write this file with INDEPENDENT buffers, so
+        // their events interleave on disk in flush order. The long-lived
+        // terminal-plugin writer keeps a persistent `BufWriter` per session and
+        // flushes only at command boundaries (round-58); a web-layer write
+        // flushes immediately. A buffered `output` therefore lands AFTER an
+        // `asked` that another instance already wrote.
+        //
+        // Observed on a real run: the file read `1, 2, 4, 5, 6, 3, 7, …` — the
+        // buffered event flushed six events late. Returning that order breaks
+        // the documented "per-session monotonic seq" contract, and consumers
+        // lean on it: the panel keeps `seq` as its "nothing new" watermark, so
+        // an event numbered BELOW the watermark is treated as already seen and
+        // silently dropped from the rendered trail.
+        //
+        // Sorting is STABLE, so events that carry no `seq` (there are none
+        // today, but the header is skipped by key rather than by position)
+        // keep their file order relative to each other.
+        events.sort_by_key(|v| v.get("seq").and_then(|s| s.as_u64()).unwrap_or(u64::MAX));
         Some((events, max_seq))
     }
 
@@ -1068,15 +1112,21 @@ impl SessionLogger {
             let Some((events, max_seq)) = self.read_events(&sid) else {
                 continue;
             };
-            // Seed the in-memory counter from the file's max seq — the
-            // counter restarted at 0 after restart, so post-restart events
-            // re-used seqs that already existed on disk (violating the
-            // "per-session monotonic seq" contract; event-sourced consumers
-            // would mis-correlate) (round-55).
+            // Seed the SHARED counter from the file's max seq — after a
+            // restart it starts at 0, so post-restart events re-used seqs that
+            // already existed on disk (violating the "per-session monotonic
+            // seq" contract; event-sourced consumers would mis-correlate)
+            // (round-55).
+            //
+            // Same key as `next_seq`, including the dir: a counter seeded under
+            // one key and read under another is precisely the drift this map
+            // exists to prevent.
             if max_seq > 0 {
-                if let Ok(mut seqs) = self.seq.lock() {
-                    let slot = seqs.entry(sid.clone()).or_insert(0);
-                    *slot = max_seq;
+                if let Ok(mut seqs) = SEQ.lock() {
+                    let slot = seqs
+                        .entry(format!("{}\0{sid}", self.dir.display()))
+                        .or_insert(0);
+                    *slot = (*slot).max(max_seq);
                 }
             }
             // Track the positions of the last command/start and command/end.
@@ -1587,6 +1637,117 @@ mod tests {
         assert_eq!(st["kind"], "control", "last event folds to the handoff");
 
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE READ MUST BE ORDERED BY `seq`, NOT BY WHEN BYTES LANDED.
+    ///
+    /// Two logger instances write the SAME file with INDEPENDENT buffers, so
+    /// their events interleave on disk in flush order, not in seq order. The
+    /// long-lived terminal-plugin writer keeps a persistent `BufWriter` per
+    /// session and only flushes at command boundaries (round-58), while a
+    /// web-layer write flushes immediately — so a buffered `output` can land
+    /// AFTER a later `asked` that a different instance already wrote.
+    ///
+    /// OBSERVED ON A REAL DEVICE RUN: the file read
+    /// `1, 2, 4, 5, 6, 3, 7, 8, ...` — seq 3 was an output event flushed only
+    /// when the next command boundary arrived, six events late. `read_events`
+    /// returned that order verbatim.
+    ///
+    /// The contract the type documents is "per-session monotonic seq", and
+    /// consumers order by it: the panel keeps `seq` as its "nothing new"
+    /// watermark and uses it as a React key. Returning a sequence that goes
+    /// 4, 5, 6, 3 breaks the watermark (3 looks older than what it has seen) and
+    /// can drop an event from the rendered trail.
+    ///
+    /// Sorting at READ is the right fix: the write order across independent
+    /// buffers is not something the writer can control without serialising
+    /// every append through one lock, and the reader is where the ordering
+    /// promise is actually consumed.
+    #[test]
+    fn reading_a_session_orders_by_seq_not_by_flush_time() {
+        let dir = temp_dir("seqorder");
+        let plugin = SessionLogger::new(dir.clone());
+        let web = SessionLogger::new(dir.clone());
+
+        plugin.log_status("s", "opened"); // seq 1
+        plugin.flush_all();
+        web.log_control("s", "armed"); // seq 2, flushed immediately
+        plugin.log_output("s", "buffered bytes\n".to_string()); // seq 3 — BUFFERED
+        web.log_control("s", "asked"); // seq 4, flushed immediately
+        plugin.flush_all(); // seq 3 lands LAST
+
+        let events = web.events_of("s").0;
+        let seqs: Vec<u64> = events
+            .iter()
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .collect();
+        assert_eq!(seqs.len(), 4, "all four events present: {seqs:?}");
+        assert!(
+            seqs.windows(2).all(|w| w[0] < w[1]),
+            "reading must return events in seq order even though the BUFFERED \
+             one landed last (got {seqs:?}) — a consumer using seq as a \
+             watermark would drop the event that arrived out of order"
+        );
+    }
+
+    /// `seq` MUST BE UNIQUE EVEN WHEN THE FIRST WRITER HAS NOT FLUSHED.
+    ///
+    /// The existing `seq_stays_monotonic_across_logger_instances` passes only
+    /// because it ends every command first, and `log_command_end` FLUSHES — so
+    /// each new logger seeds from a disk that is already current. The counter
+    /// itself is per-INSTANCE (`SessionLogger::new` builds a fresh map), so a
+    /// fresh logger seeds from disk, and a disk that has not caught up hands it
+    /// a seq the first writer is about to use too.
+    ///
+    /// That is not a narrow race, it is the ordinary case: the terminal plugin
+    /// holds a long-lived logger whose `command/start` is BUFFERED (round-58
+    /// batches output and flushes on command boundaries), and every web-layer
+    /// write builds a NEW logger (`sessions_logger()`). So a gate question
+    /// arriving right after a command starts is the sequence that collides:
+    ///
+    ///   plugin:  start  -> seq 1 (buffered, disk still empty)
+    ///   web:     asked  -> seeds disk (0) -> seq 1   <-- DUPLICATE
+    ///
+    /// Consumers rely on uniqueness: the panel uses `seq` as a React key and as
+    /// its "nothing new" watermark, so a repeat is a dropped event and a
+    /// duplicated row at once.
+    #[test]
+    fn seq_is_unique_when_a_second_instance_writes_between_two_writes() {
+        let dir = temp_dir("seqstale");
+        // The long-lived plugin logger takes the FIRST event, so its in-memory
+        // counter is now at 1 — and it will not consult the disk again.
+        let plugin = SessionLogger::new(dir.clone());
+        plugin.log_command_start("s", "echo hi");
+        plugin.flush_all();
+
+        // A web-layer write builds a FRESH logger. It seeds from disk (max 1)
+        // and writes 2. Nothing tells the plugin's counter about this.
+        let web = SessionLogger::new(dir.clone());
+        web.log_control("s", "asked");
+        web.flush_all();
+
+        // The plugin's NEXT event: its counter was 1, so it hands out 2 —
+        // the value the web logger just used. STALE COUNTER, DUPLICATE SEQ.
+        plugin.log_status("s", "approved");
+        plugin.flush_all();
+
+        let seqs: Vec<u64> = web
+            .events_of("s")
+            .0
+            .iter()
+            .map(|e| e["seq"].as_u64().unwrap_or(0))
+            .collect();
+        assert_eq!(seqs.len(), 3, "all three events reached disk: {seqs:?}");
+        let mut uniq = seqs.clone();
+        uniq.sort_unstable();
+        uniq.dedup();
+        assert_eq!(
+            uniq.len(),
+            seqs.len(),
+            "seq repeated (got {seqs:?}) — the long-lived logger's counter went \
+             stale when the fresh instance wrote, so its next event reused the \
+             seq the other had just taken"
+        );
     }
 
     #[test]

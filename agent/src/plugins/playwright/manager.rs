@@ -584,8 +584,32 @@ mod manager_tests {
         assert_eq!(st.get("external"), Some(&serde_json::json!(true)));
 
         drop(listener);
-        let st = m.status().await;
-        assert_eq!(st.get("running"), Some(&serde_json::json!(false)));
+        // POLLED, NOT SAMPLED ONCE. Closing a listening socket is not
+        // instantaneous with respect to a concurrent `connect()`: the kernel
+        // still has to tear the socket down, and a connect that races that
+        // teardown can complete against it. Sampling once straight after
+        // `drop` therefore failed roughly one full-suite run in six — the flake
+        // this test has carried for many rounds, which made every red run
+        // ambiguous until the failing name was finally captured.
+        //
+        // Polling does NOT weaken the assertion: a `status()` that never
+        // notices the listener is gone exhausts the deadline and still fails.
+        // Verified by mutation — making the probe unconditionally healthy fails
+        // it after the full budget.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        let mut last = m.status().await;
+        while last.get("running") == Some(&serde_json::json!(true))
+            && std::time::Instant::now() < deadline
+        {
+            tokio::time::sleep(std::time::Duration::from_millis(25)).await;
+            last = m.status().await;
+        }
+        assert_eq!(
+            last.get("running"),
+            Some(&serde_json::json!(false)),
+            "5s after the listener was dropped, status must stop reporting a \
+             running instance (got {last}) — the teardown race is over by now"
+        );
     }
 
     #[tokio::test]
