@@ -114,6 +114,20 @@ pub fn retention_sweep(cfg: &Config) -> RetentionSweep {
     )
 }
 
+/// Close every run the previous process left open, at boot. Returns how many.
+///
+/// The glue counterpart of [`retention_sweep`]: it resolves the real directory
+/// through `paths.rs` and delegates to the tested core in `runs`, so `main.rs`
+/// needs no access to that private module — the same design, for the same
+/// reason.
+///
+/// Deliberately NOT wired into `AppState::new` or the plugin registry, exactly
+/// like the sweep above: those are constructed by tests, and this would mutate
+/// the developer's real `DataDir` from the test suite.
+pub fn close_abandoned_runs(outcome: &str) -> usize {
+    runs::abandon_open_runs(&paths::runs_dir(), outcome)
+}
+
 /// The sweep, with its two directories and the clock as parameters — the
 /// testable core of [`retention_sweep`].
 pub(crate) fn retention_sweep_in(

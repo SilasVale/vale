@@ -227,6 +227,28 @@ fn append(dir: &Path, rec: &Value) {
         .append(true)
         .open(runs_path(dir))
     {
+        // TORN-TAIL REPAIR ONLY — no version header.
+        //
+        // `crate::jsonl::prepare_append` does two things: write a header into a
+        // fresh file, and terminate a torn final line. This log wants only the
+        // second. Adding a header would put a record with no `run_id` at the
+        // head of the file, and `recent` returns every parseable line — so the
+        // header would surface as a phantom entry to `/api/operation` and every
+        // other reader of the timeline. Verified: adding it failed four
+        // existing tests with a record count one too high.
+        //
+        // The torn tail is the part that matters: a crash mid-write leaves a
+        // fragment with no trailing newline, the next append FUSES onto it, and
+        // two records become one unparseable line. `session_log` and the memory
+        // store have guarded against that since round 111; runs.rs never did,
+        // which made it the ONE append-only log in the crate without the rule.
+        //
+        // Found by the abandon-pass test below: it appends onto a deliberately
+        // torn log and then cannot read back the record it just wrote — the
+        // orphan was found, closed, and the closure was invisible.
+        if crate::jsonl::has_torn_tail(&runs_path(dir)).unwrap_or(false) {
+            let _ = f.write_all(b"\n");
+        }
         let _ = writeln!(f, "{rec}");
     }
 }
@@ -273,6 +295,76 @@ pub(crate) struct Trimmed {
 /// A line that does not parse is KEPT: an unknown age is not an old age, and
 /// the failure mode of guessing is destroyed history. [`recent`] already skips
 /// such a line when reading, so keeping it costs nothing but bytes.
+/// Close every run the process left open. Returns how many were closed.
+///
+/// `end` has exactly ONE caller — the `run_end` tool — so nothing closes a run
+/// when the agent dies with one in flight. The restarts that do that are the
+/// ordinary ones: the 60 s watchdog, a crash, and `vale update` (which kills the
+/// agent BY DESIGN). A run killed mid-flight therefore stays "open" forever, and
+/// after a day an abandoned run is indistinguishable from a live one — the panel
+/// says exactly that today ("no end recorded ... the client may have stopped, or
+/// the agent may have restarted", `panel-react/src/lib/runs.ts`).
+///
+/// This is the run-family sibling of the `abandoned` approval event: same loss,
+/// same restarts, one event family over.
+///
+/// TWO RULES, both learned the hard way elsewhere in this crate:
+///   * only a `run/begin` with NO `run/end` is closed. An id may appear many
+///     times, so this is counted per id, not per line.
+///   * it is IDEMPOTENT by construction: it appends `run/end`, and the next pass
+///     sees the run as closed. Without that, every boot would append another
+///     record (the trap the approval arm hit in round 18).
+///
+/// `outcome` is free text and the caller supplies it, because WHY a run stopped
+/// is something this function cannot know — it only knows nobody said.
+pub(crate) fn abandon_open_runs(dir: &Path, outcome: &str) -> usize {
+    // NO LOCK HERE, and that is deliberate: `append` already takes `RUNS_LOCK`
+    // across open+write+close, so holding it around the whole pass would be a
+    // SELF-DEADLOCK — the first `end()` below would block on a lock this thread
+    // already owns, and the test hung for 60 s proving it.
+    //
+    // Losing the outer lock costs nothing, because this pass does not need to be
+    // atomic: each `end()` is individually atomic, and a run that begins WHILE
+    // the pass runs is either seen by the read (and closed, which is correct —
+    // the process is restarting) or not seen (and stays legitimately open). The
+    // next boot closes it if it was really abandoned.
+    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+        return 0; // no log: nothing was ever begun.
+    };
+    // Unreadable lines are skipped, never fatal — the same stance `trim` and
+    // `known` take, and the reason a torn final line cannot stop boot.
+    let mut open: Vec<String> = Vec::new();
+    let mut seen: std::collections::HashSet<String> = std::collections::HashSet::new();
+    for line in contents.lines() {
+        let Ok(v) = serde_json::from_str::<Value>(line) else {
+            continue;
+        };
+        let Some(id) = v.get("run_id").and_then(|r| r.as_str()) else {
+            continue;
+        };
+        match v.get("kind").and_then(|k| k.as_str()) {
+            Some("run/begin") => {
+                if seen.insert(id.to_string()) {
+                    open.push(id.to_string());
+                }
+            }
+            Some("run/end") => {
+                open.retain(|o| o != id);
+            }
+            _ => {}
+        }
+    }
+    if open.is_empty() {
+        return 0;
+    }
+    // Appended through the module's own writer, so the client-id cap and the
+    // file-header hygiene stay in ONE place.
+    for id in &open {
+        end(dir, id, Some(outcome));
+    }
+    open.len()
+}
+
 pub(crate) fn trim(dir: &Path, max_age_days: u64, now_ms: u64) -> Trimmed {
     let mut out = Trimmed::default();
     let _guard = RUNS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
@@ -318,6 +410,96 @@ mod tests {
         let d = std::env::temp_dir().join(format!("vale-runs-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    /// A run that died with the process gets a terminal record.
+    ///
+    /// `end` has exactly ONE caller — the `run_end` tool. Nothing closes an open
+    /// run at boot, and the restarts that strand one are the ordinary ones: the
+    /// 60 s watchdog, a crash, and `vale update`, which kills the agent BY
+    /// DESIGN. So a run killed mid-flight stays "open" forever, and the panel
+    /// says so in as many words ("no end recorded ... the client may have
+    /// stopped, or the agent may have restarted" — lib/runs.ts).
+    ///
+    /// This is the same loss round 18 closed for approval questions, in the
+    /// sibling event family: after a restart, a run that stopped because the
+    /// device went down must not look like one that is still going.
+    #[test]
+    fn abandon_open_runs_closes_what_the_process_left_open() {
+        let d = dir("abandon");
+        let finished = begin(&d, Some("finished"), None);
+        end(&d, &finished, Some("done"));
+        let orphan = begin(&d, Some("orphan"), None);
+        // A second open run, to prove the pass closes EVERY orphan, not one.
+        let orphan2 = begin(&d, Some("orphan2"), None);
+
+        let closed = abandon_open_runs(&d, "device restarted");
+        assert_eq!(closed, 2, "both orphans must be closed: {closed}");
+
+        let recs = recent(&d, 20);
+        let ends: Vec<&serde_json::Value> = recs
+            .iter()
+            .filter(|r| r["kind"] == "run/end" && r["outcome"] == "device restarted")
+            .collect();
+        assert_eq!(ends.len(), 2, "one terminal record per orphan");
+        let ended: Vec<String> = ends
+            .iter()
+            .map(|r| r["run_id"].as_str().unwrap().to_string())
+            .collect();
+        assert!(
+            ended.contains(&orphan) && ended.contains(&orphan2),
+            "by id: {ended:?}"
+        );
+
+        // The already-finished run keeps its own outcome — the pass must not
+        // re-close it or overwrite what the client reported.
+        let done: Vec<&serde_json::Value> = recs
+            .iter()
+            .filter(|r| r["run_id"] == finished.as_str() && r["kind"] == "run/end")
+            .collect();
+        assert_eq!(done.len(), 1, "a closed run is not closed again");
+        assert_eq!(done[0]["outcome"], "done", "and its outcome is untouched");
+
+        // IDEMPOTENT, or every boot appends another record (round 18's lesson).
+        assert_eq!(
+            abandon_open_runs(&d, "device restarted"),
+            0,
+            "a second pass finds nothing open"
+        );
+    }
+
+    /// A log that is absent or unreadable is not an error — the runs log is
+    /// best-effort everywhere else, and boot must never fail on it.
+    #[test]
+    fn abandon_open_runs_tolerates_a_missing_or_torn_log() {
+        let d = dir("abandon-missing");
+        assert_eq!(
+            abandon_open_runs(&d, "device restarted"),
+            0,
+            "no file, no panic"
+        );
+
+        // A torn final line must not abort the pass: every OTHER record is
+        // still readable, so the orphan before it is still found.
+        let id = begin(&d, Some("before-tear"), None);
+        let p = runs_path(&d);
+        let mut raw = std::fs::read_to_string(&p).unwrap();
+        raw.push_str("{\"kind\":\"run/be");
+        std::fs::write(&p, raw).unwrap();
+        // NOTE: the torn line has NO trailing newline, exactly as a crash
+        // mid-`write` leaves it. Appending straight onto it FUSES the new record
+        // into the fragment — the round-111 defect, one file over — so the
+        // `run/end` this pass writes would be unreadable. `append` repairs the
+        // torn tail first (`jsonl::prepare_append`), which is why the assertion
+        // below can hold at all.
+        assert_eq!(
+            abandon_open_runs(&d, "device restarted"),
+            1,
+            "found the orphan"
+        );
+        assert!(recent(&d, 20)
+            .iter()
+            .any(|r| r["run_id"] == id.as_str() && r["kind"] == "run/end"));
     }
 
     /// A run is minted, labelled, and closable — readable back in order.

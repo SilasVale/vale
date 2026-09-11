@@ -307,6 +307,40 @@ const RETENTION_SWEEP_SECS: u64 = 6 * 3600;
 /// with no live session has no file to file it in. Tracing is the device-level
 /// record, it is what `session_log::prune_stale`'s own caller uses, and it is
 /// readable remotely through `GET /api/logs`.
+/// What an abandoned run's outcome says.
+///
+/// Deliberately NOT "failed": nothing here can know why the process stopped,
+/// and a run whose client simply never called `run_end` did not necessarily
+/// fail. The wording states only what IS known — nobody recorded an end — the
+/// same discipline the `abandoned` approval event follows.
+const ABANDONED_RUN_OUTCOME: &str = "device restarted before the run ended";
+
+/// Close every run the PREVIOUS process left open.
+///
+/// A run is opened by the `run_begin` tool and closed by `run_end` — and
+/// NOTHING closes it if the agent dies in between. Those deaths are ordinary:
+/// the 60 s watchdog, a crash, and `vale update`, which kills the agent BY
+/// DESIGN. A run killed mid-flight therefore stayed "open" forever, so after a
+/// day an abandoned run and a live one looked identical (the panel says so in
+/// as many words: "no end recorded ... the client may have stopped, or the
+/// agent may have restarted").
+///
+/// This is the run-family sibling of the `abandoned` approval event and belongs
+/// at BOOT for the same reason: it is the one moment that can tell "nobody
+/// said" apart from "still going".
+///
+/// The count goes to `agent.log` and not to the session audit trail, for the
+/// categorical reason `report_retention` above explains: this is a DEVICE-level
+/// fact and that trail is per-session by construction.
+fn close_abandoned_runs() {
+    let closed = vale_agent::close_abandoned_runs(ABANDONED_RUN_OUTCOME);
+    if closed > 0 {
+        tracing::info!(
+            "[vale-agent] closed {closed} run(s) the previous process left open ({ABANDONED_RUN_OUTCOME})"
+        );
+    }
+}
+
 fn report_retention(config: &Config) -> vale_agent::RetentionSweep {
     let swept = vale_agent::retention_sweep(config);
     if swept.total() > 0 {
@@ -472,6 +506,9 @@ pub(crate) async fn run_server(config_path: PathBuf) {
     // (a hard floor on the window) lives in `evidence::prune` / `runs::trim`,
     // so neither depends on this ordering alone.
     report_retention(&config);
+    // Before the server binds, so no new run can be mistaken for one the
+    // previous process abandoned. Idempotent: a second call finds nothing open.
+    close_abandoned_runs();
     out!("  Server: {}:{}", config.server.host, config.server.port);
     out!("  Name:   {}", config.server.name);
     // system_file_upload posts to the gateway /api/upload with the device
