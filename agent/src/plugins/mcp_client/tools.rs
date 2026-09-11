@@ -602,8 +602,8 @@ fn record_mcp_action(tool: &str, args: &serde_json::Value, dur_ms: u128, ok: boo
     let ts = crate::now_millis();
     crate::evidence::append_action_line(
         &pwout,
+        ts,
         &serde_json::json!({
-            "ts": ts,
             "duration_ms": dur_ms,
             "exit_code": if ok { 0 } else { 1 },
             "timed_out": false,
@@ -635,8 +635,8 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
     let dir = crate::paths::evidence_dir();
     crate::evidence::append_action_line(
         &dir,
+        ts,
         &serde_json::json!({
-            "ts": ts,
             "duration_ms": 0,
             "exit_code": 0,
             "timed_out": false,

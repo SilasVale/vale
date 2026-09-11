@@ -223,8 +223,7 @@ fn tool_browser_run_script() -> ToolDef {
                 let stdout_full = trunc(stdout);
                 let stderr_full = trunc(stderr);
                 let tail = |s: &str| s.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>();
-                crate::evidence::append_action_line(&out_dir, &serde_json::json!({
-                    "ts": ts,
+                crate::evidence::append_action_line(&out_dir, ts, &serde_json::json!({
                     "duration_ms": duration_ms,
                     "exit_code": exit_code,
                     "timed_out": timed_out,

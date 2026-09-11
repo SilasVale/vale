@@ -42,6 +42,22 @@ const MAX_CLOSED_LOG_LINES: usize = 2000;
 /// copies of a cap is how one of them drifts.
 const COMMAND_MAX_BYTES: usize = 4096;
 
+/// Both audit stamps, derived from ONE elapsed-since-epoch reading.
+///
+/// A pure function of a `Duration` on purpose. The first version of this
+/// stamped the pair inline from one `SystemTime::now()`, and the pin that was
+/// supposed to prove it ("do they describe the same instant?") PASSED a mutant
+/// that called the clock TWICE — two reads nanoseconds apart land in the same
+/// second essentially always, so the assertion could not see the difference.
+/// A probabilistic pin for a structural claim is not a pin.
+///
+/// Taking the duration as an argument makes the claim checkable exactly: a
+/// duration that straddles a second boundary proves both stamps come from the
+/// same value, because no pair of separate reads could produce that pair.
+fn stamps_from(d: std::time::Duration) -> (u64, u64) {
+    (d.as_secs(), d.as_millis() as u64)
+}
+
 /// Apply the command cap with its truncation notice. ONE rule for both entry
 /// points — the plain log and the intent-carrying one — so a command cannot ride
 /// the trail uncapped just because of which method the caller happened to use.
@@ -159,6 +175,18 @@ fn trim_file(path: &std::path::Path) {
 pub struct SessionEvent {
     pub seq: u64,
     pub ts: u64,
+    /// The SAME instant as `ts`, in MILLISECONDS (round-12).
+    ///
+    /// `ts` is seconds here and MILLISECONDS in the browser's actions.jsonl —
+    /// one field name, two units, which is the silent-merge hazard this crate
+    /// already pinned helpers against in R115. A merged operation timeline must
+    /// therefore never sort on `ts`; it sorts on `ts_ms`, whose name states its
+    /// unit.
+    ///
+    /// Both are stamped from ONE clock read in `log()` (below), so they cannot
+    /// drift apart: `ts_ms / 1000` always equals `ts`. Pinned by
+    /// `ts_and_ts_ms_come_from_one_clock_read`.
+    pub ts_ms: u64,
     pub kind: String, // "command/start" | "output" | "command/end" | "status"
     #[serde(skip_serializing_if = "Option::is_none")]
     pub command: Option<String>,
@@ -231,6 +259,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "command/start".into(),
             command: Some(command.to_string()),
             text: None,
@@ -262,6 +291,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "output".into(),
             command: None,
             text: Some(text),
@@ -278,6 +308,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "command/end".into(),
             command: None,
             text: None,
@@ -294,6 +325,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "status".into(),
             command: None,
             text: None,
@@ -334,6 +366,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "plan".into(),
             command: None,
             text,
@@ -369,6 +402,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "approval".into(),
             command: None,
             // Absent rather than empty when there is no subject, so a reader can
@@ -401,6 +435,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "goal".into(),
             command: None,
             text: Some(text.to_string()),
@@ -433,6 +468,7 @@ impl SessionEvent {
         Self {
             seq,
             ts: crate::unix_now(),
+            ts_ms: crate::now_millis(),
             kind: "control".into(),
             command: None,
             text: None,
@@ -515,7 +551,22 @@ impl SessionLogger {
     /// the terminal must keep working when the audit trail cannot.
     pub fn log(&self, sid: &str, ev: SessionEvent) {
         let seq = self.next_seq(sid);
-        let ev = SessionEvent { seq, ..ev };
+        // ONE clock read for both stamps. The constructors each set `ts` too,
+        // but stamping here — the single write path every event passes through —
+        // is what makes the pair impossible to disagree: `ts` is derived from
+        // the same instant as `ts_ms` rather than captured separately a few
+        // microseconds earlier.
+        let (ts, ts_ms) = stamps_from(
+            std::time::SystemTime::now()
+                .duration_since(std::time::UNIX_EPOCH)
+                .unwrap_or_default(),
+        );
+        let ev = SessionEvent {
+            seq,
+            ts,
+            ts_ms,
+            ..ev
+        };
         let line = serde_json::to_string(&ev).unwrap_or_default();
         // Per-session persistent writer (round-58): the old open→append→drop
         // per 4KiB chunk was 3 syscalls × 100-256 chunks/s × 16 sessions —
@@ -1558,6 +1609,98 @@ mod tests {
             "an event written through a live handle AFTER recovery must survive — \
              recovery renaming the file orphans that handle and swallows it. \
              Statuses seen: {statuses:?}"
+        );
+    }
+
+    /// `ts` IS SECONDS AND `ts_ms` IS MILLISECONDS — the merge contract.
+    ///
+    /// The browser's action feed stamps MILLISECONDS in a field named `ts`; this
+    /// trail stamps SECONDS in a field with the same name. Whoever merges the two
+    /// into one operation timeline must sort on `ts_ms`, because sorting on `ts`
+    /// puts every browser action ~50 years in the future while looking perfectly
+    /// ordered — a silent failure, which is why it gets a pin.
+    #[test]
+    fn ts_and_ts_ms_come_from_one_clock_read() {
+        // Driven through the PURE function, not through a live clock read.
+        //
+        // The first version of this test wrote an event and compared the two
+        // fields, and it PASSED a mutant that read the clock twice: two reads
+        // nanoseconds apart land in the same second essentially always, so the
+        // assertion could not see the difference it existed to catch.
+        //
+        // A duration that STRADDLES a second boundary is the case no pair of
+        // separate reads can produce: `…999ms` and `…(1s)000ms` are the same
+        // instant, so both stamps must agree on it.
+        let d = std::time::Duration::from_millis(1_700_000_000_999);
+        let (ts, ts_ms) = stamps_from(d);
+        assert_eq!(ts, 1_700_000_000, "ts is the whole second");
+        assert_eq!(ts_ms, 1_700_000_000_999, "ts_ms keeps the milliseconds");
+        assert_eq!(
+            ts_ms / 1000,
+            ts,
+            "the two stamps must describe the SAME instant — a pair from separate \
+             reads can disagree here whenever it straddles a boundary"
+        );
+
+        // And the write path really does use it (not a re-implementation).
+        let dir = temp_dir("tsms");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_status("s1", "opened");
+        drop(logger);
+        let e = SessionLogger::new(dir.clone()).events_of("s1").remove(0);
+        let (wts, wts_ms) = (
+            e["ts"].as_u64().expect("ts"),
+            e["ts_ms"].as_u64().expect("ts_ms"),
+        );
+        assert!(
+            wts > 1_700_000_000,
+            "ts must be a real epoch second, got {wts}"
+        );
+        assert!(
+            wts_ms > 1_700_000_000_000,
+            "ts_ms must be a real epoch MILLIsecond — a seconds value here means \
+             the two were swapped at a call site, got {wts_ms}"
+        );
+        assert_eq!(wts_ms / 1000, wts, "live stamps must also agree");
+    }
+
+    /// THE HAZARD ITSELF, made explicit: the two feeds' `ts` are different units.
+    ///
+    /// This is the assertion a merge author needs to see fail if they ever sort
+    /// the two feeds on `ts`. It documents the divergence as a FACT rather than
+    /// leaving it to be discovered.
+    #[test]
+    fn the_two_feeds_ts_fields_are_different_units() {
+        let dir = temp_dir("units");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_status("s1", "opened");
+        drop(logger);
+        let e = SessionLogger::new(dir.clone()).events_of("s1").remove(0);
+        let audit_ts = e["ts"].as_u64().unwrap();
+
+        // A browser action line, written through the shared writer, with a
+        // millisecond stamp as its producers supply.
+        let adir = dir.join("evidence");
+        std::fs::create_dir_all(&adir).unwrap();
+        let ms = crate::now_millis();
+        crate::evidence::append_action_line(&adir, ms, &serde_json::json!({"script": "x"}));
+        let actions = crate::evidence::recent_actions(&adir, 10);
+        let a = actions.first().expect("one action");
+
+        assert_eq!(
+            a["ts"].as_u64().unwrap(),
+            ms,
+            "the action feed's `ts` is MILLISECONDS"
+        );
+        assert_eq!(
+            a["ts_ms"].as_u64().unwrap(),
+            ms,
+            "and it also carries the explicit name the merge reads"
+        );
+        assert!(
+            a["ts_ms"].as_u64().unwrap() > audit_ts * 100,
+            "the two feeds' `ts` differ by ~1000x — sorting on `ts` would \
+             interleave them wrongly while looking ordered"
         );
     }
 

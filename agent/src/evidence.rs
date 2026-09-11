@@ -41,14 +41,37 @@ pub(crate) fn actions_path(dir: &Path) -> PathBuf {
 /// observability, so a missing dir / unwritable file must never fail the tool
 /// call that produced the action (the caller creates the dir when it needs
 /// other evidence artifacts anyway).
-pub(crate) fn append_action_line(dir: &Path, line: &impl std::fmt::Display) {
+///
+/// THE TIMESTAMP IS A PARAMETER, IN MILLISECONDS, and that is deliberate.
+/// This feed's `ts` is milliseconds while the terminal audit trail's `ts` is
+/// SECONDS — the same field name carrying two units, which is exactly the
+/// silent-merge hazard `unix_now`/`now_millis` were pinned against in R115
+/// ("one word apart, 1000x apart in value"). Sorting the two feeds together by
+/// `ts` would put every browser action ~50 years in the future while looking
+/// perfectly ordered.
+///
+/// So the unit lives in the SIGNATURE, where a caller cannot miss it, and this
+/// writer stamps BOTH names from that one number:
+///
+///   `ts`     — milliseconds (legacy name, kept: the panel's evidence drawer
+///              feeds it to `new Date(...)`, which expects ms)
+///   `ts_ms`  — milliseconds, EXPLICIT. The merge reads only this.
+///
+/// A caller therefore cannot introduce a seconds value without the argument
+/// name contradicting it at the call site.
+pub(crate) fn append_action_line(dir: &Path, ts_ms: u64, action: &Value) {
     use std::io::Write;
+    let mut v = action.clone();
+    if let Some(o) = v.as_object_mut() {
+        o.insert("ts".into(), Value::from(ts_ms));
+        o.insert("ts_ms".into(), Value::from(ts_ms));
+    }
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
         .open(actions_path(dir))
     {
-        let _ = writeln!(f, "{line}");
+        let _ = writeln!(f, "{v}");
     }
 }
 
@@ -147,7 +170,7 @@ mod tests {
     fn append_writes_oldest_first_and_reads_newest_first() {
         let dir = tmp_dir("roundtrip");
         for i in 1..=3 {
-            append_action_line(&dir, &serde_json::json!({ "n": i }));
+            append_action_line(&dir, crate::now_millis(), &serde_json::json!({ "n": i }));
         }
         // On-disk order is the append order (oldest first) — the contract
         // producers and any external tail-reader rely on.
@@ -189,7 +212,7 @@ mod tests {
     fn append_into_a_missing_dir_is_best_effort() {
         let dir = std::env::temp_dir().join(format!("vale-evidence-absent-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
-        append_action_line(&dir, &serde_json::json!({ "n": 1 }));
+        append_action_line(&dir, crate::now_millis(), &serde_json::json!({ "n": 1 }));
         assert!(
             !actions_path(&dir).exists(),
             "no dir is created and no panic is raised"
