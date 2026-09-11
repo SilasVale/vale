@@ -488,7 +488,81 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 22 (one seq counter, a reader that orders by it,
+Last updated: 2026-09-11 round 23 (a trimmed trail says where it begins, and the
+session list stopped reading twenty megabytes — MEASURED, then RELEASED).
+Commits: ccc960e0, plus 1.2.327.
+  (1) A TRIMMED TRAIL NOW SAYS SO. A closed session's file is trimmed to ~2000
+  lines (round-98/99: a serial console scrolling for hours grew an unbounded
+  `.jsonl` on the install disk), and the reader returned the SURVIVORS with no
+  indication that anything was dropped — so a consumer could not tell a short
+  session from a long one whose head was discarded, and the panel's own comment
+  claimed `/api/sessions/{sid}` "returns the FULL audit log" while it does not.
+  `events_of` now returns a `SessionRecord { events, found, first_seq }`; a
+  struct rather than a tuple because the three fields answer three different
+  questions and two are easy to transpose when positional (clippy already
+  rejected an anonymous 7-tuple in this crate for the same reason). PROVEN ON A
+  REAL TRIMMED SESSION on d1: `found=True first_seq=34 events=26` — events 1-33
+  are gone, and before this round the panel drew those 26 as the whole trail.
+  (2) TWO FALSEHOODS, AND THE SECOND IS THE INSTRUCTIVE ONE. I corrected
+  `TrajectoryView.tsx`'s "returns the FULL audit log" comment, and in the SAME
+  edit added a comment above ArchivePage's empty-record line noting the old
+  wording was "made untrue" by round 10's `found` flag — WHILE LEAVING THE
+  UNTRUE SENTENCE SHIPPING TWO LINES BELOW IT. A DELEGATED SCOUT CAUGHT IT, and
+  its reasoning is the part worth keeping: the branch is reachable only with
+  `found:true`, so both clauses were false. A comment that names a lie and
+  leaves it in place is worse than no comment, because it reads as having
+  handled it. That is a new failure mode for this log's "comment claims what the
+  code does not do" family: the comment was TRUE about the code and still wrong,
+  because the fix it described had not been made.
+  (3) THE SESSION LIST READ EVERY FILE END TO END, AND I MEASURED BEFORE
+  FIXING. A scout flagged the route as a cost concern and CORRECTLY REFUSED to
+  rank it without a number ("I could not read d1's disk in this session, so it is
+  premature"). So the number came first: **618 files, 21.01 MB total, 10.09 MB in
+  the SINGLE largest file, `/api/sessions` 300 ms** — the route read ten
+  megabytes to look at one line, on the async worker thread (`web/mod.rs` has no
+  `spawn_blocking` on this path), on a route the panel refetches on every
+  `sessions-changed` push and on focus. A LIVE session's file is never trimmed
+  (trim happens at close), so the worst file grows unbounded between closes.
+  `last_event_of` reads a 64 KiB tail and walks back to the last line that
+  parses. AFTER, ON THE SAME DEVICE, WITH MORE SESSIONS: **620 rows, 101 ms** —
+  3.3x, measured before and after rather than asserted.
+  (4) BUILDING THAT TEST FOUND A SECOND, UNRELATED DEFECT. `read_events` does
+  `read_to_string`, which requires the WHOLE file to be valid UTF-8 — so ONE
+  damaged byte anywhere made `terminal_state_of` return `None` and the session
+  VANISH FROM THE LIST entirely, permanently, because nothing rewrites the file.
+  A crash mid-write of a multi-byte character leaves exactly that. The new reader
+  takes bytes and decodes lossily, so a damaged region cannot erase a healthy
+  file.
+  (5) AND THE TEST ITSELF IS THE ROUND'S METHOD LESSON. My first version asserted
+  the right ROW and PASSED against the old whole-file reader — a behaviour test
+  cannot see "it reads too much", and it cannot see a robustness property that
+  the old code happens to satisfy on intact input. The discriminator is invalid
+  UTF-8 in a file's HEAD whose tail is healthy: the whole-file read fails and
+  loses the session; a tail read never looks at it. Both halves are
+  mutation-proven — restoring the whole-file read fails on the UTF-8 assertion,
+  removing the walk-back fails on the torn tail.
+  (6) RELEASED 1.2.327. CI and the release workflow green on the tag;
+  keep-latest left ONE release and ONE tag; the dual-builder audit reported the
+  STRONGER **WARN** verdict for the third consecutive release (every
+  source-derived file matches INCLUDING the exe; only container bytes differ).
+  Verified on d1 by effect: `release: 1.2.327`, receipt `update requested 1.2.326
+  -> 1.2.327`, the route at 101 ms, and `first_seq` answering a real trimmed
+  session.
+  (7) SCOUT FINDINGS NOT ACTED ON, recorded with their evidence so the next
+  round does not re-derive them: the durable record cannot say what a session WAS
+  (`sessions.rs` logs `log_status(&id,"opened")` with no kind/target/label;
+  `/api/sessions` answers `{id,state}` only, so the 617 rows are opaque ids after
+  a reload — the version header already carries caller-supplied JSON and `age_of`
+  already reads its first line, so the plumbing exists; the open question is
+  whether an ssh `target` belongs on disk for 30 days). The scout also CLEANED
+  four candidate defects as false positives (`operation.rs` dropping `reason`/`ts`
+  has no consumer; `timed_out` IS carried; the operation feed's ts_ms ordering
+  cannot invert on the kinds it includes; the panel's null-ts arms are
+  unreachable but harmless), which is worth as much as a finding.
+  Gates: agent 566 default / 617 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; panel 467 + build.
+
+Previous round: 2026-09-11 round 22 (one seq counter, a reader that orders by it,
 and a flake carried since round 11 finally killed — then RELEASED). Commit:
 6fa4313f, plus 1.2.326.
   (1) `seq` WAS NOT UNIQUE, AND CONSUMERS DEPEND ON IT. The counter was
