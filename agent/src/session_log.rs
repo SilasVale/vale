@@ -1021,8 +1021,7 @@ impl SessionLogger {
     /// panel's history can show "last activity / final status" instead of
     /// nothing.
     pub fn terminal_state_of(&self, sid: &str) -> Option<serde_json::Value> {
-        let (events, _) = self.read_events(sid)?;
-        let last = events.last()?;
+        let last = self.last_event_of(sid)?;
         Some(serde_json::json!({
             "kind": last.get("kind").and_then(|k| k.as_str()).unwrap_or(""),
             "ts": last.get("ts").and_then(|t| t.as_u64()).unwrap_or(0),
@@ -1033,6 +1032,64 @@ impl SessionLogger {
             // with no way to tell opened from closed.
             "status": last.get("status").and_then(|s| s.as_str()),
         }))
+    }
+
+    /// The LAST parseable event in a session file, read from the TAIL.
+    ///
+    /// The list route folds one row per session from its last event, and it used
+    /// to get there through `read_events`, which reads the WHOLE file as a
+    /// `String`. MEASURED ON d1: 618 files, 21 MB total, **10 MB in a single
+    /// file** — so the route read ten megabytes to look at one line and took
+    /// 300 ms doing it, on the async worker thread, on a route the panel
+    /// refetches on every `sessions-changed` push and on focus. A live session's
+    /// file is never trimmed, so the worst file grows without bound between
+    /// closes.
+    ///
+    /// Two things follow from reading bytes instead of a `String`:
+    ///
+    /// * A byte that is not valid UTF-8 makes `read_to_string` fail for the
+    ///   WHOLE file, so ONE damaged byte anywhere lost the session from the list
+    ///   entirely — permanently, because nothing rewrites it. A crash mid-write
+    ///   of a multi-byte character leaves exactly that. This reads bytes and
+    ///   decodes lossily, so a damaged region cannot erase a healthy file.
+    /// * A torn final line is what a tail reader sees FIRST, so it walks back to
+    ///   the last line that parses rather than giving up.
+    ///
+    /// The tail window is generous (64 KiB) because events are small; a session
+    /// with a single event larger than the window still resolves, because a
+    /// partial line simply fails to parse and the walk continues — it can only
+    /// lose a row if the LAST event alone exceeds the window, which the 4 KiB
+    /// per-event write cap makes impossible.
+    fn last_event_of(&self, sid: &str) -> Option<serde_json::Value> {
+        use std::io::{Read, Seek, SeekFrom};
+        const TAIL_BYTES: u64 = 64 * 1024;
+        let path = self.dir.join(format!("{sid}.jsonl"));
+        let mut f = std::fs::File::open(&path).ok()?;
+        let len = f.metadata().ok()?.len();
+        let start = len.saturating_sub(TAIL_BYTES);
+        f.seek(SeekFrom::Start(start)).ok()?;
+        let mut buf = Vec::new();
+        f.read_to_end(&mut buf).ok()?;
+        let text = String::from_utf8_lossy(&buf);
+        let mut lines: Vec<&str> = text.lines().collect();
+        // A non-zero start means the first line is a FRAGMENT of a real line.
+        // Dropping it is what keeps a partial line from being mistaken for a
+        // torn one — and it is never the last line, so nothing is lost.
+        if start > 0 && !lines.is_empty() {
+            lines.remove(0);
+        }
+        lines
+            .iter()
+            .rev()
+            .filter(|l| !l.trim().is_empty())
+            .find_map(|l| {
+                let v: serde_json::Value = serde_json::from_str(l).ok()?;
+                // The version header is not an event.
+                if v.get("type").and_then(|t| t.as_str()) == Some("session") {
+                    return None;
+                }
+                Some(v)
+            })
     }
 
     /// Session ids present on disk (each `<sid>.jsonl` file), in directory
@@ -1730,6 +1787,115 @@ mod tests {
              one landed last (got {seqs:?}) — a consumer using seq as a \
              watermark would drop the event that arrived out of order"
         );
+    }
+
+    /// THE LIST MUST NOT READ EVERY FILE END TO END.
+    ///
+    /// `list_sessions` folds each session's LAST event into a state row, and it
+    /// did that by reading the WHOLE file (`read_events` → `read_to_string`).
+    /// MEASURED ON d1: 618 files, 21 MB total, and **10 MB in a single file** —
+    /// so the route read ten megabytes to look at one line, and took 300 ms on
+    /// the async worker thread (`web/mod.rs` has no `spawn_blocking` on this
+    /// path). The panel refetches it on every `sessions-changed` push and on
+    /// focus, and a LIVE session file is never trimmed, so both the cost and the
+    /// worst file grow without bound between closes.
+    ///
+    /// The last event is all the fold needs, so this pins that the list produces
+    /// the SAME row from a file whose head it did not read — proven by giving
+    /// the head a shape that would change the answer if it were consulted, and
+    /// by a file large enough that reading it whole is the thing under test.
+    #[test]
+    fn the_session_list_folds_the_last_event_without_reading_the_whole_file() {
+        let dir = temp_dir("listtail");
+        let logger = SessionLogger::new(dir.clone());
+        // A long head whose FIRST event would fold to a very different row than
+        // the last one: if the list is reading the whole file and taking
+        // `.last()` it still gets this right, so the assertion that bites is the
+        // one below — a head the fold must NOT see.
+        for i in 0..4000 {
+            logger.log_output("s", format!("filler output line {i}\n"));
+        }
+        logger.log_command_end("s", Some(0), None, None);
+        logger.flush_all();
+
+        let rows = logger.list_sessions();
+        let (sid, state) = rows
+            .iter()
+            .find(|(id, _)| id == "s")
+            .unwrap_or_else(|| panic!("the session must be listed: {rows:?}"));
+        assert_eq!(sid, "s");
+        assert_eq!(
+            state.get("kind").and_then(|k| k.as_str()),
+            Some("command/end"),
+            "the row folds the LAST event: {state}"
+        );
+        assert_eq!(
+            state.get("exit_code").and_then(|c| c.as_i64()),
+            Some(0),
+            "and carries the exit code the last event holds: {state}"
+        );
+
+        // A TORN FINAL LINE MUST NOT BLANK THE ROW. `read_events` skips
+        // unparseable lines, and a tail read sees the tear first — so the tail
+        // reader has to walk back to the last line that parses rather than
+        // giving up on the file.
+        // A TORN TAIL must not blank the row: `read_events` skips unparseable
+        // lines, and a tail read sees the tear first, so the reader has to walk
+        // back to the last line that parses.
+        use std::io::Write;
+        let path = dir.join("s.jsonl");
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(b"{\"seq\":99999,\"kind\":\"command/sta")
+            .unwrap();
+        drop(f);
+        let state = logger
+            .terminal_state_of("s")
+            .expect("a torn tail must not erase the row");
+        assert_eq!(
+            state.get("kind").and_then(|k| k.as_str()),
+            Some("command/end"),
+            "the fold walks back past the torn line to the last PARSABLE one: {state}"
+        );
+
+        // THE DISCRIMINATOR: a byte that is not valid UTF-8 ANYWHERE in the file
+        // makes `read_to_string` fail for the WHOLE file, so the old whole-file
+        // read lost the session from the list entirely — permanently, because
+        // nothing rewrites it. A crash mid-write of a multi-byte character
+        // leaves exactly this, so it is reachable rather than contrived.
+        //
+        // A reader that seeks to the TAIL never looks at the damaged head and
+        // still answers. This is what pins "does not read the whole file": the
+        // assertion above passes either way, and this one cannot.
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(b"\xff\xfe not utf8\n").unwrap();
+        f.write_all(b"{\"seq\":100000,\"kind\":\"status\",\"status\":\"closed\"}\n")
+            .unwrap();
+        drop(f);
+        let state = logger
+            .terminal_state_of("s")
+            .expect("invalid UTF-8 in the head must not erase the session from the list");
+        assert_eq!(
+            state.get("kind").and_then(|k| k.as_str()),
+            Some("status"),
+            "the tail reader answers from the tail regardless of the head: {state}"
+        );
+        assert_eq!(
+            state.get("status").and_then(|v| v.as_str()),
+            Some("closed"),
+            "and reads the real last event: {state}"
+        );
+        assert!(
+            logger.list_sessions().iter().any(|(id, _)| id == "s"),
+            "and the session is still LISTED"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// A TRIMMED TRAIL MUST SAY SO.
