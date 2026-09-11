@@ -988,7 +988,17 @@ mod tests {
     /// disappears because a DELETED one is still being counted.
     #[test]
     fn a_soft_delete_does_not_get_live_records_evicted() {
-        let dir = std::env::temp_dir().join(format!("vale-mem-evict-{}", std::process::id()));
+        // A UNIQUE directory name. My first draft reused `vale-mem-evict-{pid}`,
+        // which `eviction_tombstones_persist_across_restart` above already
+        // owns — and these tests run in PARALLEL THREADS of one process, so the
+        // two stores shared a file: one test's `remove_dir_all` wiped the
+        // other's records and the load picked up a stranger's bytes. The
+        // symptom was a ledger reading 18 where 16 was written, intermittently,
+        // only under full-suite load, and never in isolation (20/20 green).
+        //
+        // The file's own `tmp_store` helper exists to prevent exactly this;
+        // hand-rolling a name is what reintroduced it.
+        let dir = std::env::temp_dir().join(format!("vale-mem-evict-live-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let limits = MemoryLimits {
             max_entries: 100,

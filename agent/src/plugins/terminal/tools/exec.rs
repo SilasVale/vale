@@ -1763,14 +1763,36 @@ mod tests {
         );
         // `kill -0 -PID` probes the whole group: it fails only when EVERY
         // member is gone, which is the actual promise being made here.
-        let group_alive = std::process::Command::new("kill")
-            .args(["-0", "--", &format!("-{pid}")])
-            .output()
-            .map(|o| o.status.success())
-            .unwrap_or(false);
+        //
+        // IT IS POLLED, NOT SAMPLED ONCE. A killed group member becomes a
+        // ZOMBIE, and `kill -0` succeeds on a zombie — its pid still exists
+        // until the reaper runs. On a loaded runner (this suite is 12 parallel
+        // binaries) that reaping can lag the direct child's by milliseconds, so
+        // a single sample straight after `wait_for_exit` intermittently saw a
+        // corpse and failed. That is what this test did, and it went red on CI
+        // while passing 20/20 locally — the classic tell of a load-dependent
+        // race rather than a broken kill.
+        //
+        // Polling does NOT weaken the assertion: a genuinely live member never
+        // disappears, so a kill that failed to reach the tree still fails here,
+        // just a second later. Verified by mutation — see the commit message.
+        let mut group_alive = true;
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(5);
+        while std::time::Instant::now() < deadline {
+            group_alive = std::process::Command::new("kill")
+                .args(["-0", "--", &format!("-{pid}")])
+                .output()
+                .map(|o| o.status.success())
+                .unwrap_or(false);
+            if !group_alive {
+                break;
+            }
+            tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+        }
         assert!(
             !group_alive,
-            "group {pid} still has live members — the kill did not reach the tree"
+            "group {pid} still has live members 5s after the group SIGKILL — \
+             the kill did not reach the tree (a zombie would have been reaped by now)"
         );
     }
 
