@@ -465,9 +465,12 @@ Last updated: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
   `"label" in record` check. Found by the PANEL agent going looking for the
   shape the docs implied. The doc now states the real shape and
   `an_absent_label_is_a_null_value_not_a_missing_key` pins it.
-  Gates: agent 559 passing feat-gated / 459 default (summed from the runners,
-  not counted by grep — this file's own R113 warns that grep-counting `#[test]`
-  over-counts), clippy -D warnings clean BOTH configs, fmt clean, xwin check
+  Gates: agent 559 feat-gated / 518 default (summed from the runners, and
+  CORRECTED by the adversarial verifier: my first log entry said "459 default",
+  which is the LIB count only — integration binaries are counted separately, and
+  the same pass showed the commit message's "59 integration" was really 58. Two
+  wrong numbers in one line, both from reading a partial sum as a total.)
+  clippy -D warnings clean BOTH configs, fmt clean, xwin check
   OK, module_map green; gateway 759; panel 350 (was 306) + build. NOT ON A
   DEVICE — the delivery gap from round 12 applies to all of this; no version
   bump yet, so nothing here is reachable by a user until a release round.

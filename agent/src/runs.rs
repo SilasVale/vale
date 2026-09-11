@@ -385,17 +385,30 @@ mod tests {
             files.len()
         );
 
+        // Words that mark a line as an AUTHORIZATION decision. Deliberately
+        // over-broad: this is a tripwire, and a false positive costs a rewrite
+        // of one comment line while a false negative costs the rule.
+        //
+        // `gate` and `authoriz` were added after an adversarial reviewer planted
+        // `let _gate = run_id == "x"` — a real decision the original list had no
+        // word for. Equality is NOT banned outright, because `known()` below
+        // legitimately compares an id; what is banned is a run_id near a word
+        // that says the comparison decides something.
         const VERBS: &[&str] = &[
             "authorize",
             "authorised",
             "authorized",
+            "authoriz",
             "is_allowed",
+            "allowed",
             "permission",
             "capability",
             "check_auth",
             "timing_safe_eq",
             "rate_limit",
             "deny",
+            "gate",
+            "forbid",
         ];
 
         for path in &files {
@@ -423,7 +436,7 @@ mod tests {
             }
             // Only production lines: a test may legitimately name both in order
             // to PROVE they are unrelated.
-            let production = text.split("#[cfg(test)]").next().unwrap_or(&text);
+            let production = production_prefix(&text);
             for (i, line) in production.lines().enumerate() {
                 // COMMENTS ARE SKIPPED, and the first run of this scanner is why:
                 // it flagged the doc comment that says a run_id must "never
@@ -459,6 +472,97 @@ mod tests {
     fn is_comment_line(line: &str) -> bool {
         let t = line.trim_start();
         t.is_empty() || t.starts_with("//")
+    }
+
+    /// The PRODUCTION part of a source file: everything before its first TEST
+    /// MODULE.
+    ///
+    /// Not `text.split("#[cfg(test)]")` — and the difference is the whole point
+    /// of this function. That naive split cuts at the first cfg(test)
+    /// ATTRIBUTE, and four files in this crate carry `#[cfg(test)]` on a single
+    /// mid-file helper item hundreds of lines before their `mod tests` block
+    /// (`plugins/terminal/mod.rs`, `web/sse.rs`, `tools/terminal/secrets.rs`,
+    /// `tools/terminal/connections.rs`). The scanner therefore stopped early and
+    /// skipped real production code while reporting a clean sweep.
+    ///
+    /// Found by an adversarial reviewer measuring the scan's COVERAGE instead of
+    /// trusting its verdict — which is the same lesson as the gate itself: a
+    /// check that cannot see the code it is checking is not a check.
+    fn production_prefix(text: &str) -> &str {
+        let lines: Vec<&str> = text.split_inclusive('\n').collect();
+        for (i, line) in lines.iter().enumerate() {
+            // A test module is `mod tests`, whatever attribute precedes it.
+            if !line.trim_start().starts_with("mod tests") {
+                continue;
+            }
+            // Walk back over the attributes attached to it; the production
+            // region ends where the cfg attribute begins.
+            for j in (0..i).rev() {
+                let t = lines[j].trim();
+                if t.is_empty() || t.starts_with("//") {
+                    continue;
+                }
+                if t.starts_with("#[cfg(") {
+                    let off: usize = lines[..j].iter().map(|l| l.len()).sum();
+                    return &text[..off];
+                }
+                break;
+            }
+        }
+        text
+    }
+
+    /// The scanner's own self-check: it must SEE production code that follows a
+    /// single mid-file `#[cfg(test)]` item.
+    ///
+    /// Without this, "the scan is clean" and "the scan stopped after 100 lines"
+    /// are the same result. A gate with no self-check is not a gate.
+    #[test]
+    fn the_scan_covers_production_code_after_a_mid_file_cfg_test() {
+        let fixture = "\
+fn production_before() {}
+#[cfg(test)]
+fn a_helper_only_compiled_in_tests() {}
+fn production_AFTER_the_attribute() {}
+#[cfg(test)]
+mod tests {
+    fn t() {}
+}
+";
+        let scanned = production_prefix(fixture);
+        assert!(
+            scanned.contains("production_AFTER_the_attribute"),
+            "the naive split at the first cfg(test) hid this line — which is \
+             exactly the hole four real files had"
+        );
+        assert!(
+            !scanned.contains("fn t() {}"),
+            "the test module itself must stay out of the scan"
+        );
+
+        // And the real tree: the helper must actually reach the end of the
+        // files that carry a mid-file cfg(test) item.
+        let root = std::path::Path::new(env!("CARGO_MANIFEST_DIR")).join("src");
+        for rel in [
+            "plugins/terminal/mod.rs",
+            "web/sse.rs",
+            "tools/terminal/secrets.rs",
+            "tools/terminal/connections.rs",
+        ] {
+            let text = std::fs::read_to_string(root.join(rel)).unwrap();
+            let naive = text.split("#[cfg(test)]").next().unwrap();
+            let fixed = production_prefix(&text);
+            assert!(
+                fixed.len() > naive.len(),
+                "{rel}: the fix must scan MORE than the naive split — if these \
+                 are equal, the mid-file cfg(test) item moved and this test's \
+                 premise is stale"
+            );
+            assert!(
+                fixed.len() >= text.rfind("mod tests").map(|_| 0).unwrap_or(0),
+                "{rel}: sanity"
+            );
+        }
     }
 
     /// Every `.rs` under `src/`, recursively. `mod.rs` files are included: the

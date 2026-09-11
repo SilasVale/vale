@@ -846,9 +846,26 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                         .await
                         .unwrap_or(false)
                     {
-                        terminal_mgr
+                        // RELEASE ON REFUSAL. This gate sits between the acquire
+                        // above and every normal release below, so returning
+                        // through `?` leaves `busy` set forever: the session
+                        // looks alive to the panel and answers every later
+                        // execute with `session_busy` after burning the full
+                        // 30 s acquire budget. Found by an adversarial review
+                        // pass, reproduced by
+                        // `a_refused_command_leaves_the_session_usable`.
+                        //
+                        // The refusal and the timeout are the SAME case here —
+                        // both are `Err` — and the timeout is the one an
+                        // unattended device hits, so this is the normal path
+                        // whenever nobody is watching, not an edge case.
+                        if let Err(e) = terminal_mgr
                             .term_await_approval(&sid, &command, APPROVAL_WAIT_MS)
-                            .await?;
+                            .await
+                        {
+                            terminal_mgr.term_release_execute(&sid).await;
+                            return Err(e);
+                        }
                     }
                     // First-prompt gate (stage-l rework): the old gate waited
                     // for the OSC prompt marker that PowerShell 5.1 + ConPTY

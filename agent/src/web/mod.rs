@@ -3777,6 +3777,143 @@ mod tests {
         let _ = std::fs::remove_file(cfg_path);
     }
 
+    /// A REFUSED COMMAND MUST NOT WEDGE THE SESSION.
+    ///
+    /// The gate sits between `term_acquire_execute` and every normal release, and
+    /// a refusal propagates with `?` — so unless that path releases too, the
+    /// busy flag stays set and EVERY later execute on the session waits out the
+    /// 30 s acquire budget and answers `session_busy`. The device looks alive,
+    /// the panel shows a live session, and nothing can run in it again.
+    ///
+    /// This is the assertion the older gate test could not make: it asserts the
+    /// refusal code and then CLOSES the session, so the leak is invisible to it.
+    /// The same hole exists for a TIMEOUT, which is the outcome an unattended
+    /// device gets — so the bug is not an edge case, it is the normal path
+    /// whenever nobody is watching.
+    ///
+    /// The bound is wall-clock on purpose: "did it release" is exactly the
+    /// question, and a leaked lock answers it by hanging. Mutation-proven —
+    /// removing the release makes this fail with `session_busy` after ~30 s.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_refused_command_leaves_the_session_usable() {
+        let (st, cfg_path) = state_with_cfg("approval-release", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        // Arm the gate.
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+
+        // First command: refused by the operator.
+        let exec = {
+            let (st2, sid2) = (st.clone(), sid.clone());
+            tokio::spawn(async move {
+                handle_request(
+                    req_with_json(
+                        "POST",
+                        "/api/tools/terminal_execute",
+                        &format!(r#"{{"session_id":"{sid2}","command":"echo refused"}}"#),
+                    ),
+                    st2,
+                )
+                .await
+            })
+        };
+        let id = tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if let Some(p) = st.terminal_mgr.term_pending_approval(&sid).await.unwrap() {
+                    break p.id;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the prompt must appear");
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/approval"),
+                &format!(r#"{{"id":"{id}","approve":false}}"#),
+            ),
+            st.clone(),
+        )
+        .await;
+        let v = json_body(exec.await.unwrap()).await;
+        assert_eq!(
+            v["code"], "approval_denied",
+            "the refusal itself is correct"
+        );
+
+        // THE ASSERTION: the session must still be drivable. Disarm first so the
+        // second command is not gated again — the question is the LOCK, not the
+        // gate.
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":false}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            handle_request(
+                req_with_json(
+                    "POST",
+                    "/api/tools/terminal_execute",
+                    &format!(r#"{{"session_id":"{sid}","command":"echo after-refusal"}}"#),
+                ),
+                st.clone(),
+            ),
+        )
+        .await
+        .expect(
+            "a refused command wedged the session: the next execute never \
+             finished. The gate returns with `?` between acquire and release, so \
+             a refusal (or a timeout) leaves the busy flag set — the failure \
+             mode is a session that looks alive and can never run anything again",
+        );
+        assert_eq!(second.status(), StatusCode::OK);
+        let v2 = json_body(second).await;
+        assert_eq!(
+            v2["ok"], true,
+            "a refused command must not poison the session: {v2}"
+        );
+        assert_ne!(
+            v2["code"], "session_busy",
+            "the busy flag leaked out of the refusal path"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
     /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).
     ///
     /// Every route the web surface dispatches must be reachable ONLY with the

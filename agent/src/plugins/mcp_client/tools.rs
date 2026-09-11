@@ -635,7 +635,15 @@ fn record_mcp_action(
 /// "0 shots" even when the AI's screenshot reached pwout. The line mirrors
 /// the shape BrowserPane parses: `screenshots` carries the pwout basename
 /// (the panel resolves it via /api/browser/pwshot?name=).
-fn record_mcp_screenshot(dst: &std::path::Path) {
+///
+/// It carries the caller's `run_id` for the same reason `record_mcp_action`
+/// does: this is a SECOND row written for the SAME tool call (see the call
+/// site — the blanket row records the action, this one adds the shot), so
+/// stamping only one of them leaves the other in the unattributed bucket. The
+/// result is a run that reports its real browser actions AND grows a phantom
+/// "declared no run" row beside them, which teaches an operator to ignore the
+/// one row a genuinely unattributed action will land in.
+fn record_mcp_screenshot(dst: &std::path::Path, run_id: Option<&str>) {
     let Some(name) = dst.file_name().map(|f| f.to_string_lossy().to_string()) else {
         return;
     };
@@ -654,6 +662,9 @@ fn record_mcp_screenshot(dst: &std::path::Path) {
             "screenshots": [name],
             "stdout_tail": "",
             "stderr_tail": "",
+            // Same field, same rule as every other producer: the declared run,
+            // omitted entirely when the caller sent none.
+            "run_id": run_id,
         }),
     );
     // round-252: event-driven actions feed (screenshots refresh the drawer).
@@ -1470,7 +1481,7 @@ pub fn mcp_client_call() -> ToolDef {
                                     // at the dispatch head always writes
                                     // screenshots:[] because the copy happens
                                     // after it).
-                                    record_mcp_screenshot(&dst);
+                                    record_mcp_screenshot(&dst, run_id.as_deref());
                                 }
                             }
                             use base64::Engine as _;
