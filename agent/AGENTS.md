@@ -471,6 +471,19 @@ Last updated: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
   OK, module_map green; gateway 759; panel 350 (was 306) + build. NOT ON A
   DEVICE — the delivery gap from round 12 applies to all of this; no version
   bump yet, so nothing here is reachable by a user until a release round.
+  (6) VERIFIED AGAINST THE REAL BINARY, not only against tests. Ran
+  `target/debug/vale-agent` on a scratch config at 127.0.0.1:18799 (loopback
+  only — confirmed with `ss`, and the red-line self-check afterwards showed
+  every listener I own on 127.0.0.1) and drove the feature over real HTTP:
+  `run_begin` minted `run-1789134893834-838269`; `terminal_execute` WITH that
+  id produced `run_id="run-…"` on the timeline while the same command sent
+  WITHOUT one produced `run_id=null` — the two adjacent rows the whole design
+  is about; `run_end` answered `{"known":true}`; and an anonymous request
+  carrying that REAL, well-formed id was 401 on all three endpoints while the
+  same call with the token was 200. That last one is the credential rule as
+  BEHAVIOUR rather than as a source scan. Worth doing every round: the unit
+  suite cannot tell you whether the tool is reachable, and this repo has
+  shipped "every gate green, nothing callable" at least twice.
 
 Previous round: 2026-09-11 game-design round 12 (doc coherence, a job-object
   incident, and the DELIVERY GAP). Three things, in order of what they taught:
