@@ -61,6 +61,8 @@ function device(opts: {
   sessions?: Array<{ id: string; state?: unknown }>;
   events?: Record<string, unknown[]>;
   failEventsFor?: string[];
+  /** Per-session `first_seq` — >1 means the device trimmed the trail's head. */
+  firstSeqFor?: Record<string, number>;
   listFails?: boolean;
   listPending?: boolean;
   live?: Array<{ id: string }>;
@@ -75,7 +77,13 @@ function device(opts: {
     if (m) {
       const sid = decodeURIComponent(m[1]);
       if (opts.failEventsFor?.includes(sid)) return Promise.reject(new Error("HTTP 404"));
-      return Promise.resolve({ ok: true, id: sid, events: opts.events?.[sid] ?? [] });
+      return Promise.resolve({
+        ok: true,
+        id: sid,
+        found: !opts.failEventsFor?.includes(sid),
+        first_seq: opts.firstSeqFor?.[sid] ?? 1,
+        events: opts.events?.[sid] ?? [],
+      });
     }
     return Promise.resolve({});
   });
@@ -218,6 +226,38 @@ describe("ArchivePage — (c) live and archived are distinguishable", () => {
   });
 });
 
+describe("ArchivePage — a TRIMMED trail is not presented as complete", () => {
+  // `close_session` trims a session's file to ~2000 lines, so a long session's
+  // head is discarded by design. The route reports `first_seq` for exactly this,
+  // and a viewer that ignores it tells the operator the trail is the whole story
+  // when it is not — the quiet version of a false claim.
+  it("says earlier events are not recorded when the trail does not begin at 1", async () => {
+    device({
+      sessions: [{ id: "long", state: { kind: "status", ts: T0, status: "closed" } }],
+      firstSeqFor: { long: 1734 },
+    });
+    render(<ArchivePage sessions={[]} />);
+    await open("long");
+
+    expect(await screen.findByText(/Earlier events are not recorded/i)).toBeTruthy();
+    expect(screen.getByText(/begins at event 1734/)).toBeTruthy();
+  });
+
+  it("stays silent for a trail that DOES begin at 1", async () => {
+    device({
+      sessions: [{ id: "short", state: { kind: "status", ts: T0, status: "closed" } }],
+      firstSeqFor: { short: 1 },
+    });
+    render(<ArchivePage sessions={[]} />);
+    await open("short");
+    // Wait for the trail to have SETTLED on a real read — the empty-record line
+    // is the positive signal that `events` arrived, so the absence assertion
+    // below is about a rendered trail rather than about a pending one.
+    await screen.findByText(/holds no events/i);
+    expect(screen.queryByText(/Earlier events are not recorded/i)).toBeNull();
+  });
+});
+
 describe("ArchivePage — (d) an unreadable trail is not an empty history", () => {
   it("says the trail could not be read, and does NOT draw the renderer's empty state", async () => {
     device({
@@ -242,7 +282,11 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
     render(<ArchivePage sessions={[]} />);
     await open("empty-trail");
 
-    expect(await screen.findByText(/returned no events for this session/i)).toBeTruthy();
+    // The wording narrowed in round 23: the route now separates "no readable
+    // record" (`found:false`, the branch ABOVE) from "recorded nothing", so this
+    // line may only claim the latter. The assertion keeps its original job —
+    // telling the two apart — with the text the device actually justifies.
+    expect(await screen.findByText(/has a record for this session and it holds no events/i)).toBeTruthy();
     // A read that SUCCEEDED and a read that FAILED are different sentences.
     expect(screen.queryByText(/could not be read from the device/i)).toBeNull();
     expect(screen.queryByText(/No commands in this session yet/i)).toBeNull();

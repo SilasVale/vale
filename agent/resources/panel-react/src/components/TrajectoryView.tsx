@@ -14,8 +14,15 @@ import type { CommandCard } from "../hooks/useCommandEvents";
 // events like "opened"/"backgrounded" appear as their own rows. All rendering
 // is TEXT-ONLY (React text nodes reach the DOM — never innerHTML).
 //
-// Pagination is client-side: /api/sessions/{sid} returns the FULL audit log;
-// the view shows the newest ROUNDS_PAGE rounds (the tail is what streams,
+// Pagination is client-side over what the DEVICE RETURNS, which is NOT always
+// the full log: `close_session` trims a session's file to ~2000 lines, so a long
+// session's head is discarded by design. The route reports `first_seq` for
+// exactly this — greater than 1 means earlier events exist on neither side of
+// the wire — and the view must not present such a trail as complete. (This
+// comment used to claim "returns the FULL audit log", which the trim makes
+// false.)
+//
+// The view shows the newest ROUNDS_PAGE rounds (the tail is what streams,
 // anchored like a terminal) and "load earlier" widens the window upward.
 
 const ROUNDS_PAGE = 20;

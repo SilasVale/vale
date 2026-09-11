@@ -97,7 +97,7 @@ function ArchiveRow({ entry, live, onOpen }: { entry: ArchiveEntry; live: boolea
  *  called conditionally: the page mounts this only once a session is chosen, so
  *  exactly one audit poll exists at a time and it is torn down on "back". */
 function ArchiveTrail({ entry, live, onBack }: { entry: ArchiveEntry; live: boolean; onBack: () => void }) {
-  const { events, readState } = useCommandEvents(entry.sid);
+  const { events, readState, firstSeq } = useCommandEvents(entry.sid);
   const words = lastEventWords(entry.last);
   const when = archiveClock(entry.last?.ts ?? null);
   return (
@@ -114,6 +114,17 @@ function ArchiveTrail({ entry, live, onBack }: { entry: ArchiveEntry; live: bool
         {words && <span className="archive-row-last">{words.label}</span>}
         {when && <span className="archive-trail-when">last recorded {when}</span>}
       </div>
+      {firstSeq > 1 && (
+        // THE TRAIL IS NOT THE WHOLE STORY. `close_session` trims a session's
+        // file to ~2000 lines, so a long session's head is discarded by design
+        // and the survivors cannot say so on their own. Without this line the
+        // viewer would present a trimmed trail as complete — the quiet version
+        // of telling the operator something false.
+        <p className="archive-note archive-note-trimmed">
+          Earlier events are not recorded: this trail begins at event {firstSeq}, and
+          the device keeps roughly the last 2000 lines of a closed session.
+        </p>
+      )}
       <div className="archive-trail-body">
         {readState === "reading" ? (
           <p className="archive-note">Reading this session's audit trail…</p>
@@ -127,13 +138,14 @@ function ArchiveTrail({ entry, live, onBack }: { entry: ArchiveEntry; live: bool
             device may be unreachable.
           </p>
         ) : events.length === 0 ? (
-          // A SUCCESSFUL read with no events. The route answers 200 with an empty
-          // array both for a session whose file holds no events and for one whose
-          // file is no longer there, so the two are named as indistinguishable
-          // rather than resolved by guess.
+          // A SUCCESSFUL read with no events AND `found: true` — the route now
+          // separates "no readable record" from "recorded nothing" (round 10),
+          // and the `unreadable` branch above handles the former. So this is the
+          // narrower claim: the record is there and holds no events. (The old
+          // wording called the two indistinguishable, which the `found` flag
+          // made untrue.)
           <p className="archive-note">
-            The device returned no events for this session. Its file is either empty
-            or no longer readable, and this route does not tell the two apart.
+            The device has a record for this session and it holds no events.
           </p>
         ) : (
           // The SAME renderer the live Trajectory view mounts, fed by the same

@@ -859,8 +859,20 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
     // `found` distinguishes "this session recorded nothing" from "there is no
     // readable record for it" — see `SessionLogger::events_of`. `ok` stays true
     // either way: the REQUEST succeeded.
-    let (events, found) = logger.events_of(&sid);
-    Ok(serde_json::json!({ "ok": true, "id": sid, "found": found, "events": events }))
+    let rec = logger.events_of(&sid);
+    Ok(serde_json::json!({
+        "ok": true,
+        "id": sid,
+        "found": rec.found,
+        // WHERE THE RECORD BEGINS. The trail is trimmed to ~2000 lines when a
+        // session closes, so a long session's head is discarded by design and
+        // the survivors alone cannot say so. `first_seq > 1` is that fact —
+        // stated rather than left for a consumer to infer from a seq gap, and
+        // about the RECORD rather than about a cause (a trim and a lost write
+        // both mean "you are not seeing the beginning").
+        "first_seq": rec.first_seq,
+        "events": rec.events,
+    }))
 }
 
 /// `POST /api/sessions/{sid}/approval` — decide the command waiting at the gate.
@@ -4720,6 +4732,10 @@ mod tests {
         let v = json_body(resp).await;
         assert_eq!(v["ok"], true, "the request succeeded: {v}");
         assert_eq!(
+            v["first_seq"], 0,
+            "no record means no beginning to report — 0, not a fabricated 1: {v}"
+        );
+        assert_eq!(
             v["found"], false,
             "a session with no readable record must SAY so rather than \
              answering with an empty list that reads as 'it recorded nothing': {v}"
@@ -4735,6 +4751,13 @@ mod tests {
         assert!(
             v["events"].as_array().is_some_and(|a| !a.is_empty()),
             "and it carries the events: {v}"
+        );
+        // A record that was NOT trimmed begins at 1. This is the negative half
+        // of the completeness signal: `first_seq > 1` must mean something, and
+        // it cannot if every record reports a large number.
+        assert_eq!(
+            v["first_seq"], 1,
+            "an untrimmed record begins at its first event: {v}"
         );
 
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());

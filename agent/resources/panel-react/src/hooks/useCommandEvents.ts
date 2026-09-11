@@ -168,9 +168,14 @@ export type SessionReadState = "reading" | "ok" | "unreadable";
 export function useSessionEventsWithState(
   sid: string | null,
   pollMs = 2000,
-): { events: CommandEvent[]; readState: SessionReadState } {
+): { events: CommandEvent[]; readState: SessionReadState; firstSeq: number } {
   const [events, setEvents] = useState<CommandEvent[]>([]);
   const [readState, setReadState] = useState<SessionReadState>("reading");
+  // WHERE THE RECORD BEGINS, as the device reports it. The trail is trimmed to
+  // ~2000 lines when a session closes, so a long session's head is discarded by
+  // design — `firstSeq > 1` is the only signal, and a viewer that ignores it
+  // presents a trimmed trail as the whole story.
+  const [firstSeq, setFirstSeq] = useState(1);
   // Has ANY read of this sid succeeded? A failed later poll must not overwrite a
   // known-good state (and with an empty-but-readable session, `events.length`
   // cannot answer this — hence a ref of its own).
@@ -221,6 +226,9 @@ export function useSessionEventsWithState(
         // it, and then the HTTP-level success is all we know — which is what
         // `readOkRef` already records.
         const found = res && typeof res.found === "boolean" ? res.found : true;
+        // Absent on an older agent: default to 1, which claims nothing.
+        const fs = res && typeof res.first_seq === "number" ? res.first_seq : 1;
+        setFirstSeq((prev) => (prev === fs ? prev : fs));
         setReadState((s) => {
           if (!found) return "unreadable";
           return s === "ok" ? s : "ok";
@@ -306,7 +314,7 @@ export function useSessionEventsWithState(
     };
   }, [sid, pollMs]);
 
-  return { events, readState };
+  return { events, readState, firstSeq };
 }
 
 /** The raw events alone — the shape the trajectory views and their tests have
@@ -326,7 +334,7 @@ export function useCommandEvents(sid: string | null, pollMs = 2000) {
   // poll instead of mounting a second one (double fetch every 2s). `readState`
   // is the third thing the same read knows (see SessionReadState) — the archive
   // viewer needs it to tell an empty trail from an unreadable one.
-  const { events, readState } = useSessionEventsWithState(sid, pollMs);
+  const { events, readState, firstSeq } = useSessionEventsWithState(sid, pollMs);
   const cards = useMemo(() => groupEvents(events), [events]);
-  return { cards, events, readState };
+  return { cards, events, readState, firstSeq };
 }

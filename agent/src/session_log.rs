@@ -559,6 +559,29 @@ impl SessionEvent {
 static SEQ: std::sync::LazyLock<Mutex<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// One session's audit record, as a reader sees it.
+///
+/// A STRUCT rather than a tuple because the three fields answer three different
+/// questions and two of them are easy to transpose when positional: `found`
+/// (does a record exist at all?) and `first_seq` (where does what I have
+/// begin?). Clippy already rejected an anonymous 7-tuple in this crate for the
+/// same reason.
+#[derive(Debug)]
+pub struct SessionRecord {
+    /// The events, ordered by `seq`.
+    pub events: Vec<serde_json::Value>,
+    /// Whether a record was readable at all. A MISSING file and an unparseable
+    /// one are both `false`: from here they are the same fact, and inventing a
+    /// third state the caller cannot act on differently only invites a guess.
+    pub found: bool,
+    /// The `seq` of the first event present, or 0 when there are none. Greater
+    /// than 1 means earlier events are NOT in this file — the trail is trimmed
+    /// to ~2000 lines when a session closes (`MAX_CLOSED_LOG_LINES`), so a long
+    /// session's head is discarded by design. Consumers must not present such a
+    /// record as complete.
+    pub first_seq: u64,
+}
+
 #[derive(Clone)]
 pub struct SessionLogger {
     dir: PathBuf,
@@ -968,10 +991,29 @@ impl SessionLogger {
     /// `false` covers a missing file and an unparseable one alike: from here
     /// they are the same fact, and inventing a third state the caller cannot
     /// act on differently would only invite it to guess.
-    pub fn events_of(&self, sid: &str) -> (Vec<serde_json::Value>, bool) {
+    pub fn events_of(&self, sid: &str) -> SessionRecord {
         match self.read_events(sid) {
-            Some((events, _)) => (events, true),
-            None => (Vec::new(), false),
+            Some((events, _)) => {
+                // The first SURVIVING seq. > 1 means earlier events are not in
+                // this file — the trail was trimmed at close, or a write was
+                // lost. Both mean the reader is not seeing the beginning, and
+                // saying so is the difference between "a short session" and "a
+                // long one whose head was discarded".
+                let first_seq = events
+                    .iter()
+                    .find_map(|e| e.get("seq").and_then(|v| v.as_u64()))
+                    .unwrap_or(0);
+                SessionRecord {
+                    events,
+                    found: true,
+                    first_seq,
+                }
+            }
+            None => SessionRecord {
+                events: Vec::new(),
+                found: false,
+                first_seq: 0,
+            },
         }
     }
 
@@ -1277,7 +1319,7 @@ mod tests {
         logger.log_status("s1", "resumed");
         drop(logger);
         let logger2 = SessionLogger::new(dir.clone());
-        let (events, _) = logger2.events_of("s1");
+        let events = logger2.events_of("s1").events;
         assert!(
             events
                 .iter()
@@ -1600,7 +1642,7 @@ mod tests {
         logger.log_control("s", "ai");
         logger.flush_all();
 
-        let (events, _) = logger.events_of("s");
+        let events = logger.events_of("s").events;
         let controls: Vec<&serde_json::Value> =
             events.iter().filter(|e| e["kind"] == "control").collect();
         assert_eq!(controls.len(), 2, "both handoffs recorded: {events:?}");
@@ -1676,7 +1718,7 @@ mod tests {
         web.log_control("s", "asked"); // seq 4, flushed immediately
         plugin.flush_all(); // seq 3 lands LAST
 
-        let events = web.events_of("s").0;
+        let events = web.events_of("s").events;
         let seqs: Vec<u64> = events
             .iter()
             .map(|e| e["seq"].as_u64().unwrap_or(0))
@@ -1688,6 +1730,59 @@ mod tests {
              one landed last (got {seqs:?}) — a consumer using seq as a \
              watermark would drop the event that arrived out of order"
         );
+    }
+
+    /// A TRIMMED TRAIL MUST SAY SO.
+    ///
+    /// A closed session's file is trimmed to ~2000 lines (round-98/99: a serial
+    /// console scrolling for hours grew an unbounded `.jsonl` on the install
+    /// disk). The reader then returns the SURVIVORS with no indication that
+    /// anything was dropped — so a consumer cannot tell a short session from a
+    /// long one whose head was discarded, and the panel's own comment claims
+    /// `/api/sessions/{sid}` "returns the FULL audit log" while it does not.
+    ///
+    /// The fact is derivable: the first surviving event's `seq` is > 1 exactly
+    /// when earlier events are missing. Reporting it states what is TRUE of the
+    /// record rather than guessing WHY — a gap can come from the trim or from a
+    /// lost write, and both mean "you are not seeing the beginning".
+    #[test]
+    fn a_trimmed_trail_reports_where_it_actually_begins() {
+        let dir = temp_dir("trimfirstseq");
+        let logger = SessionLogger::new(dir.clone());
+        // Comfortably past the cap, so close_session's trim must fire.
+        let total = MAX_CLOSED_LOG_LINES + 200;
+        for i in 0..total {
+            logger.log_status("s", &format!("line {i}"));
+        }
+        logger.flush_all();
+        logger.close_session("s");
+
+        let rec = logger.events_of("s");
+        assert!(rec.found, "the record survived the trim");
+        assert!(
+            rec.events.len() <= MAX_CLOSED_LOG_LINES + 1,
+            "the trim bounds the file (got {} lines)",
+            rec.events.len()
+        );
+        assert!(
+            rec.first_seq > 1,
+            "the head was discarded, so the first surviving seq must be > 1 — \
+             otherwise a reader believes it is seeing the whole trail \
+             (first_seq={}, events={})",
+            rec.first_seq,
+            rec.events.len()
+        );
+
+        // And an UNTRIMMED trail begins at 1, so the signal is not always-on.
+        let logger2 = SessionLogger::new(dir.clone());
+        logger2.log_status("short", "one");
+        logger2.flush_all();
+        assert_eq!(
+            logger2.events_of("short").first_seq,
+            1,
+            "a short session starts at 1 and must not claim to be trimmed"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// `seq` MUST BE UNIQUE EVEN WHEN THE FIRST WRITER HAS NOT FLUSHED.
@@ -1733,7 +1828,7 @@ mod tests {
 
         let seqs: Vec<u64> = web
             .events_of("s")
-            .0
+            .events
             .iter()
             .map(|e| e["seq"].as_u64().unwrap_or(0))
             .collect();
@@ -1773,7 +1868,7 @@ mod tests {
 
         let seqs: Vec<u64> = third
             .events_of("s")
-            .0
+            .events
             .iter()
             .map(|e| e["seq"].as_u64().unwrap_or(0))
             .collect();
@@ -1828,7 +1923,7 @@ mod tests {
         drop(logger);
 
         let logger2 = SessionLogger::new(dir.clone());
-        let (events, _) = logger2.events_of("s1");
+        let events = logger2.events_of("s1").events;
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1857,7 +1952,7 @@ mod tests {
         logger.log_command_start_with("s1", "ls", Some("   "), Some(&[]));
         drop(logger);
 
-        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
+        let events = SessionLogger::new(dir.clone()).events_of("s1").events;
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1875,7 +1970,7 @@ mod tests {
         let logger2 = SessionLogger::new(dir.clone());
         logger2.log_command_start("s1", "ls");
         drop(logger2);
-        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
+        let events = SessionLogger::new(dir.clone()).events_of("s1").events;
         assert!(events.iter().all(|e| e.get("intent").is_none()));
     }
 
@@ -1897,7 +1992,7 @@ mod tests {
         logger.log_command_start_with("s1", "x", Some(&long_intent), Some(&many));
         drop(logger);
 
-        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
+        let events = SessionLogger::new(dir.clone()).events_of("s1").events;
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1934,7 +2029,7 @@ mod tests {
         logger.log_command_start_with("s1", &huge, Some("why"), None);
         drop(logger);
 
-        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
+        let events = SessionLogger::new(dir.clone()).events_of("s1").events;
         let starts: Vec<_> = events
             .iter()
             .filter(|e| e["kind"] == "command/start")
@@ -1992,7 +2087,7 @@ mod tests {
         let read = SessionLogger::new(dir.clone());
         let statuses: Vec<String> = read
             .events_of("s1")
-            .0
+            .events
             .iter()
             .filter_map(|e| e["status"].as_str().map(|s| s.to_string()))
             .collect();
@@ -2039,7 +2134,10 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_status("s1", "opened");
         drop(logger);
-        let e = SessionLogger::new(dir.clone()).events_of("s1").0.remove(0);
+        let e = SessionLogger::new(dir.clone())
+            .events_of("s1")
+            .events
+            .remove(0);
         let (wts, wts_ms) = (
             e["ts"].as_u64().expect("ts"),
             e["ts_ms"].as_u64().expect("ts_ms"),
@@ -2067,7 +2165,10 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_status("s1", "opened");
         drop(logger);
-        let e = SessionLogger::new(dir.clone()).events_of("s1").0.remove(0);
+        let e = SessionLogger::new(dir.clone())
+            .events_of("s1")
+            .events
+            .remove(0);
         let audit_ts = e["ts"].as_u64().unwrap();
 
         // A browser action line, written through the shared writer, with a
@@ -2105,7 +2206,7 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_control("new", "human");
         logger.flush_all();
-        let (events, _) = logger.events_of("new");
+        let events = logger.events_of("new").events;
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["seq"].as_u64(), Some(1));
 
