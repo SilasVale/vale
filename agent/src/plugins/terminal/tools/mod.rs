@@ -71,7 +71,7 @@ pub(super) fn build(
         sessions::tool_list_ports(&ctx.serial_pool),
         sessions::tool_resize(&ctx.terminal_mgr),
         sessions::tool_select(&ctx.terminal_mgr),
-        output::tool_read(&ctx.output_buf),
+        output::tool_read(&ctx.output_buf, &ctx.terminal_mgr),
         output::tool_screen(&ctx.output_buf),
         output::tool_diag_write(&ctx.diag),
         output::tool_diag_read(&ctx.diag),

@@ -4607,23 +4607,41 @@ mod tests {
     async fn settings_reports_memory_usage_not_just_the_caps() {
         let (st, cfg_path) = state_with_cfg("mem-usage", CFG_YAML_TOKEN_ONLY);
 
-        // Empty store: usage is present and zero, not absent. A UI that has to
-        // distinguish "0" from "field missing on an older agent" cannot render
-        // a bar; the caps are reported unconditionally, so usage is too.
-        let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
-        assert_eq!(v["memory_entries"], 0, "empty store reports 0 entries: {v}");
-        assert_eq!(v["memory_bytes"], 0, "empty store reports 0 bytes: {v}");
+        // MEASURE DELTAS, NOT ABSOLUTES. `AppState::new` builds its memory store
+        // on `default_memory_dir()`, a PROCESS-GLOBAL path — every web test in
+        // this binary shares one store, so a previous test's records are still
+        // there. Asserting an absolute 0 failed exactly that way: a leftover
+        // 1 entry / 16 bytes, intermittently, depending on test order.
+        //
+        // Same trap round 20 hit from the other side (a test reading shared
+        // state and calling it its own). There the fix was a unique dir; here
+        // the path is not mine to choose, so the assertion measures what THIS
+        // test added. What matters is unchanged: usage must be PRESENT as a
+        // number even when nothing was added, so a UI can divide it by the cap
+        // without special-casing an absent field.
+        let before = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
+        let base_entries = before["memory_entries"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("usage present as a number: {before}"));
+        let base_bytes = before["memory_bytes"]
+            .as_u64()
+            .unwrap_or_else(|| panic!("usage present as a number: {before}"));
         assert!(
-            v["memory_max_entries"].is_u64() && v["memory_bytes"].is_u64(),
-            "usage and cap must be the same kind of number so they can be divided: {v}"
+            before["memory_max_entries"].is_u64(),
+            "usage and cap must be the same kind of number so they can be divided: {before}"
         );
 
         // Two records of known size: the meter must reflect EXACTLY what the
         // cap is measured against. An edit is included on purpose — it is the
         // write path whose ledger was wrong before round 20.
         let store = st.memory.clone();
+        // Ids are unique to THIS test. The store is process-global and keyed by
+        // id, so a fixed "m-alpha" left behind by another test would make
+        // `insert` an UPDATE — the count would move by 1, not 2, which is
+        // exactly how this assertion first failed.
+        let uniq = format!("{}-{}", std::process::id(), crate::now_millis());
         let mk = |title: &str, content: &str| crate::plugins::memory::store::MemoryRecord {
-            id: format!("m-{title}"),
+            id: format!("m-{uniq}-{title}"),
             title: title.to_string(),
             content: content.to_string(),
             tags: vec![],
@@ -4639,9 +4657,14 @@ mod tests {
         store.update(&a, None, Some("0123456789ABCDEF".into()), None, None, None); // -> 16
 
         let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
-        assert_eq!(v["memory_entries"], 2, "two live records: {v}");
         assert_eq!(
-            v["memory_bytes"], 19,
+            v["memory_entries"].as_u64(),
+            base_entries.checked_add(2),
+            "two records added: {v}"
+        );
+        assert_eq!(
+            v["memory_bytes"].as_u64(),
+            base_bytes.checked_add(19),
             "16 + 3. The meter must be the SAME ledger the byte cap evicts on — \
              a reader that recomputes it some other way can disagree with the \
              eviction it is supposed to explain: {v}"
@@ -4652,8 +4675,16 @@ mod tests {
         let doomed = b.iter().find(|r| r.title == "beta").unwrap().id.clone();
         store.delete(&doomed);
         let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
-        assert_eq!(v["memory_entries"], 1, "tombstones are not live entries: {v}");
-        assert_eq!(v["memory_bytes"], 16, "tombstone bytes leave the meter: {v}");
+        assert_eq!(
+            v["memory_entries"].as_u64(),
+            base_entries.checked_add(1),
+            "tombstones are not live entries: {v}"
+        );
+        assert_eq!(
+            v["memory_bytes"].as_u64(),
+            base_bytes.checked_add(16),
+            "tombstone bytes leave the meter: {v}"
+        );
 
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }

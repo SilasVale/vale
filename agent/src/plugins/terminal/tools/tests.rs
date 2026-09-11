@@ -206,6 +206,49 @@ async fn read_unknown_session_empty() {
     assert_eq!(out["text"], "");
 }
 
+/// A SILENT SESSION IS NOT A GONE ONE.
+///
+/// The `evicted` marker exists so a client can tell "no data" from "gone" —
+/// that is its own comment. But the live buffer entry is created LAZILY by the
+/// drainer, on the first output frame, so a session that has produced NO output
+/// yet has no live entry and no history entry, and `terminal_read` fell through
+/// to the gone-marker. Every session is in that state from `terminal_open`
+/// until its first chunk, and a silent one (a serial line waiting for a device,
+/// an SSH login prompt already printed) stays there indefinitely.
+///
+/// The cost is the failure mode this repo has already recorded: an AI that
+/// believes `evicted` concludes the session died and OPENS A NEW ONE — the d1
+/// pattern of 321 idle partials against 167 terminal_opens.
+///
+/// The fix reads the MANAGER, which is the one thing that actually knows
+/// whether a session is alive, rather than inferring liveness from the presence
+/// of buffered bytes.
+/// `feature = "terminal"`: this opens a session through the tool, and the stub
+/// backend answers every `term_open` with `disabled`. The state under test —
+/// "alive but has produced nothing" — does not exist without a real backend.
+#[cfg(feature = "terminal")]
+#[tokio::test]
+async fn a_live_session_with_no_output_yet_is_not_reported_as_evicted() {
+    let (tools, _buf) = seeded_tools();
+    // A real, open session that has produced nothing (seeded_tools' manager is
+    // empty, so open one through the same tool path the product uses).
+    let opened = call(find(&tools, "terminal_open"), json!({"kind": "pty"})).await;
+    // `terminal_open` returns the id as a bare JSON string.
+    let sid = opened
+        .as_str()
+        .unwrap_or_else(|| panic!("terminal_open must return an id: {opened}"))
+        .to_string();
+
+    let out = call(find(&tools, "terminal_read"), json!({"session_id": sid})).await;
+
+    assert_eq!(out["text"], "", "no output yet: {out}");
+    assert_ne!(
+        out["evicted"], true,
+        "a session the manager still lists is ALIVE and merely silent — \
+         reporting it as evicted tells the client it is gone, which is how a \
+         fresh session gets reopened: {out}"
+    );
+}
 // ── terminal_read: absolute offsets + start/end + history ────
 
 #[tokio::test]

@@ -11,6 +11,8 @@ use crate::plugins::require_str;
 use crate::plugins::terminal::{
     clean_terminal_output, DiagStore, OutputBuf, RetainedSession, SessionBuf,
 };
+use crate::tools::terminal::TerminalManager;
+use std::sync::Arc;
 use vale_agent_core::{recover_guard, ToolDef};
 
 /// Byte range of the last `lines` CONTENT lines in `data`: trailing blank
@@ -89,17 +91,49 @@ pub(super) fn tool_history(ctx: &super::ctx::ToolCtx) -> ToolDef {
 
 // ── Output (read/screen) ────────────────────────────
 
-pub(super) fn tool_read(output_buf: &OutputBuf) -> ToolDef {
+/// One resolved read: the cleaned text, the RAW bytes (only when the caller
+/// asked for `clean: false`), and the four offsets a client needs to place it
+/// on the stream — plus whether the head came from the spill file.
+///
+/// Named rather than a bare tuple because five of these seven fields are
+/// integers that mean different things (two are absolute stream offsets, one is
+/// a byte count, one is how much was EVICTED); a tuple invites swapping two of
+/// them silently. Clippy flagged the anonymous form, and it was right.
+struct ReadResult {
+    text: String,
+    raw: Vec<u8>,
+    clean: bool,
+    start: usize,
+    end: usize,
+    dropped: u64,
+    spilled: bool,
+}
+
+/// TWO dependencies, and deliberately not the whole context: the buffer holds
+/// the bytes, and the MANAGER is the only thing that knows whether a session is
+/// still alive — which the read path must know, because a live session that has
+/// produced nothing yet has no buffer entry either (see `evicted` below).
+pub(super) fn tool_read(output_buf: &OutputBuf, mgr: &Arc<TerminalManager>) -> ToolDef {
     let buf = output_buf.clone();
+    let mgr = mgr.clone();
     ToolDef::new(
         "terminal_read",
         "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. Reads work on closed sessions (retained history). ANSI escapes are stripped and line endings normalized by default (AI-readable); pass `clean: false` for raw bytes.",
         json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"ABSOLUTE byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default true (round-54: the MCP text path must be printable text; the panel uses its own raw SSE stream)."}},"required":["session_id"]}),
         move |params: Value| {
             let buf = buf.clone();
+            // Cloned HERE, not in the fn body: this closure is `Fn` (called once
+            // per tool invocation), and the `async move` block below would
+            // otherwise move the captured Arc out of it on the first call.
+            let mgr = mgr.clone();
             async move {
                 let session_id = require_str(&params, "session_id")?;
-                let (text, raw, clean_out, start, end, dropped, spilled) = {
+                // The buffer lookup lives in its OWN scope. `recover_guard`
+                // returns a MutexGuard, and a guard held across an await makes
+                // the future non-Send — which the tool dispatch requires. So
+                // the guard ends here, and only the plain `Option` crosses into
+                // the manager question below.
+                let buffered: Option<ReadResult> = {
                     let mut store = recover_guard(&buf);
                     // Live session, or retained history (closed).
                     let explicit_offset = params.get("offset").is_some();
@@ -133,9 +167,21 @@ pub(super) fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                             String::from_utf8_lossy(&raw).to_string()
                         };
                         let raw_out = if clean { Vec::new() } else { raw.clone() };
-                        (text, raw_out, clean, actual_start as usize, entry.end_abs(), entry.dropped, spilled)
+                        ReadResult {
+                            text,
+                            raw: raw_out,
+                            clean,
+                            start: actual_start as usize,
+                            end: entry.end_abs(),
+                            dropped: entry.dropped,
+                            spilled,
+                        }
                     };
-                    match store.live.get_mut(&session_id) {
+                    // `None` = no buffer entry. That is NOT the same as "gone":
+                    // the manager decides, and it has to be asked OUTSIDE this
+                    // lock (a MutexGuard held across an await makes the future
+                    // non-Send, which the tool dispatch requires).
+                    let buffered: Option<ReadResult> = match store.live.get_mut(&session_id) {
                         Some(entry) => {
                             let offset = offset.unwrap_or(entry.cursor);
                             let r = merged(entry, offset);
@@ -147,19 +193,60 @@ pub(super) fn tool_read(output_buf: &OutputBuf) -> ToolDef {
                             if !explicit_offset {
                                 entry.cursor = entry.dropped as usize + entry.data.len();
                             }
-                            r
+                            Some(r)
                         }
                         None => match store.history.get(&session_id) {
                             Some(h) => {
                                 let offset = offset.unwrap_or(h.buf.cursor);
                                 // History reads never advance any cursor.
-                                merged(&h.buf, offset)
+                                Some(merged(&h.buf, offset))
                             }
-                            // Neither live nor history: the session was evicted
-                            // by history caps, or never existed. Mark it so a
-                            // client can distinguish 'no data' from 'gone'.
-                            None => return Ok(json!({"text": "", "start": 0, "end": 0, "evicted": true})),
+                            // Neither live nor history. Before calling that
+                            // "gone", ASK THE MANAGER — it is the only thing
+                            // that knows whether the session is alive, and a
+                            // LIVE session with no output yet has no buffer
+                            // entry either: the drainer creates one lazily, on
+                            // the first frame (`sessions.rs`, `or_default()`).
+                            //
+                            // Every session is in that state from `terminal_open`
+                            // until its first chunk, and a silent one stays there
+                            // indefinitely. Reporting `evicted` for those told the
+                            // client its session had died, and the recorded cost
+                            // is exactly that: an AI reopens a session it was
+                            // already holding (d1: 321 idle partials against 167
+                            // terminal_opens).
+                            None => None,
                         },
+                    };
+                    // The buffer scope's value. The lock is released HERE, at
+                    // the end of this block.
+                    buffered
+                };
+                // Neither live nor history. Before calling that "gone", ASK THE
+                // MANAGER — it is the only thing that knows whether the session
+                // is alive, and a LIVE session with no output yet has no buffer
+                // entry either: the drainer creates one lazily, on the first
+                // frame (`sessions.rs`, `or_default()`).
+                //
+                // Every session is in that state from `terminal_open` until its
+                // first chunk, and a silent one stays there indefinitely (a
+                // serial line waiting for a device). Reporting `evicted` for
+                // those told the client its session had died, and the recorded
+                // cost is exactly that: an AI reopens a session it was already
+                // holding (d1: 321 idle partials against 167 terminal_opens).
+                //
+                // The guard is gone by now, so this await is Send-safe.
+                let ReadResult { text, raw, clean: clean_out, start, end, dropped, spilled } =
+                    match buffered {
+                    Some(found) => found,
+                    None => {
+                        let alive = mgr.term_list().await.iter().any(|s| s.id == session_id);
+                        return Ok(if alive {
+                            // Alive and silent: no data, and NOT gone.
+                            json!({"text": "", "start": 0, "end": 0})
+                        } else {
+                            json!({"text": "", "start": 0, "end": 0, "evicted": true})
+                        });
                     }
                 };
                 let mut out = json!({"text": text, "start": start, "end": end});
