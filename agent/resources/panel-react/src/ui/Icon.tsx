@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 export type IconName =
   | "terminal"
+  | "archive"
   | "activity"
   | "browser"
   | "memory"
@@ -55,6 +56,15 @@ const PATHS: Record<IconName, ReactNode> = {
   activity: (
     <>
       <polyline points="2 12 6.5 12 9.5 5.5 14 18.5 17 12 22 12" />
+    </>
+  ),
+  // The archive: a lidded box with a stack inside it — STORED records, as
+  // opposed to the activity trace's work in motion.
+  archive: (
+    <>
+      <path d="M3 8.5A1.5 1.5 0 0 1 4.5 7h15A1.5 1.5 0 0 1 21 8.5V10H3V8.5Z" />
+      <path d="M4.5 10h15v8.5A1.5 1.5 0 0 1 18 20H6a1.5 1.5 0 0 1-1.5-1.5V10Z" />
+      <line x1="9.5" y1="13.5" x2="14.5" y2="13.5" />
     </>
   ),
   browser: (

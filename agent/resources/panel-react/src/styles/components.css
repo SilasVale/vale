@@ -3177,3 +3177,131 @@ button.dtab-close:hover { opacity: 1; }
   color: var(--chrome-ink-dim);
   line-height: 1.5;
 }
+
+/* ---------- session archive ----------
+   The device's RECORDED sessions and one session's audit trail, read back after
+   the session is gone (components/ArchivePage.tsx; the route it reads is
+   GET /api/sessions, durable for 30 days).
+
+   TOKENS ONLY — no raw hex anywhere in this block (src/styles/__tests__/
+   archivePage.test.ts pins that against the BUILT stylesheet).
+
+   STATE IS NEVER COLOUR ALONE. "live" and "archived" are drawn as WORDS by the
+   component, and this block adds a second non-colour channel on top: the pill's
+   BORDER SHAPE (solid vs dashed), the same pairing the activity page's two feed
+   pills use. The repo has already paid for this rule once — two states differed
+   only by an animation that `prefers-reduced-motion: reduce` switches off
+   (src/lib/statePalette.test.ts), and this page has no animation at all. */
+.archive-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+}
+/* With a trail open the page itself must NOT scroll: the trajectory renderer
+   owns its own scroll region (#traj-view → .traj-list), and two nested
+   scrollers make the round list unreachable with a trackpad. */
+.archive-page[data-view="trail"] { overflow: hidden; }
+
+.archive-head {
+  flex: none;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.archive-head-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.archive-title { margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.archive-scope { font-size: 11px; color: var(--muted); }
+.archive-lede {
+  margin: 5px 0 0; max-width: 66ch;
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+}
+.archive-stats { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.archive-stat {
+  font-size: 10.5px; font-weight: 600; color: var(--chrome-ink-dim);
+  background: var(--surface-chip); border-radius: 999px; padding: 1px 8px;
+}
+.archive-stat-live { color: var(--ink); border: 1px dotted var(--line-strong); }
+.archive-showing { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+
+/* A quiet line, never an empty container: a titled empty list reads as a
+   feature that failed to load. */
+.archive-empty {
+  margin: 0; padding: 14px 16px; max-width: 66ch;
+  font-size: 12px; line-height: 1.6; color: var(--muted);
+}
+/* A read that FAILED is not an empty archive. The sentence says so, and the
+   left bar is the shape channel that survives a reader who cannot separate the
+   two inks. */
+.archive-note {
+  margin: 0; padding: 10px 16px; max-width: 66ch;
+  font-size: 11.5px; line-height: 1.55; color: var(--muted);
+}
+.archive-empty-fail {
+  color: var(--danger-on-soft);
+  background: var(--danger-soft);
+  border-left: 2px solid var(--danger);
+}
+.archive-note-fail {
+  color: var(--danger-on-soft);
+  background: var(--danger-soft);
+  border-left: 2px solid var(--danger);
+}
+
+.archive-rows { list-style: none; margin: 0; padding: 4px 0 8px; }
+.archive-row-item + .archive-row-item { border-top: 1px solid var(--line-soft); }
+.archive-row {
+  width: 100%; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 8px 16px; border: none; background: none; cursor: pointer;
+  font: inherit; text-align: left; color: var(--ink);
+}
+.archive-row:hover { background: var(--surface-recessed); }
+.archive-row:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.archive-row-name { font: 11.5px var(--font-mono); font-weight: 600; }
+.archive-row-last { font: 10.5px var(--font-mono); color: var(--chrome-ink-dim); }
+.archive-row-reason { font: 10.5px var(--font-mono); color: var(--muted); }
+.archive-row-when { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+
+/* The state PILL: word first (drawn by the component), shape second. */
+.archive-state {
+  flex: none; font-size: 9.5px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; border-radius: 999px; padding: 0 6px;
+  border: 1px solid currentColor;
+}
+.archive-state[data-state="live"] { color: var(--success-text); border-style: solid; }
+.archive-state[data-state="archived"] { color: var(--muted); border-style: dashed; }
+
+.archive-more {
+  flex: none; align-self: center; margin: 4px 0 14px;
+  font-size: 11px; font-weight: 600;
+  color: var(--accent-ink);
+  background: var(--accent-soft);
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  padding: 4px 12px;
+  cursor: pointer;
+  transition: border-color var(--ds-transition-duration) var(--ds-ease-in-out),
+              background var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+.archive-more:hover { border-color: var(--accent); background: var(--focus-ring-soft); }
+
+/* One recorded session's trail — the SAME renderer the live Trajectory view
+   mounts, so the two cannot drift; only the frame around it is new. */
+.archive-trail { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+.archive-trail-head {
+  flex: none; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  padding: 8px 16px; border-bottom: 1px solid var(--line);
+  background: var(--surface-recessed);
+}
+.archive-back {
+  flex: none; font-size: 11px; font-weight: 600;
+  color: var(--accent-ink); background: none; border: none;
+  padding: 0; cursor: pointer;
+}
+.archive-back:hover { text-decoration: underline; }
+.archive-back:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+.archive-trail-sid { font: 12px var(--font-mono); font-weight: 650; color: var(--ink); }
+.archive-trail-when { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+.archive-trail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }

@@ -9,6 +9,7 @@ import { Shell, type Page } from "./Shell";
 import { ContextRail } from "./ContextRail";
 import { StatusBar } from "./StatusBar";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
+import { ArchivePage } from "./ArchivePage";
 import { ActivityPage } from "./ActivityPage";
 import { BrowserPage } from "./BrowserPage";
 import { MemoryPage } from "./MemoryPage";
@@ -109,6 +110,7 @@ export function PanelApp(props: Props) {
                 sseState={props.sseState as "connected" | "down" | "connecting"}
               />
             )}
+            {page === "archive" && <ArchivePage sessions={props.sessions} />}
             {page === "activity" && <ActivityPage />}
             {page === "browser" && <BrowserPage token={props.token} />}
             {page === "memory" && <MemoryPage />}

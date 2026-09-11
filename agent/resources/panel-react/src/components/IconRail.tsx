@@ -20,6 +20,8 @@ import type { Page } from "./Shell";
  *  no icon there). */
 export const PAGE_ICONS: Record<Page, IconName> = {
   terminal: "terminal",
+  // Recorded history, not a live console: a stacked box with a lid.
+  archive: "archive",
   activity: "activity",
   browser: "browser",
   memory: "memory",

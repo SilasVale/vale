@@ -7,14 +7,18 @@ import { render, screen } from "@testing-library/react";
 import { Shell, PAGES, PAGE_LABELS, type Page } from "../Shell";
 
 describe("Shell page contract", () => {
-  it("PAGES lists all 6 pages with labels — including the one that needs no session", () => {
-    expect(PAGES).toEqual(["terminal", "activity", "browser", "memory", "plugins", "settings"]);
+  it("PAGES lists all 7 pages with labels — including the one that needs no session", () => {
+    expect(PAGES).toEqual(["terminal", "archive", "activity", "browser", "memory", "plugins", "settings"]);
     const labels = (Object.keys(PAGE_LABELS) as Page[]).map((p) => PAGE_LABELS[p]);
-    expect(labels).toEqual(["Terminal", "Activity", "Browser", "Memory", "Plugins", "Settings"]);
+    expect(labels).toEqual(["Terminal", "Archive", "Activity", "Browser", "Memory", "Plugins", "Settings"]);
     // Activity is the only page that answers "what has this device been doing"
     // with zero sessions open, so it has to be on the rail. IconRail's
     // PAGE_ICONS is a Record over Page — a page without an icon does not build.
     expect(PAGES).toContain("activity");
+    // Archive sits directly under Terminal: it is that page's own history, the
+    // device's RECORDED sessions, which is where a closed (or pre-restart)
+    // session's audit trail is read.
+    expect(PAGES.indexOf("archive")).toBe(PAGES.indexOf("terminal") + 1);
   });
 });
 

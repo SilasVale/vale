@@ -40,7 +40,11 @@ describe("TabBar", () => {
     expect(p.onActivate).toHaveBeenCalledWith("s1");
     fireEvent.click(screen.getByText("dead"));
     expect(p.onActivate).toHaveBeenCalledTimes(1);
-    expect(screen.getByTitle("dead — closed (history stays in Trajectory/Logs)")).toBeTruthy();
+    // The label names where the trail ACTUALLY is. It used to promise
+    // "Trajectory/Logs" — there is no Logs view, and Trajectory shows the
+    // active session, so the promise could not be kept (ArchivePage is the
+    // surface that reads this device's recorded sessions).
+    expect(screen.getByTitle("dead — closed (its recorded trail is in Archive)")).toBeTruthy();
   });
 
   it("export does not activate the tab", () => {
@@ -132,7 +136,7 @@ describe("TabBar — a question waiting for a person", () => {
       />,
     );
     expect(container.querySelector(".tab-wait")).toBeNull();
-    expect(screen.getByTitle("gone — closed (history stays in Trajectory/Logs)")).toBeTruthy();
+    expect(screen.getByTitle("gone — closed (its recorded trail is in Archive)")).toBeTruthy();
   });
 
   it("shows no COUNT — one session holds at most one question", () => {

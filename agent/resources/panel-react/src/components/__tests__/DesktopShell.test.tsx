@@ -68,13 +68,15 @@ describe("Shell", () => {
 });
 
 describe("DesktopShell", () => {
-  it("switches between all six pages via the rail", () => {
+  it("switches between all seven pages via the rail", () => {
     render(<DesktopShell {...baseProps} />);
     // Default page: Terminal (the header title marks the current page).
     expect(document.querySelector(".desktop-header-title")?.textContent).toContain("Terminal");
-    // Every page, activity included: the desktop density must expose the same
-    // page set as the panel's rail (Shell.PAGES is the shared contract).
-    for (const label of ["Activity", "Browser", "Memory", "Plugins", "Settings"]) {
+    // Every page, archive and activity included: the desktop density must
+    // expose the same page set as the panel's rail (Shell.PAGES is the shared
+    // contract), and the archive page must mount here — the device's recorded
+    // sessions are the one thing reachable with no live session at all.
+    for (const label of ["Archive", "Activity", "Browser", "Memory", "Plugins", "Settings"]) {
       fireEvent.click(screen.getByTitle(label));
       expect(document.querySelector(".desktop-header-title")?.textContent).toContain(label);
     }

@@ -856,8 +856,11 @@ fn api_session_events(p: &str) -> Result<serde_json::Value, Box<Response>> {
     // `session_id_from_path`, shared with the control route.
     let sid = session_id_from_path(p)?;
     let logger = sessions_logger();
-    let events = logger.events_of(&sid);
-    Ok(serde_json::json!({ "ok": true, "id": sid, "events": events }))
+    // `found` distinguishes "this session recorded nothing" from "there is no
+    // readable record for it" — see `SessionLogger::events_of`. `ok` stays true
+    // either way: the REQUEST succeeded.
+    let (events, found) = logger.events_of(&sid);
+    Ok(serde_json::json!({ "ok": true, "id": sid, "found": found, "events": events }))
 }
 
 /// `POST /api/sessions/{sid}/approval` — decide the command waiting at the gate.
@@ -4684,6 +4687,54 @@ mod tests {
             v["memory_bytes"].as_u64(),
             base_bytes.checked_add(16),
             "tombstone bytes leave the meter: {v}"
+        );
+
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    /// "THIS SESSION LEFT NO RECORD" AND "I COULD NOT READ THE RECORD" ARE
+    /// DIFFERENT ANSWERS.
+    ///
+    /// `/api/sessions/{sid}` answered `200 {ok:true, events:[]}` for both: the
+    /// handler collapsed `read_events`'s `Option` with `unwrap_or_default()`.
+    /// A reader therefore cannot tell a session whose file is gone (retention,
+    /// a different data dir, a typo'd id) from one that genuinely recorded
+    /// nothing — and the panel that consumes this had to word its empty state
+    /// to cover both possibilities, which is the honest version of a question
+    /// the API should have answered.
+    ///
+    /// `ok` stays true in both cases: the REQUEST succeeded. What differs is
+    /// whether a record exists, which is what `found` reports.
+    #[tokio::test]
+    async fn session_events_distinguishes_no_record_from_an_empty_one() {
+        let (st, cfg_path) = state_with_cfg("events-found", CFG_YAML_TOKEN_ONLY);
+
+        // Nothing on disk for this id: `found` is false, and it is PRESENT so a
+        // consumer can branch on it rather than on an absence of events.
+        let resp = handle_request(
+            req("GET", "/api/sessions/no-such-session-anywhere"),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        assert_eq!(v["ok"], true, "the request succeeded: {v}");
+        assert_eq!(
+            v["found"], false,
+            "a session with no readable record must SAY so rather than \
+             answering with an empty list that reads as 'it recorded nothing': {v}"
+        );
+        assert_eq!(v["events"].as_array().map(|a| a.len()), Some(0), "{v}");
+
+        // Now a session that WAS recorded: `found` true, events present.
+        let logger = sessions_logger();
+        logger.log_command_start("web-events-found", "echo hi");
+        let resp = handle_request(req("GET", "/api/sessions/web-events-found"), st.clone()).await;
+        let v = json_body(resp).await;
+        assert_eq!(v["found"], true, "a readable record is found: {v}");
+        assert!(
+            v["events"].as_array().is_some_and(|a| !a.is_empty()),
+            "and it carries the events: {v}"
         );
 
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());

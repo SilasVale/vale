@@ -53,9 +53,14 @@ export function TabBar({ sessions, activeSid, onActivate, onClose, onExport, vie
             // round-161: closed tabs are visually dead AND honestly labelled —
             // activation rejects closed sessions (round-113 unmounted their
             // panes), so a click was a silent no-op before.
+            // The label used to promise the history "stays in Trajectory/Logs":
+            // there is no Logs view, and Trajectory shows the ACTIVE session. The
+            // durable trail IS reachable now — in the Archive page, the surface
+            // that reads this device's recorded sessions — so the tab names where
+            // it actually is instead of a place that does not exist.
             title={
               s.closed
-                ? `${s.label} — closed (history stays in Trajectory/Logs)`
+                ? `${s.label} — closed (its recorded trail is in Archive)`
                 : waiting
                   ? `${s.label} — waiting for your approval`
                   : s.sid

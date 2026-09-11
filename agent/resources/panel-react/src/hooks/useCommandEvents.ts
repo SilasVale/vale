@@ -138,15 +138,43 @@ export function groupEvents(events: CommandEvent[]): CommandCard[] {
 }
 
 /**
- * Poll the audit log of one session and return the RAW events (in seq order).
+ * How the last completed read of a session's audit log went.
+ *
+ *   "reading"     — no completed read yet for this sid (initial, or just switched)
+ *   "ok"          — the last read SUCCEEDED. Note this says nothing about how
+ *                   many events came back: a successful read of an empty file is
+ *                   "ok" with zero events, and that is a DIFFERENT fact from a
+ *                   read that failed. Collapsing the two is how an unreadable
+ *                   session renders as "this session recorded nothing".
+ *   "unreadable"  — the read failed and NO read of this sid has ever succeeded.
+ *                   A failure AFTER a good read keeps "ok": the audit log is
+ *                   append-only, so the events already in hand are still true.
+ *
+ * The archive viewer is the consumer that needs this (a session whose file is
+ * gone must say so, not draw an empty history); the live trajectory views
+ * ignore it, exactly as they ignore the failed poll.)
+ */
+export type SessionReadState = "reading" | "ok" | "unreadable";
+
+/**
+ * Poll the audit log of one session and return the RAW events (in seq order)
+ * together with the read state above.
  * Shared by the command-card grouping (useCommandEvents) and the trajectory
  * timeline (useTrajectory) — both consume /api/sessions/{sid} with the same
  * polling semantics. A FAILED poll (tunnel blip, agent restarting) keeps the
  * last good events instead of blanking the stream (same stance as
  * useSessions' poll). No polling while sid is null.
  */
-export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEvent[] {
+export function useSessionEventsWithState(
+  sid: string | null,
+  pollMs = 2000,
+): { events: CommandEvent[]; readState: SessionReadState } {
   const [events, setEvents] = useState<CommandEvent[]>([]);
+  const [readState, setReadState] = useState<SessionReadState>("reading");
+  // Has ANY read of this sid succeeded? A failed later poll must not overwrite a
+  // known-good state (and with an empty-but-readable session, `events.length`
+  // cannot answer this — hence a ref of its own).
+  const readOkRef = useRef(false);
   // A fetch in flight when the sid switches must not land its result under
   // the new session's stream — tick() checks the live sid before setState.
   const sidRef = useRef(sid);
@@ -163,7 +191,9 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
   if (lastSidRef.current !== sid) {
     lastSidRef.current = sid;
     lastSeqRef.current = 0;
+    readOkRef.current = false;
     setEvents([]);
+    setReadState("reading");
   }
 
   useEffect(() => {
@@ -177,6 +207,24 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
         // session's events under the new tab and poison its seq watermark
         // (new session's polls then always return 'nothing new').
         if (sidRef.current !== sid) return;
+        // A COMPLETED read — mark it before the "nothing new" guard below,
+        // which also short-circuits the ordinary case of a quiet session. The
+        // guard is about re-rendering, not about whether the device answered.
+        readOkRef.current = true;
+        // The DEVICE now answers the question the client used to have to
+        // hedge: `found:false` means there is no readable record for this id
+        // (retention, another data dir, a stale id), which is NOT the same as
+        // a session that recorded nothing. Without this the viewer would draw
+        // an empty trail for a session whose file is simply gone.
+        //
+        // Only authoritative when the field is PRESENT: an older agent omits
+        // it, and then the HTTP-level success is all we know — which is what
+        // `readOkRef` already records.
+        const found = res && typeof res.found === "boolean" ? res.found : true;
+        setReadState((s) => {
+          if (!found) return "unreadable";
+          return s === "ok" ? s : "ok";
+        });
         const evs: CommandEvent[] = res && Array.isArray(res.events) ? res.events : [];
         let maxSeq = 0;
         for (const e of evs) maxSeq = Math.max(maxSeq, e.seq || 0);
@@ -212,7 +260,13 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
           }
         }
         setEvents(tail);
-      } catch { /* transient — keep the last good events, retry next tick */ }
+      } catch {
+        // Transient for a live session — keep the last good events, retry next
+        // tick. But a read that has NEVER succeeded is a different fact, and
+        // the archive viewer must be able to say so instead of drawing the
+        // session as one that recorded nothing.
+        if (!readOkRef.current) setReadState((s) => (s === "unreadable" ? s : "unreadable"));
+      }
     };
     tick();
     // round-163: no timer — the audit log refetches when THIS session
@@ -252,7 +306,14 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
     };
   }, [sid, pollMs]);
 
-  return events;
+  return { events, readState };
+}
+
+/** The raw events alone — the shape the trajectory views and their tests have
+ *  always taken. Kept as its own export so adding the read state could not
+ *  change what an existing consumer sees. */
+export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEvent[] {
+  return useSessionEventsWithState(sid, pollMs).events;
 }
 
 /**
@@ -261,9 +322,11 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
  * poll keeps the last good cards instead of blanking the stream.
  */
 export function useCommandEvents(sid: string | null, pollMs = 2000) {
-  const events = useSessionEvents(sid, pollMs);
+  // round-128: the raw events are exposed so the trajectory view reuses THIS
+  // poll instead of mounting a second one (double fetch every 2s). `readState`
+  // is the third thing the same read knows (see SessionReadState) — the archive
+  // viewer needs it to tell an empty trail from an unreadable one.
+  const { events, readState } = useSessionEventsWithState(sid, pollMs);
   const cards = useMemo(() => groupEvents(events), [events]);
-  // round-128: expose the raw events so the trajectory view reuses THIS
-  // poll instead of mounting a second one (double fetch every 2s).
-  return { cards, events };
+  return { cards, events, readState };
 }

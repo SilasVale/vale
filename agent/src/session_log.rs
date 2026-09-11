@@ -914,8 +914,21 @@ impl SessionLogger {
     }
 
     /// Public read of a session's events (for /api/sessions UI — round-56).
-    pub fn events_of(&self, sid: &str) -> Vec<serde_json::Value> {
-        self.read_events(sid).map(|(e, _)| e).unwrap_or_default()
+    ///
+    /// Returns the events AND whether a record was readable at all. The two are
+    /// different answers — "this session left no record" versus "I could not
+    /// read the record" — and collapsing them (the old `unwrap_or_default`)
+    /// forced every consumer to word its empty state to cover both, which is a
+    /// question the API is better placed to answer than the UI.
+    ///
+    /// `false` covers a missing file and an unparseable one alike: from here
+    /// they are the same fact, and inventing a third state the caller cannot
+    /// act on differently would only invite it to guess.
+    pub fn events_of(&self, sid: &str) -> (Vec<serde_json::Value>, bool) {
+        match self.read_events(sid) {
+            Some((events, _)) => (events, true),
+            None => (Vec::new(), false),
+        }
     }
 
     /// Fold a session's last event into a terminal state (round-56): the
@@ -1214,7 +1227,7 @@ mod tests {
         logger.log_status("s1", "resumed");
         drop(logger);
         let logger2 = SessionLogger::new(dir.clone());
-        let events = logger2.events_of("s1");
+        let (events, _) = logger2.events_of("s1");
         assert!(
             events
                 .iter()
@@ -1537,7 +1550,7 @@ mod tests {
         logger.log_control("s", "ai");
         logger.flush_all();
 
-        let events = logger.events_of("s");
+        let (events, _) = logger.events_of("s");
         let controls: Vec<&serde_json::Value> =
             events.iter().filter(|e| e["kind"] == "control").collect();
         assert_eq!(controls.len(), 2, "both handoffs recorded: {events:?}");
@@ -1599,6 +1612,7 @@ mod tests {
 
         let seqs: Vec<u64> = third
             .events_of("s")
+            .0
             .iter()
             .map(|e| e["seq"].as_u64().unwrap_or(0))
             .collect();
@@ -1653,7 +1667,7 @@ mod tests {
         drop(logger);
 
         let logger2 = SessionLogger::new(dir.clone());
-        let events = logger2.events_of("s1");
+        let (events, _) = logger2.events_of("s1");
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1682,7 +1696,7 @@ mod tests {
         logger.log_command_start_with("s1", "ls", Some("   "), Some(&[]));
         drop(logger);
 
-        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1700,7 +1714,7 @@ mod tests {
         let logger2 = SessionLogger::new(dir.clone());
         logger2.log_command_start("s1", "ls");
         drop(logger2);
-        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
         assert!(events.iter().all(|e| e.get("intent").is_none()));
     }
 
@@ -1722,7 +1736,7 @@ mod tests {
         logger.log_command_start_with("s1", "x", Some(&long_intent), Some(&many));
         drop(logger);
 
-        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
         let start = events
             .iter()
             .find(|e| e["kind"] == "command/start")
@@ -1759,7 +1773,7 @@ mod tests {
         logger.log_command_start_with("s1", &huge, Some("why"), None);
         drop(logger);
 
-        let events = SessionLogger::new(dir.clone()).events_of("s1");
+        let (events, _) = SessionLogger::new(dir.clone()).events_of("s1");
         let starts: Vec<_> = events
             .iter()
             .filter(|e| e["kind"] == "command/start")
@@ -1817,6 +1831,7 @@ mod tests {
         let read = SessionLogger::new(dir.clone());
         let statuses: Vec<String> = read
             .events_of("s1")
+            .0
             .iter()
             .filter_map(|e| e["status"].as_str().map(|s| s.to_string()))
             .collect();
@@ -1863,7 +1878,7 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_status("s1", "opened");
         drop(logger);
-        let e = SessionLogger::new(dir.clone()).events_of("s1").remove(0);
+        let e = SessionLogger::new(dir.clone()).events_of("s1").0.remove(0);
         let (wts, wts_ms) = (
             e["ts"].as_u64().expect("ts"),
             e["ts_ms"].as_u64().expect("ts_ms"),
@@ -1891,7 +1906,7 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_status("s1", "opened");
         drop(logger);
-        let e = SessionLogger::new(dir.clone()).events_of("s1").remove(0);
+        let e = SessionLogger::new(dir.clone()).events_of("s1").0.remove(0);
         let audit_ts = e["ts"].as_u64().unwrap();
 
         // A browser action line, written through the shared writer, with a
@@ -1929,7 +1944,7 @@ mod tests {
         let logger = SessionLogger::new(dir.clone());
         logger.log_control("new", "human");
         logger.flush_all();
-        let events = logger.events_of("new");
+        let (events, _) = logger.events_of("new");
         assert_eq!(events.len(), 1);
         assert_eq!(events[0]["seq"].as_u64(), Some(1));
 

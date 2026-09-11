@@ -164,6 +164,35 @@ describe("useCommandEvents", () => {
     expect(mockCallApi).toHaveBeenCalledWith("/api/sessions/s1");
   });
 
+  // `found:false` IS AN ANSWER, NOT AN EMPTY ONE.
+  //
+  // The device used to answer `200 {events:[]}` both for "this session recorded
+  // nothing" and for "there is no readable record for this id" — it collapsed
+  // the two. The server now says which (SessionLogger::events_of returns the
+  // flag), and the hook must carry that through rather than drawing an empty
+  // trail for a session whose file is gone.
+  it("an unreadable record reports 'unreadable', not an empty trail", async () => {
+    mockCallApi.mockResolvedValue({ ok: true, id: "gone", found: false, events: [] });
+    const { result } = renderHook(() => useCommandEvents("gone"));
+    await waitFor(() => expect(result.current.readState).toBe("unreadable"));
+    expect(result.current.cards).toHaveLength(0);
+  });
+
+  it("found:true with no events is 'ok' — a quiet session is not a missing one", async () => {
+    mockCallApi.mockResolvedValue({ ok: true, id: "quiet", found: true, events: [] });
+    const { result } = renderHook(() => useCommandEvents("quiet"));
+    await waitFor(() => expect(result.current.readState).toBe("ok"));
+  });
+
+  it("an older agent that omits `found` is treated as readable", async () => {
+    // Backward compatibility matters here: the field is new, and an agent that
+    // predates it answers a perfectly good empty trail. Treating a MISSING
+    // field as "unreadable" would make every older device look broken.
+    mockCallApi.mockResolvedValue({ ok: true, id: "old", events: [] });
+    const { result } = renderHook(() => useCommandEvents("old"));
+    await waitFor(() => expect(result.current.readState).toBe("ok"));
+  });
+
   it("switching sessions resets cards + the seq watermark", async () => {
     // sA's max seq (10) is HIGHER than sB's (2) — without the per-session
     // watermark reset, sB's first poll would be skipped as "nothing new".

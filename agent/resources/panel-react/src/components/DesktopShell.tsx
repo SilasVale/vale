@@ -15,6 +15,7 @@ import { callApi } from "../lib/api";
 import { IconRail, PAGE_ICONS } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
+import { ArchivePage } from "./ArchivePage";
 import { ActivityPage } from "./ActivityPage";
 import { BrowserPage } from "./BrowserPage";
 import { MemoryPage } from "./MemoryPage";
@@ -58,6 +59,7 @@ interface Props {
 
 const PAGE_TITLES: Record<Page, string> = {
   terminal: "Terminal",
+  archive: "Archive",
   activity: "Activity",
   browser: "Browser",
   memory: "Memory",
@@ -297,6 +299,7 @@ export function DesktopShell({
                 onControlledViewChange={(sid, v) => changeView(sid, v)}
               />
             )}
+            {page === "archive" && <ArchivePage sessions={sessions} />}
             {page === "activity" && <ActivityPage />}
             {page === "browser" && <BrowserPage token={token} />}
             {page === "memory" && <MemoryPage />}
