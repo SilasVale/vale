@@ -488,7 +488,96 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 23 (a trimmed trail says where it begins, and the
+Last updated: 2026-09-11 round 24 (a damaged byte stopped erasing records, the
+console stopped serving a claim round 21 disproved, and a recorded session can
+now say what it was — then RELEASED). Commit: ddfc4301, plus 1.2.328.
+  (1) THE ROUND'S SHAPE, and it is now the dominant one: a delegated audit of the
+  DURABLE-RECORD READ LAYER — chosen because rounds 20-23 each fixed ONE reader in
+  isolation and nobody had audited the family's policy — found FOUR defects, and
+  THREE were survivors of my own recent work. The scout's account of why it picked
+  that subsystem is the reusable part: "the reader round 23 repaired sits next to
+  the one it left strict."
+  (2) ONE DAMAGED BYTE ERASED A RECORD FROM THREE CALLERS. Round 23 taught the
+  LIST to read bytes and decode lossily, and the log states that property
+  generally. It was NOT general: `read_events` — a different function — still did
+  `read_to_string`, so a single invalid byte made the whole file unreadable to
+  three callers that are not the list:
+    * `events_of` -> `/api/sessions/{sid}` answered `found:false` for a session
+      that demonstrably exists: the route told the operator "no record" about a
+      record it was holding;
+    * `recover_interrupted` skipped the file, so an interrupted command NEVER got
+      its `interrupted`/`abandoned` arm — round 18's silent governance loss, back
+      through a different door;
+    * `max_seq_on_disk` returned 0, so after a restart the shared counter re-seeded
+      at 0 and re-issued `seq` values already on disk — round 22's collision,
+      re-reachable through the file round 23 proved reachable.
+  A crash mid-write of a multi-byte character leaves exactly a truncated sequence,
+  and `memory/store.rs` already documented that mechanism for its own reader. Fixed
+  by decoding lossily, which makes the function's EXISTING skip-the-junk-line
+  policy actually reachable. THE LESSON: fixing one reader does not fix the family,
+  and a property stated in this log must be checked against every reader that
+  claims it — AGENTS.md said "a damaged region cannot erase a healthy file" while
+  three readers still did the opposite.
+  (3) THE GATEWAY SERVED A CLAIM ROUND 21 DISPROVED. `mcp-tools.ts` hand-copies
+  each tool's prose, and `terminal_read` still promised "`offset: 0` re-reads from
+  the beginning" — the exact sentence round 21's commit is TITLED on, corrected on
+  the device while this copy kept reaching every console client verbatim.
+  Invisible to the contract test because it compares parameter NAMES only
+  (`spec-tools.json` is generated "names only, no types" by design). Fixed, and the
+  FACT is now pinned: a test asserts the disproven sentence is ABSENT and the 1 MiB
+  cap is PRESENT. Descriptions are deliberately re-worded for the console, so a
+  text-equality test would rot; pinning the fact rather than the prose is the
+  distinction that makes it durable.
+  (4) ROUND 23'S OWN TWO FALSEHOODS HAD SURVIVORS — the same shape as the one
+  round 23 caught in round 21, now confirmed as a PATTERN rather than an incident.
+  `web/mod.rs` still documented the route as "full audit events for one session",
+  and `ArchivePage.tsx` promised an operator that a session "opens here with its
+  full audit trail" while the note the SAME PAGE prints for a trimmed trail says
+  earlier events are not recorded. Both strings were in the shipped 1.2.327 bundle.
+  (5) SESSION IDENTITY IN THE DURABLE RECORD. A recorded session was an opaque
+  `term-<hex>-<n>`: `kind` and `target` sat unused in scope at the `opened` call
+  site, the live kind/label die with the process, and d1's archive held 620 rows
+  that could not be told apart after a restart. `kind` and the operator-facing
+  `label` now ride the session's version HEADER — one line — so the list route
+  answers without reading a trail that can be megabytes, the same economy the tail
+  fold uses. The raw `target` is deliberately NOT recorded: it can carry a port and
+  connection options the label drops, and that privacy judgment is STATED in the
+  code rather than made by omission (the corpus already holds full command text and
+  output). A record written before this OMITS the keys, so a consumer can tell "the
+  device does not know" from a real value. VERIFIED ON d1: `term-651eb2-0 kind=pty
+  label=PowerShell`, and exactly **1 of 622 rows named** — the honest limit, since
+  the other 621 predate the field and will stay anonymous.
+  (6) TWO METHOD NOTES. First: I proved the helpers with real round-trip tests, then
+  REMOVED THE CALL SITE and watched BOTH TESTS STILL PASS — rounds 18/19's "the
+  helpers were perfect; the bug was in how they were CALLED", biting again. The
+  wiring is now pinned STRUCTURALLY (the open path needs a real backend, so no
+  behavioural test can reach it), and the pin fails on both the missing call and the
+  wrong ORDER, with a message explaining why before/after matters. Second: my own
+  restore from a pre-mutation backup silently wiped a test module I had just added —
+  A RESTORE CAN UNDO MORE THAN THE MUTATION, and the only reason I caught it was
+  that the test count did not move. Copy the backup AFTER the test is in place.
+  (7) RELEASED 1.2.328. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the FOURTH consecutive release. Verified on d1 by effect: `release:
+  1.2.328`, receipt `update requested 1.2.327 -> 1.2.328`, and session identity
+  answering on a real session.
+  (8) SCOUT FINDINGS NOT ACTED ON, with evidence: `required` drift on the axis the
+  contract test cannot see (gateway `terminal_execute` requires
+  `["session_id","input"]` where the device requires `["command"]` and explicitly
+  calls session_id optional, and the relay never injects one — so a
+  schema-validating client is forbidden a call the device supports;
+  `terminal_resize`'s own `required` contradicts its handler's defaults); and
+  `plan_step` is accepted verbatim and never checked against the declared plan, so a
+  claim of step 5 against a 3-step plan renders on the Activity row and NOWHERE in
+  the plan view, while `PathView`'s comment claims the comparison is complete. Also
+  recorded: the scout CLEANED its own false lead (it chased "`last_event_of`'s 4 KiB
+  premise is wrong" and proved the premise holds, because plan/goal/command/output
+  are all capped) and refused three directions for stated reasons, including
+  cross-session search — "the exact cost round 23 just paid a round to remove".
+  Gates: agent 570 default / 621 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 760 (was 759); panel 467 + build.
+
+Previous round: 2026-09-11 round 23 (a trimmed trail says where it begins, and the
 session list stopped reading twenty megabytes — MEASURED, then RELEASED).
 Commits: ccc960e0, plus 1.2.327.
   (1) A TRIMMED TRAIL NOW SAYS SO. A closed session's file is trimmed to ~2000
