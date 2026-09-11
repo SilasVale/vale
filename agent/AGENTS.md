@@ -488,7 +488,83 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 20 (the memory ledger that never moved, the run
+Last updated: 2026-09-11 round 21 (the archive the corpus never had, a silent
+  session that read as a dead one, and an API that could not say "no record").
+  Commits: e4e389aa + 29698045 (the meter and the silent session), bde07b0f (the
+  archive + the `found` flag), fdfda96f (the false read claim).
+  (1) THE DURABLE AUDIT CORPUS HAD NO READER. `GET /api/sessions` returns every
+  session file the device holds — 30 days of governance evidence, surviving
+  restarts — and had NO consumer anywhere in the repo (verified by grep, not
+  assumed). The panel built its list from `terminal_list`, which is LIVE-only, so
+  a closed tab was an inert no-op while its tooltip promised history no view
+  could show, and after a reload or restart past sessions were unreachable
+  entirely. A read-only Archive page now lists what the device RECORDED, paged,
+  opening each session through the EXISTING reader and the EXISTING trajectory
+  renderer — no second timeline, no new route, 465 panel tests (was 416) with
+  all four requirements mutation-proven by the delegated agent.
+  (2) A SILENT SESSION READ AS A DEAD ONE. `terminal_read` answered
+  `evicted: true` for a LIVE session that had produced no output yet. The marker
+  exists so a client can tell "no data" from "gone" — its own comment says so —
+  but the live buffer entry is created LAZILY by the drainer on the first frame,
+  so a session with no output has neither a live nor a history entry and fell
+  through to the gone-marker. EVERY session is in that state from `terminal_open`
+  until its first chunk, and a silent one (a serial line waiting for a device)
+  stays there indefinitely. The cost is the failure mode this repo has ALREADY
+  RECORDED: an AI that believes `evicted` reopens the session it is holding (d1:
+  321 idle partials against 167 terminal_opens). It now asks the MANAGER — the
+  only thing that knows whether a session is alive — instead of inferring
+  liveness from the presence of buffered bytes. PROVEN ON THE REAL BINARY: a
+  fresh session answers `{text:"",start:0,end:0}` with NO evicted flag while
+  `terminal_list` still lists it, and a session that never existed STILL answers
+  `evicted:true`, so the marker keeps the power it was built for.
+  (3) THE API COULD NOT SAY "NO RECORD" — and the panel agent found it, correctly
+  refused to paper over it, and said so. `api_session_events` collapsed
+  `read_events`'s `Option` with `unwrap_or_default()`, so a session whose file is
+  gone answered exactly like one that recorded nothing: `200 {events:[]}`. The
+  archive's "unreadable" requirement was therefore satisfiable only as a hedge.
+  `events_of` now returns `(events, found)`; `ok` stays true in both cases (the
+  REQUEST succeeded — what differs is whether a record exists). `found` is
+  authoritative only when PRESENT, because an older agent omits it and treating a
+  missing field as unreadable would make every older device look broken; there is
+  a test for that too.
+  (4) THE MEMORY METER, and my own test being wrong is the instructive part.
+  `/api/settings` reported the caps and no usage, so a limit could be lowered
+  below the current contents — after which the device silently evicts the OLDEST
+  knowledge — with nothing able to show it from the UI. Shipping the meter BEFORE
+  round 20's ledger fix would have published a number that was wrong after any
+  edit or delete, so the order mattered and is recorded in the code. Then MY test
+  asserted an absolute `0` for an "empty store" and failed on a leftover 1 entry
+  / 16 bytes: `AppState::new` builds its store on `default_memory_dir()`, a
+  PROCESS-GLOBAL path, so every web test in that binary shares one store. Same
+  trap round 20 hit from the other side. Fixed by measuring DELTAS and by making
+  the record ids carry pid+clock — a fixed id would make `insert` an UPDATE and
+  move the count by 1 instead of 2, which it also did before I caught it.
+  (5) AN AUDIT FOUND A FALSE CLAIM IN THE READ PATH, and it is the class this log
+  keeps recording: the tool description said "`offset: 0` re-reads from the
+  beginning" and an inline comment said the stream "reads continuously from any
+  absolute offset". Both are FALSE past 1 MiB of spill — `read_spill` caps one
+  read at 1 MiB and returns the window's TAIL, so the head is unreachable by ANY
+  offset. The cap is deliberate (round 110's OOM fix) and is NOT changed; the
+  claim is. The round-111 note that made `start` report the true start is kept
+  and made precise: it makes the gap VISIBLE, it does not make the head
+  reachable. Pinned by a test at PRODUCTION SIZE (1.5 MiB) — every existing spill
+  test used <=100 bytes, so the covered behaviour was not the production one.
+  (6) THE AUDIT'S REMAINING FINDINGS ARE RECORDED, NOT FIXED, and each needs its
+  own round and its own evidence: `terminal_history` can list one session twice
+  in a narrow window (live/0 then closed/N) and `terminal_read` can serve a sid
+  history never lists; the audit corpus' close-time trim to 2000 lines is
+  invisible to `/api/sessions/{sid}` (the panel's own comment claims it "returns
+  the FULL audit log"), and a live file has no write-time bound on event COUNT
+  while each refetch re-reads the whole file; `seq` is not unique because the
+  counter is per-instance and every web call builds a fresh logger that re-seeds
+  from disk, while consumers use it as a React key and a watermark. The audit
+  also CLEANED the question this log cares most about — whether any other caller
+  trims/renames a session file under a live writer (round 11's defect): no,
+  `trim_file` has exactly one caller and it flushes its own handle first.
+  Gates: agent 562 default / 613 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; panel 465 + build.
+
+Previous round: 2026-09-11 round 20 (the memory ledger that never moved, the run
   family's turn, and two flakes killed at the cause). Commits: 5bd73924 (ledger),
   9ff2d5d3 (abandoned runs), 6a7bbd29 + e1521114 (release 1.2.325), 1ecf7db7
   (the two flakes).
