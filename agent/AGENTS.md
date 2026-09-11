@@ -487,7 +487,80 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 17 (the suite nothing ran now runs; 1.2.322 is on
+Last updated: 2026-09-11 round 18 (the update path audited, and the last silent
+  governance loss closed). Commits: 4457f52e + d4662e12 + 91839497 (update
+  path), 2de64c25 (rollback marker), 27ba321e (abandoned question).
+  (1) THE ROLLBACK PIN LIED, and it is the worst defect of the three because it
+  is PERMANENT. `etc\.vale-release` is the device's only local version truth:
+  `agent_update` reads it as `local` and answers up_to_date when the remote is not
+  newer, and /api/status serves it as `release`, which the panel, the tray and the
+  console fleet card all display. `vale rollback` wrote it UNCONDITIONALLY once
+  `vale update` returned status 0 — but status 0 means the WMI HANDOFF was
+  ACCEPTED (`ReturnValue=0` = a process was created), not that the swap succeeded.
+  Every decision that matters happens afterwards in a WmiPrvSE-parented process
+  whose exit code nobody reads, so **no path returns non-zero for a failed swap**.
+  A rollback whose swap died therefore claimed a version the device was not
+  running: every UI lies, AND once the pin is cleared `agent_update` sees the fake
+  version, decides the device is current, and it is STUCK on the old release with
+  no error anywhere. The swap script always gated the same write on a provable
+  copy; the CLI never did. It now READS THE MARKER BACK and requires the staged
+  version (bounded 90 s — the swap kills the agent, so a delay is normal, but a
+  marker that never arrives is a failure).
+  (2) A STAGING THROW STRANDED THE UPDATE LOCK. The busy marker is created before
+  staging, and the only things that release it are the WMI-failure handler and the
+  swap's own cleanup — neither covers a throw from `copyFileSync` or
+  `stageDesktopShell` (full disk, AV lock, EPERM). That escaped to the top level
+  leaving the marker on disk, so the NEXT `vale update` refused for ten minutes
+  citing an update that never started, while the operator saw a stack trace. The
+  region is now guarded and releases the marker. Its neighbours
+  `writeBoxedVersions`/`writeReleaseMarker` were already best-effort; this was the
+  one place a throw strands a LOCK.
+  (3) ROUND 17'S SILENCE IS NOW EXPLAINED AS FAR AS THE CODE ALLOWS. That round
+  recorded "cause not established". It is now established that THE CLI NEVER RAN:
+  the marker is the first statement of `update()` and every branch either creates
+  it or exits 1, so reaching update() always leaves a marker; a marker would also
+  have made the second attempt refuse, and it did not. Three plausible CLI-side
+  explanations are ELIMINATED, which points the remaining question at the MCP
+  tool-call transport. Why is still unknown and is not guessed at. Also added: an
+  `update requested X -> Y` receipt before the handoff, so vale-update.log now
+  distinguishes four cases (CLI-only / CLI+swap / agent_update-only / neither) and
+  `vale status` reports the running release, this CLI's version, the DRIFT, and
+  the marker's three states (none / IN FLIGHT / STARTED AND DID NOT FINISH).
+  (4) THE LAST SILENT GOVERNANCE LOSS. The approval gate's pending question lives
+  in process MEMORY; the trail records `asked` and a terminal outcome
+  (`approved`/`refused`/`expired`) only when one lands. When the agent died — the
+  watchdog, an update (which kills it BY DESIGN), a crash — the question ceased to
+  exist and NOTHING recorded it, so after a restart a run that stopped because
+  nobody was watching was INDISTINGUISHABLE from one that was never gated. That is
+  the exact confusion `asked`/`expired` were added to kill, surviving on the last
+  uncovered event family. `recover_interrupted` now writes `abandoned`, naming the
+  command. POSTURES ARE NOT ANSWERS (`granted`/`armed` do not close a question),
+  and `abandoned` is itself terminal or each pass would append another one.
+  PROVEN ON THE REAL BINARY: parked a real question (`pending_approvals = 1`),
+  SIGKILLed the agent mid-question, restarted — the trail went from ending on
+  `asked | echo never-answered` to `armed → asked → abandoned`, command named.
+  (5) THE LESSON OF THE ROUND, learned three times over: MUTATION REVEALS
+  TEST GAPS, AND A MUTATION WITH A WRONG PREMISE MEASURES NOTHING. Restoring the
+  ORIGINAL rollback bug at the call site left the whole suite GREEN, because the
+  pure helpers were perfect and the bug WAS in the wiring — `rollback()` does real
+  I/O (spawnSync, process.exit) that `node --test` cannot drive, so the pin had to
+  become structural (scan the call site for the verdict gate). And widening the
+  abandoned-scan's terminal set to include a posture ALSO left the suite green,
+  because my first test had no case where a posture change follows an unanswered
+  question; that case is now in the test. Separately, TWO of my mutation scripts
+  had a wrong anchor and reported "fail 0", which measures nothing — grep the
+  compiled text before mutating it. That is three times this session.
+  (6) A SCOUT REPORT EARNED ITS KEEP BY FINDING WHAT IT WAS NOT ASKED FOR: it
+  audited the whole update path while ranking directions, and findings (1) and (2)
+  came from that audit rather than from the ranked list. It also, correctly,
+  refused to propose the receipt/status work it could see uncommitted in the
+  worktree — the delegation contract working in the other direction.
+  Gates: agent 555 default / 605 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean; CLI suite 26 (was 20) with every property mutation-proven.
+  NOT RELEASED — the CLI fixes reach devices only through a release (the tgz
+  carries bin/vale.js).
+
+Previous round: 2026-09-11 round 17 (the suite nothing ran now runs; 1.2.322 is on
   d1). Commits: ad4d306a (CI e2e job), a7b48a0b + the publish commit.
   (1) THE E2E SUITE IS IN CI, and that is the durable fix for round 16's finding.
   Its `governance` section had been RED for a full round because no workflow
