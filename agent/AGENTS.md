@@ -412,7 +412,71 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
+Last updated: 2026-09-11 round 14 (the approval gate becomes ANSWERABLE). Three
+  commits: 78ff244a (panel), ecd267b1 (agent). The round before this one is
+  logged below as round 13.
+  THE DEFECT THIS FIXES is not a crash — it is a gate nobody could answer. An
+  execute blocked 60 s, then failed closed with `approval_timeout` AND threw the
+  question away at the same instant, while holding the session's execute lock for
+  the whole wait. An operator who was not staring at the right pane at the right
+  second therefore could not answer at all, and being away from the desk was
+  punished with a frozen session.
+  TWO CLOCKS. The BLOCK (60 s, unchanged) is how long one tool call may hang; the
+  TTL (15 min, new) is how long the QUESTION stands. On the block deadline the
+  execute PARKS: it releases the lock, keeps the registration, and returns
+  `state:"awaiting_approval"` + `ran:false` + the gate id. Ok-with-a-state, not an
+  error — the vocabulary already had done/partial/timeout and an error would say
+  what a refusal says. A refusal stays a typed `approval_denied` error on purpose:
+  the gateway dispatches on that code.
+  A LATE YES IS A PERMIT — one-shot, bound to (session, the EXACT command the
+  operator read, gate id), consumed on match. Without it a late answer would
+  decide a request nobody is waiting on: recorded, and doing nothing. A different
+  command with the same id ASKS AGAIN, because a permit is one yes to one line,
+  not the prefix-grant "remember this" means. Proven on the live binary: the same
+  command with the id ran unasked; a different command with that id parked again.
+  The trail gains `asked` and `expired`. Without them an unanswered gate leaves NO
+  trace, so a run that stopped because nobody was watching looked identical to one
+  that was never gated. Live trail read: armed → asked → approved → asked.
+  `ApprovalOutcome::{Granted, Parked}` replaces `Result<bool>` — two shapes forced
+  "nobody answered YET" to be reported as a failure, which is precisely how an
+  unattended gate became indistinguishable from a refusal. `Denied` is absent from
+  the enum and stays an error.
+  DESIGN CORRECTION found while testing: `parked` is a RECORDED flag set by the
+  waiter when ITS budget expires, not a derivation from `requested_at` against the
+  production constant. The block is the CALLER's budget and a caller may wait less
+  than 60 s — the tests do. A derivation would report "nobody is waiting" while an
+  execute still was, and a late answer would mint a permit for a command about to
+  run anyway: running it twice.
+  THE BUG THE SUITE COULD NOT SEE, and the round's real lesson: `term_list` /
+  `term_info` project a request through `live_pending`, while every test read
+  `term_pending_approval`. TWO implementations of ONE read, and the covered one
+  was not the one the panel calls. With `live_pending` still measuring the block,
+  the parked execute returned a perfectly correct body while `terminal_list`
+  reported NO pending request — the prompt vanished from the panel at the exact
+  moment it became answerable. Everything was green. Found by driving the REAL
+  BINARY over loopback (`terminal_execute` → park → `terminal_list`), then pinned
+  by `a_parked_question_is_visible_through_term_list` and mutation-proven
+  (restoring the block deadline fails it with "got 59799ms"). The general lesson
+  is worth more than the fix: when two functions answer one question, the test
+  must read the one the PRODUCT reads.
+  THE PANEL HALF (78ff244a, a delegated agent) fixed a second real bug the new TTL
+  exposed: `ApprovalGate` combined a refreshed `expiresIn_ms` with a locally
+  accumulated elapsed, so with a 15-minute TTL and a 2 s poll the displayed time
+  fell ~2× too fast — invisible at 60 s. `mapPending` now stores an ABSOLUTE
+  `expiresAtMs` and the relative field is gone from the type entirely. Mutation-
+  proven: halving the budget fails "does NOT fall twice as fast". Also: a settled
+  expired row (`role="status"`, no buttons, never a 0 s answerable prompt); a
+  ceiling minute/second countdown ticking 1 s only in the last minute; the
+  countdown `aria-hidden` with a STATIC `aria-describedby` (the dialog's
+  `role="alertdialog"` is implicitly an assertive live region, so a 1 Hz change
+  would machine-gun a screen reader for 15 minutes); badges on the tab, the
+  status bar and the rail that key off `pendingApproval` and NEVER off `armed`.
+  Gates: agent 568 feat-gated / 519 default, clippy -D warnings clean both
+  configs, fmt clean, xwin OK, module_map green; gateway 759; panel 383 (was 350)
+  + build. NOT ON A DEVICE — still no version bump, so none of this is reachable
+  by a user yet; the delivery gap noted in round 12 stands.
+
+Previous round: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
   compiler, and one feature wired end to end across four layers). Commits
   b5947440 (agent+gateway) + cd5d24ff (panel).
   (0) THE SESSION ENVIRONMENT WAS BROKEN BEFORE ANY CODE WAS READ, and it
