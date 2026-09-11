@@ -1107,6 +1107,59 @@ impl SessionLogger {
                     affected.push(sid.clone());
                 }
             }
+            // A QUESTION THAT DIED WITH THE PROCESS.
+            //
+            // The gate's pending question lives in process MEMORY; the trail
+            // records `asked` when it is put to the operator and a terminal
+            // outcome only when one lands — `approved`/`refused` (decided) or
+            // `expired` (TTL ran out). If the agent dies instead (the 60 s
+            // watchdog, an update — which kills it BY DESIGN — or a crash), the
+            // question ceases to exist and nothing recorded it.
+            //
+            // This is the command arm's loss, on the last event family recovery
+            // did not cover, and it is the confusion `asked`/`expired` were added
+            // to kill: without it, a run that stopped because nobody was watching
+            // is indistinguishable from one that was never gated, and the
+            // operator's badge simply disappears on restart.
+            //
+            // Postures are deliberately NOT terminal: `armed`/`disarmed` change
+            // the gate and `granted`/`revoked` change what runs unasked — none of
+            // them answers the question that was asked.
+            let mut last_asked: Option<String> = None;
+            let mut answered_after = false;
+            for v in events.iter() {
+                if v.get("kind").and_then(|k| k.as_str()) != Some("approval") {
+                    continue;
+                }
+                match v.get("status").and_then(|t| t.as_str()) {
+                    Some("asked") => {
+                        last_asked = Some(
+                            v.get("text")
+                                .and_then(|t| t.as_str())
+                                .unwrap_or("")
+                                .to_string(),
+                        );
+                        answered_after = false;
+                    }
+                    // The ways a question ENDS. `abandoned` is in this list
+                    // because recovery WROTE it: without it, each recovery pass
+                    // would see its own marker as "still unanswered" and append
+                    // another one, growing the file without bound — the idempotence
+                    // test caught exactly that.
+                    Some("approved") | Some("refused") | Some("expired") | Some("abandoned") => {
+                        answered_after = true
+                    }
+                    _ => {}
+                }
+            }
+            if let Some(subject) = last_asked {
+                if !answered_after {
+                    self.log_approval(&sid, "abandoned", &subject);
+                    if !affected.contains(&sid) {
+                        affected.push(sid.clone());
+                    }
+                }
+            }
             // round-116 trimmed every recovered session's file here, to stop a
             // crash-open session's .jsonl growing unbounded until its next
             // graceful close. That trim is REMOVED, because it is the one part
@@ -1261,6 +1314,88 @@ mod tests {
 
         // Idempotent: a second recovery finds the closed command.
         assert!(logger.recover_interrupted().is_empty());
+    }
+
+    /// A QUESTION nobody answered before the process died leaves a fact.
+    ///
+    /// The gate's pending question lives in process memory. The trail records
+    /// `asked` when it is put to the operator, and a terminal outcome only when
+    /// one lands: `approved` / `refused` (the operator decided) or `expired`
+    /// (its TTL ran out). When the agent dies instead — the 60 s watchdog, an
+    /// update, which kills it BY DESIGN, or a crash — the question simply ceases
+    /// to exist and NOTHING recorded it.
+    ///
+    /// That is the same loss `recover_interrupted` already repairs for commands,
+    /// on the last event family it did not cover, and it matters for the reason
+    /// `asked`/`expired` were added in the first place: a run that stopped
+    /// because nobody was watching must not look identical to a run that was
+    /// never gated. Without this arm the operator's panel badge simply vanishes
+    /// on restart and the trail ends on a question with no answer.
+    #[test]
+    fn recovery_marks_a_question_that_died_with_the_process() {
+        let dir = temp_dir("recover-approval");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_approval("s1", "asked", "rm -rf /tmp/x");
+        // s2's question was ANSWERED — the arm must not touch it.
+        logger.log_approval("s2", "asked", "echo hi");
+        logger.log_approval("s2", "approved", "echo hi");
+        // s3 has no approval traffic at all: no invented events.
+        logger.log_command_start("s3", "ls");
+        // s4: a POSTURE change happened while a question was open, and the
+        // process died. `granted` says a word now runs unasked — it does NOT
+        // answer the question that was put to the operator, so this must still
+        // be abandoned. (Found by mutation: without this case, widening the
+        // terminal set to include postures left the suite GREEN.)
+        logger.log_approval("s4", "asked", "systemctl restart nginx");
+        logger.log_approval("s4", "granted", "echo");
+
+        logger.flush_all();
+        let affected = logger.recover_interrupted();
+        affected
+            .contains(&"s1".to_string())
+            .then_some(())
+            .expect("the session whose question died must be reported as affected");
+
+        let last_of = |sid: &str| -> serde_json::Value {
+            std::fs::read_to_string(dir.join(format!("{sid}.jsonl")))
+                .unwrap()
+                .lines()
+                .last()
+                .map(|l| serde_json::from_str(l).unwrap())
+                .unwrap()
+        };
+
+        let abandoned = last_of("s1");
+        assert_eq!(abandoned["kind"], "approval");
+        assert_eq!(abandoned["status"], "abandoned");
+        assert_eq!(
+            abandoned["text"], "rm -rf /tmp/x",
+            "the abandoned event must name the command that was being asked about, \
+             or the trail says a question was lost without saying which"
+        );
+
+        assert_eq!(
+            last_of("s2")["status"],
+            "approved",
+            "an ANSWERED question must not be marked abandoned"
+        );
+        assert_ne!(
+            last_of("s3")["kind"],
+            "approval",
+            "a session with no approval traffic must get no approval event"
+        );
+        assert_eq!(
+            last_of("s4")["status"],
+            "abandoned",
+            "a POSTURE change (`granted`) is not an answer to the question that \
+             was asked — the question still died with the process"
+        );
+
+        // Idempotent: the second recovery sees the question already closed.
+        assert!(
+            !logger.recover_interrupted().contains(&"s1".to_string()),
+            "recovery must not append a second abandoned event"
+        );
     }
 
     #[test]
