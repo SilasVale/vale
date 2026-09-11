@@ -141,6 +141,7 @@ mod tests {
             tags: vec![],
             namespace: "shared".into(),
             source: "claude-code".into(),
+            run_id: None,
             created_at: 0,
             updated_at: 0,
             deleted: false,
@@ -152,6 +153,56 @@ mod tests {
             store.get(&id, false).expect("record").source,
             "claude-code",
             "update must not clobber the recorded writing client"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The RUN gets the same treatment as `source`, and for the same reason:
+    /// an edit revises content, it does not re-attribute the knowledge.
+    ///
+    /// Two halves, both load-bearing. A record that HAS a run keeps it (the
+    /// store clones the stored record, and `memory_update` deliberately accepts
+    /// no run id, so nothing can overwrite it — the append-only JSONL is
+    /// last-wins, so an overwritten provenance would be unrecoverable). And a
+    /// record with NO run stays that way: an update is not an occasion to
+    /// invent one, which would make an unattributed entry look like the work of
+    /// whatever execution happened to touch it last.
+    #[test]
+    fn update_preserves_an_existing_run_and_never_fabricates_one() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-runkeep-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Arc::new(MemoryStore::new(dir.clone(), MemoryLimits::default()));
+        let mut stamped = store::MemoryRecord {
+            id: "m-stamped".into(),
+            title: "learned".into(),
+            content: "c".into(),
+            tags: vec![],
+            namespace: "shared".into(),
+            source: "unknown".into(),
+            run_id: Some("run-1000-abc123".into()),
+            created_at: 0,
+            updated_at: 0,
+            deleted: false,
+        };
+        // `insert` keys the record by its OWN id (it does not mint one), so the
+        // two records in this test need distinct ids — a shared key would make
+        // the second insert silently replace the first.
+        let id = store.insert(stamped.clone());
+        assert!(store.update(&id, None, Some("revised".into()), None, None, None));
+        assert_eq!(
+            store.get(&id, false).expect("record").run_id.as_deref(),
+            Some("run-1000-abc123"),
+            "an edit must not restamp the run that produced the content"
+        );
+
+        stamped.id = "m-plain".into();
+        stamped.run_id = None;
+        let plain = store.insert(stamped);
+        assert!(store.update(&plain, None, Some("revised again".into()), None, None, None));
+        assert_eq!(
+            store.get(&plain, false).expect("record").run_id,
+            None,
+            "an update must not fabricate a run for an unattributed record"
         );
         let _ = std::fs::remove_dir_all(&dir);
     }

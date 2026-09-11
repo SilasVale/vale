@@ -81,6 +81,7 @@
     "params": [
       "content",
       "namespace",
+      "run_id",
       "tags",
       "title"
     ],

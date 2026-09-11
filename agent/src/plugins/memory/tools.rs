@@ -9,6 +9,11 @@
 //! transport, but the capture is not wired — see `set_source` — so records are
 //! stamped "unknown" today. The gap is pinned by a test in this plugin's
 //! parent module rather than left as a claim here.
+//!
+//! `run_id` (the EXECUTION that produced an entry) is a different question and
+//! IS wired: `memory_save` reads it from its params like every other run-aware
+//! tool, and it comes back out through search/list/export. `memory_update`
+//! deliberately does not take one — see the note at its store call.
 
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
@@ -19,7 +24,7 @@ use vale_agent_core::ToolDef;
 use crate::plugins::tool_error;
 
 use super::sanitize::sanitize;
-use super::store::{MemoryLimits, MemoryRecord, MemoryStore};
+use super::store::{clean_run_id, MemoryLimits, MemoryRecord, MemoryStore};
 
 /// Current client source for writes.
 ///
@@ -83,14 +88,15 @@ fn unknown_id_error(id: &str) -> Value {
 fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
     ToolDef::new(
         "memory_save",
-        "Save a knowledge entry to the device-local memory store, shared across all AI clients and sessions on this device. Title is required and should be a short unique summary; content is the knowledge body (sanitized: credential-shaped values are redacted); tags help later discovery; namespace defaults to 'shared'. Returns the new entry id.",
+        "Save a knowledge entry to the device-local memory store, shared across all AI clients and sessions on this device. Title is required and should be a short unique summary; content is the knowledge body (sanitized: credential-shaped values are redacted); tags help later discovery; namespace defaults to 'shared'. Returns the new entry id. Pass the id run_begin gave you as run_id so this entry is attributable to the execution that learned it; omit it (never send a placeholder) when you are not working inside a declared run.",
         json!({
             "type": "object",
             "properties": {
                 "title": {"type": "string", "description": "Short unique summary (required)."},
                 "content": {"type": "string", "description": "Knowledge body. Credential-shaped values are redacted."},
                 "tags": {"type": "array", "items": {"type": "string"}, "description": "Optional discovery tags."},
-                "namespace": {"type": "string", "description": "Optional namespace; default 'shared'."}
+                "namespace": {"type": "string", "description": "Optional namespace; default 'shared'."},
+                "run_id": {"type": "string", "description": "Optional: the id returned by run_begin, naming the execution that produced this knowledge. It is what joins what you saved to what you ran, so pass the id back verbatim when you save mid-run. Omit the parameter if you did not declare a run."}
             },
             "required": ["title", "content"]
         }),
@@ -119,6 +125,14 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                 // in namespace (password=secret) persisted raw and rode out
                 // through search/list/export. Sanitize like title/content/tags.
                 let namespace = sanitize(&namespace);
+                // The RUN this knowledge was learned in, when the client
+                // declared one — read the way `terminal_execute`,
+                // `terminal_plan` and `browser_run_script` read the same
+                // parameter, with the normalization owned by the store
+                // (`clean_run_id`: trimmed, byte-capped on a char boundary,
+                // blank → absent). An attribute of the record and nothing
+                // more; see `crate::runs` for the rule that governs it.
+                let run_id = clean_run_id(params.get("run_id").and_then(|v| v.as_str()));
                 let now = std::time::SystemTime::now()
                     .duration_since(std::time::UNIX_EPOCH)
                     .map(|d| d.as_secs())
@@ -133,6 +147,7 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                     tags: tags.iter().map(|t| sanitize(t)).collect(),
                     namespace,
                     source: source_now(),
+                    run_id,
                     created_at: now,
                     updated_at: now,
                     deleted: false,
@@ -238,6 +253,14 @@ fn tool_update(store: Arc<MemoryStore>) -> ToolDef {
                     .map(|a| a.iter().filter_map(|t| t.as_str().map(|s| sanitize(s.to_string().as_str()))).collect());
                 let namespace = params.get("namespace").and_then(|v| v.as_str()).map(sanitize);
                 let deleted = params.get("deleted").and_then(|v| v.as_bool());
+                // NO run_id parameter, on purpose. An edit revises the content;
+                // it does not re-attribute the knowledge, so the run that
+                // produced it survives (the store clones the record and writes
+                // only the fields above — the same treatment `source` gets, and
+                // pinned by `update_preserves_an_existing_run`). Accepting one
+                // here would let a later run silently overwrite the provenance
+                // on the line a reader ends up seeing, which is the one thing
+                // the append-only, last-wins JSONL cannot undo.
                 let ok = store.update(&id, title, content, tags, namespace, deleted);
                 if ok {
                     Ok(json!({"ok": true, "id": id}))
@@ -439,6 +462,156 @@ mod dispatch_tests {
             "secret redacted, got: {title}"
         );
         assert!(title.contains("<redacted>"));
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (a) A run id on `memory_save`'s params lands on the record and comes
+    /// back out of ALL THREE read paths.
+    ///
+    /// Stored provenance that only one query surfaces is a half-answer: the
+    /// point of the field is to join "what I ran" to "what I learned", and the
+    /// knowledge is reached through search (recall), list (enumeration) and
+    /// export (the backup/audit path). `export` matters most of the three — a
+    /// field the export drops is a field that does not survive a round trip.
+    #[tokio::test]
+    async fn a_saved_run_id_reads_back_through_list_search_and_export() {
+        let (store, dir) = test_store("runid");
+        let tools = build(store);
+        let saved = tool(&tools, "memory_save")
+            .handler
+            .call(json!({
+                "title": "psu notes",
+                "content": "the reboot loop was the psu",
+                "run_id": "run-1000-abc123"
+            }))
+            .await
+            .unwrap();
+        assert_eq!(saved["ok"], true);
+
+        let list = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert_eq!(
+            list["results"][0]["run_id"], "run-1000-abc123",
+            "list must surface the run that produced the entry"
+        );
+        let hits = tool(&tools, "memory_search")
+            .handler
+            .call(json!({"query": "psu"}))
+            .await
+            .unwrap();
+        assert_eq!(
+            hits["results"][0]["run_id"], "run-1000-abc123",
+            "search must surface the run"
+        );
+        let exp = tool(&tools, "memory_export")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert!(
+            exp["export"]
+                .as_str()
+                .unwrap()
+                .contains("\"run_id\":\"run-1000-abc123\""),
+            "export is the backup path — the run must survive it: {}",
+            exp["export"]
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (b) A save with NO run id acquires none — and the KEY is absent from the
+    /// stored line, not present-and-null.
+    ///
+    /// A fabricated run is worse than a missing one: it reads as evidence that
+    /// an execution produced this record, and a reader grouping by run id would
+    /// file it under work that had nothing to do with it.
+    #[tokio::test]
+    async fn a_save_without_a_run_id_records_no_run_at_all() {
+        let (store, dir) = test_store("norunid");
+        let tools = build(store);
+        let saved = tool(&tools, "memory_save")
+            .handler
+            .call(json!({"title": "phone note", "content": "not from a run"}))
+            .await
+            .unwrap();
+        assert_eq!(saved["ok"], true);
+
+        let list = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        assert!(
+            list["results"][0].get("run_id").is_none(),
+            "no run declared → no run_id on the wire, got {}",
+            list["results"][0]
+        );
+        let raw = std::fs::read_to_string(dir.join("memory.jsonl")).unwrap();
+        assert!(
+            !raw.contains("run_id"),
+            "the stored line must not carry the key at all: {raw}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (d) An over-long id is CAPPED on a char boundary (and the save still
+    /// succeeds), while a blank one is ABSENT — the normalization
+    /// `terminal_execute` and `browser_run_script` apply to the same string.
+    #[tokio::test]
+    async fn an_overlong_or_blank_run_id_is_normalized_at_the_tool_boundary() {
+        use crate::plugins::memory::store::RUN_ID_MAX_BYTES;
+        let (store, dir) = test_store("runidcap");
+        let tools = build(store);
+        let save = tool(&tools, "memory_save");
+        // Every char is 3 bytes, so a naive byte cut lands inside 汉.
+        let huge = "汉".repeat(400);
+        let out = save
+            .handler
+            .call(json!({"title": "huge", "content": "b", "run_id": huge}))
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], true, "an over-long id must not fail the save");
+        let list = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        let stored = list["results"][0]["run_id"].as_str().unwrap().to_string();
+        assert!(
+            stored.len() <= RUN_ID_MAX_BYTES,
+            "capped, got {} bytes",
+            stored.len()
+        );
+        assert_eq!(
+            stored.chars().count() * 3,
+            stored.len(),
+            "the cap must land on a char boundary, not inside 汉"
+        );
+
+        let out = save
+            .handler
+            .call(json!({"title": "blank", "content": "b", "run_id": "   "}))
+            .await
+            .unwrap();
+        assert_eq!(out["ok"], true);
+        let list = tool(&tools, "memory_list")
+            .handler
+            .call(json!({}))
+            .await
+            .unwrap();
+        let blank = list["results"]
+            .as_array()
+            .unwrap()
+            .iter()
+            .find(|r| r["title"] == "blank")
+            .expect("the blank-id record");
+        assert!(
+            blank.get("run_id").is_none(),
+            "a blank id means \"no run\", not a run whose name is empty"
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

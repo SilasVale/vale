@@ -26,6 +26,10 @@ const HEADER_VERSION: u64 = 1;
 pub const DEFAULT_MAX_CONTENT_BYTES: usize = 32 * 1024;
 /// Default search snippet cap (bytes) returned to callers.
 pub const DEFAULT_SNIPPET_BYTES: usize = 4 * 1024;
+/// Longest `run_id` kept on a record, in bytes — the same budget
+/// `session_log::RUN_ID_MAX_BYTES` gives the same string (a minted id is ~30
+/// bytes; the headroom is for a client handing back something larger).
+pub const RUN_ID_MAX_BYTES: usize = 200;
 
 /// One memory record (one JSONL line).
 #[derive(Debug, Clone, Serialize, Deserialize, PartialEq)]
@@ -47,6 +51,36 @@ pub struct MemoryRecord {
     /// stored record and never touches this field.
     #[serde(default = "default_source")]
     pub source: String,
+    /// The RUN that produced this record, as declared by the client through
+    /// `run_begin` — the join key between this knowledge and the execution
+    /// (its terminal commands, its browser actions) that learned it.
+    ///
+    /// ABSENT, never a sentinel: `None` means "the client declared no run", and
+    /// the key is then omitted from the JSONL outright
+    /// (`skip_serializing_if`) — the shape `session_log::SessionEvent` gives
+    /// the same field. A record written before this field existed therefore
+    /// loads unchanged and reads as UNATTRIBUTED, never as a run it never had.
+    ///
+    /// `#[serde(default)]` follows this struct's pattern for a field added after
+    /// the format shipped. MEASURED, not assumed: serde already defaults a
+    /// missing `Option` field to `None` without it (deleting the attribute
+    /// leaves every test green), so it states the intent and keeps the
+    /// guarantee if this type ever stops being an `Option` — it is not, today,
+    /// what makes an old record load.
+    ///
+    /// Deliberately NOT modelled on [`Self::source`]'s `"unknown"` sentinel,
+    /// even though both fields are provenance: a sentinel here would be a
+    /// fabricated run id that every reader could group by, which reads as an
+    /// execution when there was none. See `crate::runs` for the rule that
+    /// governs a run id everywhere in this crate; it is recorded, displayed and
+    /// grouped on, and it decides nothing.
+    ///
+    /// Written by `memory_save` only. `update` clones the stored record and
+    /// never touches this field — the run that WROTE the content is the one
+    /// that produced the knowledge, and a later edit must not restamp it (the
+    /// same treatment [`Self::source`] gets, pinned beside it).
+    #[serde(default, skip_serializing_if = "Option::is_none")]
+    pub run_id: Option<String>,
     pub created_at: u64,
     pub updated_at: u64,
     #[serde(default)]
@@ -58,6 +92,23 @@ fn default_namespace() -> String {
 }
 fn default_source() -> String {
     "unknown".to_string()
+}
+
+/// Normalize a client-supplied `run_id` for [`MemoryRecord::run_id`]: trimmed,
+/// byte-capped on a char boundary, and `None` when absent or blank.
+///
+/// ONE owner for the rule, so the tool boundary and every test agree on it, and
+/// identical to the discipline `runs::end`, `session_log::command_start_run`
+/// and `browser_run_script` already apply to the same string: it arrives from a
+/// remote client and then rides every later read, so it is bounded; and a blank
+/// value means "the client declared no run" rather than a run named `""` (see
+/// `runs`'s header: a reader must be able to tell "said nothing" from "said
+/// something empty"). Over-long is CAPPED, never rejected — losing the whole
+/// record over a long id would trade knowledge for a grouping key.
+pub fn clean_run_id(raw: Option<&str>) -> Option<String> {
+    raw.map(str::trim)
+        .filter(|s| !s.is_empty())
+        .map(|s| crate::text::clip(s, RUN_ID_MAX_BYTES).to_string())
 }
 
 /// Capacity policy (from config `memory:`), defaults when unset.
@@ -404,6 +455,11 @@ impl MemoryStore {
     /// Update an existing record's fields (title/content/tags/namespace).
     /// `deleted` may be set to false to restore a soft-deleted record.
     /// Returns false when the id is unknown.
+    ///
+    /// `source` and `run_id` are NOT parameters and never change here: the
+    /// record is cloned and only the listed fields are written, so the writing
+    /// client and the run that produced the content survive an edit (both are
+    /// pinned — see `plugins::memory::tests`).
     pub fn update(
         &self,
         id: &str,
@@ -851,6 +907,7 @@ mod tests {
             tags: vec![],
             namespace: "shared".to_string(),
             source: "test".to_string(),
+            run_id: None,
             created_at: crate::unix_now(),
             updated_at: crate::unix_now(),
             deleted: false,
@@ -876,6 +933,124 @@ mod tests {
         drop(s);
         let s2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
         assert_eq!(s2.get(&id, false).unwrap().content, "content");
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    // ── run provenance (`run_id`) ────────────────────────────
+
+    /// (a)+(d) The run id round-trips through the FILE (not just the in-memory
+    /// index), and an over-long one is CAPPED on a char boundary rather than
+    /// rejected or sliced mid-character.
+    #[test]
+    fn a_run_id_round_trips_and_is_capped_on_a_char_boundary() {
+        let (s, dir) = tmp_store("run_id_round_trip");
+        let mut stamped = rec("from a run", "learned mid-execution");
+        stamped.run_id = clean_run_id(Some("  run-1000-abc123  "));
+        let id = s.insert(stamped);
+        assert_eq!(
+            s.get(&id, false).unwrap().run_id.as_deref(),
+            Some("run-1000-abc123"),
+            "the id is trimmed on the way in and readable back"
+        );
+        drop(s);
+        let s2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        assert_eq!(
+            s2.get(&id, false).unwrap().run_id.as_deref(),
+            Some("run-1000-abc123"),
+            "the run must survive the JSONL, not only the index"
+        );
+
+        // Every char is 3 bytes, so a byte cut lands inside 汉.
+        let mut huge = rec("huge id", "body");
+        huge.run_id = clean_run_id(Some(&"汉".repeat(5_000)));
+        let huge_id = s2.insert(huge);
+        let stored = s2.get(&huge_id, false).unwrap().run_id.unwrap();
+        assert!(
+            stored.len() <= RUN_ID_MAX_BYTES,
+            "capped, got {}",
+            stored.len()
+        );
+        assert_eq!(
+            stored.chars().count() * 3,
+            stored.len(),
+            "the cap must land on a char boundary, not inside 汉"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (b) No run declared means NO run on the record — and no key on disk at
+    /// all, rather than a null or an empty string.
+    ///
+    /// A blank value is treated as ABSENT (the rule `runs.rs` states for the
+    /// same string): "the client said nothing" and "the client said something
+    /// empty" must not collapse into a third thing that a reader could group
+    /// by as if an execution had produced this record.
+    #[test]
+    fn an_absent_or_blank_run_id_leaves_no_key_at_all() {
+        let (s, dir) = tmp_store("run_id_absent");
+        let id = s.insert(rec("no run", "body"));
+        assert!(s.get(&id, false).unwrap().run_id.is_none());
+        assert_eq!(clean_run_id(None), None);
+        assert_eq!(clean_run_id(Some("")), None);
+        assert_eq!(clean_run_id(Some("   \t ")), None);
+        // The stored line omits the key outright (`skip_serializing_if`), which
+        // is what makes "no run" indistinguishable from an old record — and
+        // distinguishable from `""`, which would be a run with a blank name.
+        let raw = std::fs::read_to_string(dir.join("memory.jsonl")).unwrap();
+        assert!(
+            !raw.contains("run_id"),
+            "an unattributed record must carry no run_id key: {raw}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// (c) A record written by the OLD format — no `run_id` key on disk —
+    /// still loads, and reads as UNATTRIBUTED.
+    ///
+    /// The fixture is written BY HAND, byte for byte, because the whole point
+    /// is the shape a pre-`run_id` build produced. Serializing a current
+    /// `MemoryRecord` would emit today's shape and the test would silently stop
+    /// testing the old format — the "fixture built from the code under test"
+    /// trap.
+    #[test]
+    fn an_old_format_record_without_a_run_id_key_still_loads() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-oldfmt-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let fixture = concat!(
+            "{\"type\":\"memory\",\"version\":1}\n",
+            "{\"id\":\"m-old\",\"title\":\"before runs\",\"content\":\"kept\",",
+            "\"tags\":[\"t\"],\"namespace\":\"shared\",\"source\":\"unknown\",",
+            "\"created_at\":1,\"updated_at\":2,\"deleted\":false}\n"
+        );
+        std::fs::write(dir.join("memory.jsonl"), fixture).unwrap();
+
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let old = store
+            .get("m-old", false)
+            .expect("old-format record must load");
+        assert_eq!(old.title, "before runs");
+        assert_eq!(old.content, "kept");
+        assert_eq!(old.tags, vec!["t".to_string()]);
+        assert_eq!(
+            old.run_id, None,
+            "a record written before the field existed has no run — and must \
+             not acquire a fabricated one"
+        );
+        // The field must not leak into an export either: an unattributed record
+        // exports the same shape it was written with.
+        let exported = store.export(None);
+        assert!(exported.contains("\"m-old\""), "exported: {exported}");
+        assert!(
+            !exported.contains("run_id"),
+            "an old record must export without the key: {exported}"
+        );
+        // A mixed log — the old line plus a newly written one — parses whole.
+        store.insert(rec("after", "new body"));
+        drop(store);
+        let reopened = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        assert!(reopened.get("m-old", false).is_some());
+        assert_eq!(reopened.len(), 2, "both generations of record load");
         let _ = std::fs::remove_dir_all(&dir);
     }
 

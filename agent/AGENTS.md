@@ -418,7 +418,64 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 15 (THE DELIVERY GAP IS CLOSED — 1.2.321 is on
+Last updated: 2026-09-11 round 16 (three holes of the same shape: code that
+  works, and nothing that reaches it). Commits: a991ba3f (doc drift), 1fa7851a
+  (status + e2e), 1488c6f7 (Activity), plus the memory-provenance work below.
+  THE ROUND'S PATTERN, and it is the one this log has now recorded three rounds
+  running: the defect is not broken code, it is a JOIN that was never made.
+  (1) MEMORY PROVENANCE — the last producer that was CLAIMED but not WIRED.
+  `runs.rs` had listed `memory_save` as a run-id producer since round 13 while
+  `grep -rn "run_id" src/plugins/memory/` returned nothing, and it OMITTED
+  `terminal_plan`, which does stamp one. So the list was wrong in both
+  directions at once — a reader would look for a field that was not there and
+  fail to look for one that was. Now `memory_save` reads and stamps `run_id`
+  (trimmed, byte-capped on a char boundary, blank = ABSENT, key OMITTED from
+  the JSONL via `skip_serializing_if` — the stronger of the two shapes available
+  here, and deliberately not `source`'s `"unknown"` sentinel, because a
+  fabricated run id is groupable evidence of an execution that never happened).
+  `memory_update` deliberately does NOT restamp: an edit revises content, it
+  does not re-attribute knowledge. Verified on the live binary: a save WITH the
+  id writes it, a save WITHOUT it writes no key at all, and `runs/runs.jsonl`
+  holds the matching begin — the join works on disk.
+  (2) A WAITING DECISION IS NOW VISIBLE EVERYWHERE. Round 14 made the gate
+  answerable, but its push terminates in an OPEN panel — so the Electron tray
+  and the console fleet card, which poll `/api/status`, could not say "a
+  decision is waiting". One count field fixes all of them. My own test caught me
+  writing it wrong: `json!` renders `None` as `"key": null`, so the field would
+  be PRESENT on every response and a consumer could not tell "nothing waiting"
+  from "an older agent" — the exact trap round 13 recorded for `runs::clean`.
+  Insert-after-construction instead, asserted in BOTH directions, and
+  mutation-proven (counting ARMED sessions instead of WAITING questions — the
+  slip a scout predicted was likeliest — fails).
+  (3) THE ACTIVITY PAGE, and the sharpest version of the pattern: the merged
+  timeline was built, served, fetched by a hook... and REDUCED TO COUNTERS.
+  `groupOperation` kept `{terminal: 3, browser: 1}`; nothing rendered a
+  `command`, a `script`, an `intent`. An operator could see three commands ran
+  and never learn what they were. It was also session-gated, so browser-only
+  work had no view at all. The page reuses the same hook, the same grouping and
+  the same header component, so the two views cannot drift. The old
+  "runs belong inside the Path view" argument is KEPT and extended rather than
+  deleted: the strip answers "what did the device do while I read THIS session",
+  the page answers "what has this device been doing at all" — neither can answer
+  the other's question.
+  (4) THE E2E SUITE WAS SILENTLY RED FOR A ROUND. Running it against the real
+  binary showed `gov: the trail records the whole approval posture` failing,
+  because round 14 inserted the `asked` event into that sequence and nothing
+  updated the assertion — and nothing could, since the suite is wired into no
+  workflow. Fixed, and added the `runs` section it never had (mint → stamp →
+  unattributed sibling → ordered timeline → close → unknown id), 9/9 on the
+  real binary and 24/24 with governance. THE LESSON: an unrun test is a
+  DECORATION. A suite nothing executes does not report drift, it accumulates it.
+  Gates: agent 554 default / 604 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; gateway 759; panel 416 (was 383) + build; e2e
+  24/24 on a loopback binary. NOT RELEASED — 1.2.321 remains the live version on
+  d1, so everything in this round is on main and on no device yet.
+  LIMIT STATED RATHER THAN PAPERED OVER: the real-browser render audit cannot
+  run on this box (the bundled chromium needs libatk-1.0.so.0, absent, and there
+  is no sudo), so panel verification is jsdom plus CSS pins read from the BUILT
+  artifact. A visual pass still needs the device path.
+
+Previous round: 2026-09-11 round 15 (THE DELIVERY GAP IS CLOSED — 1.2.321 is on
   d1). Commits: a0b26f04 (retention), 23df1cd3 + 3238e5ee (the release), plus
   f2bbef3f and 2eec519c earlier in the round.
   THE HEADLINE, after three rounds of this log calling it out: every round
