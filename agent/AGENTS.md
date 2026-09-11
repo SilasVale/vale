@@ -418,7 +418,65 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 14 (the approval gate becomes ANSWERABLE). Three
+Last updated: 2026-09-11 round 15 (THE DELIVERY GAP IS CLOSED — 1.2.321 is on
+  d1). Commits: a0b26f04 (retention), 23df1cd3 + 3238e5ee (the release), plus
+  f2bbef3f and 2eec519c earlier in the round.
+  THE HEADLINE, after three rounds of this log calling it out: every round
+  13/14 feature is now REACHABLE. Released 1.2.321 through
+  `scripts/publish-release.sh 1.2.321 --skip-reconcile --with-installer`, then
+  updated d1 through the sanctioned npm flow. MEASURED ON THE DEVICE, not
+  inferred: `/api/spec` reports **52 tools** (was 50) with `run_begin`/`run_end`
+  present; `run_begin` MINTED `run-1789143443091-b50f43` with its label and goal;
+  `/api/operation` then served that run and 14 events. `etc\.vale-release` reads
+  `1.2.321`. The feature that was "implemented, tested, committed, and on no
+  device" for two rounds is now doing its job on the real one.
+  `makensis` EXISTS — round 12's note that it did not is WRONG. It lives at
+  `~/nsis-dist/bin/makensis` (v3.12) and is simply NOT ON PATH, which is what
+  made `command -v makensis` come back empty. So 1.2.321 shipped a
+  SELF-CONTAINED INSTALLER (6.9 MB > the 6.6 MB tgz, i.e. it bundles Node), the
+  manifest carries `installer` + `installer_sha256`, and the landing alias
+  `ValeAgent-Setup.exe` was verified NOT STALE by comparing its etag to the
+  versioned file's — the failure the smoke would otherwise skip silently.
+  Verified from here: `/api/version` returns 1.2.321, the downloaded tgz sha
+  matches the manifest byte for byte, and the script's own smoke passed.
+  THE `--prefix` TRAP WAS REAL, AND I WATCHED IT: on d1 `vale` resolves to
+  `D:\Vale\components\npm-global\vale.ps1` while `npm prefix -g` is
+  `C:\WINDOWS\system32\config\systemprofile\AppData\Roaming\npm`. Two READMEs
+  still taught the plain `npm i -g` form (2eec519c) — the two a person is most
+  likely to be reading while updating a device. The flow used the prefixed form.
+  RETENTION (a0b26f04): the evidence feed and runs.jsonl were the only two
+  durable records with NO bound. Age-bounded, not size-triggered — a size trigger
+  fires exactly when a long operation has produced the most evidence. 30 d for
+  evidence (matching the audit trail), 90 d for runs (it is the INDEX of the
+  evidence and tiny; dropping the index first would be backwards). The feed was
+  also a CRASH risk: trimming an append-only file rewrites it, and a temp+rename
+  orphans an in-flight writer's handle — verbatim the round-116 defect. Fixed
+  with a per-record mutation mutex + `jsonl::rewrite_atomically`; INDEPENDENTLY
+  VERIFIED here by removing the lock, which loses **129 of 132** concurrent
+  appends.
+  ALSO THIS ROUND (f2bbef3f): `/api/logs` had resolved `exe_dir()`, a path layout
+  v2 MOVES the logs out of, so on every v2 device it answered `""` — well-formed,
+  empty, unnoticeable, and unconsumed. Now reads `logs_dir()` and returns the
+  tails of the three real logs. `text::tail` joined `clip` while there (the
+  double-reversal hand-roll existed at two sites, which is the promotion rule's
+  second consumer).
+  METHOD NOTE WORTH KEEPING: round 12 recorded "no makensis on this box" and I
+  repeated it for two rounds without re-checking a binary sitting in $HOME. A
+  negative claim about the ENVIRONMENT has a shelf life; re-measure it before it
+  shapes a decision.
+  And round 13's lesson repeated in miniature: I committed a non-snake_case test
+  name and left HEAD red on CI's clippy gate. The retention agent found it and
+  REPORTED it rather than silently editing a file it did not own. That is the
+  delegation contract working.
+  Gates: agent 547 default / 596 feat-gated, clippy -D warnings clean both
+  configs, fmt clean, xwin OK; gateway 759; panel 383 + build. Released 1.2.321;
+  tag v1.2.321 cut via the API so CI builds the GitHub asset.
+  STILL OPEN: the tag's CI run was in flight when this round ended, so
+  `publish-release.sh --audit-only 1.2.321` (the CDN-vs-GitHub dual-builder
+  audit) has not run; keep-latest (deleting the v1.2.320 release + tag) is
+  manual and also not done. Both are on the publish script's own checklist.
+
+Previous round: 2026-09-11 round 14 (the approval gate becomes ANSWERABLE). Three
   commits: 78ff244a (panel), ecd267b1 (agent). The round before this one is
   logged below as round 13.
   THE DEFECT THIS FIXES is not a crash — it is a gate nobody could answer. An
