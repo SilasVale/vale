@@ -20,9 +20,26 @@ registration key the device registers itself with a Vale Gate console.
 ## Update (one click)
 
 ```powershell
-npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz
+npm i -g --prefix (Split-Path (Get-Command vale).Source) https://agent.saisi.online/vale-agent/vale-agent-latest.tgz
 vale update
 ```
+
+**The `--prefix` is not optional on a device that is already set up.** Plain
+`npm i -g <url>` installs into npm's DEFAULT global prefix, which is not where
+`vale` lives when the agent runs as SYSTEM. On a real device the two prefixes
+disagreed (`vale` resolved to `D:\Vale\components\npm-global\vale.ps1` while
+`npm prefix -g` was `C:\WINDOWS\system32\config\systemprofile\AppData\Roaming\npm`):
+npm printed success, `vale update` then ran the OLD CLI from the other prefix and
+staged the OLD exe, and the device quietly stayed on its previous release with no
+error anywhere. `Split-Path (Get-Command vale).Source` asks the machine where
+`vale` actually is, so the install lands where the running CLI will find it.
+
+That applies to UPDATE only. A fresh install has no `vale` to ask, and the
+command above this section is correct as written.
+
+Verify by EFFECT, not by exit code: after the update, `/api/status` must report
+the new release AND `etc\.vale-release` must equal it. The exe's mtime is what
+caught the silent case last time.
 
 `update` stages the new exe, then swaps it via a WMI-launched
 script (survives the CLI and the agent dying): stop task → kill agent

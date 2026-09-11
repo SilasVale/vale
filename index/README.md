@@ -37,7 +37,15 @@ from `version.json`, round-297).
 ```bash
 npm i -g https://agent.saisi.online/vale-agent/vale-agent-latest.tgz
 vale setup            # pure local; --reg-key <key> registers with a console
-vale update           # same channel
+```
+
+To UPDATE an already-installed device, add `--prefix` — without it npm installs
+into its default global prefix, which is not where `vale` lives when the agent
+runs as SYSTEM, and `vale update` then silently stages the OLD exe:
+
+```powershell
+npm i -g --prefix (Split-Path (Get-Command vale).Source) https://agent.saisi.online/vale-agent/vale-agent-latest.tgz
+vale update
 ```
 
 ## Legacy redirects
