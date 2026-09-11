@@ -446,3 +446,126 @@ test("updateReceiptPs: the sink is byte-identical to the swap script's log sink"
   const quoted = updateReceiptPs(psq("D:\\it's\\Vale"), "1.0.0", "1.0.1")[0];
   assert.match(quoted, /it''s/, "embedded quote doubled for the PS single-quoted literal");
 });
+
+// ── A version marker must be EARNED, not asserted ───────────────────────────
+//
+// `etc\.vale-release` is the device's ONLY local version truth: agent_update
+// reads it as `local` and answers up_to_date when the remote is not newer, and
+// /api/status serves it as `release` — the field the panel, the tray and the
+// console fleet card all display.
+//
+// `vale rollback` wrote it UNCONDITIONALLY after `vale update` returned status 0.
+// But status 0 means the WMI handoff was ACCEPTED — a process was created — not
+// that the swap succeeded; everything that decides success (the fail-closed
+// migration gate, the copy retry, the $ok-gated marker write, the task restart)
+// happens afterwards inside a process nobody reads. So a rollback whose swap
+// died left a marker claiming a version the device is NOT running: every UI
+// lies, and once the pin is cleared agent_update sees the fake version, decides
+// it is current, and the device is stuck on the old release permanently.
+//
+// The swap script itself already gates the same write on a provable copy
+// (`if ($ok -and ...)`). The CLI did not. These tests pin the read-back.
+test("awaitReleaseMarker: only a MARKER THAT SHOWS THE TARGET counts as success", async () => {
+  const { awaitReleaseMarker } = require("../bin/vale.js");
+  const noSleep = async () => {};
+
+  // The swap wrote the target version: success, immediately.
+  let r = await awaitReleaseMarker({
+    want: "1.2.322", timeoutMs: 5000, intervalMs: 10,
+    read: () => "1.2.322", sleep: noSleep, now: () => 0,
+  });
+  assert.equal(r.ok, true, "marker already at target => success");
+  assert.equal(r.saw, "1.2.322");
+
+  // The marker never moves off the OLD version: the swap failed. This is the
+  // incident shape — and the caller must NOT write the pin or claim the version.
+  let t = 0;
+  r = await awaitReleaseMarker({
+    want: "1.2.322", timeoutMs: 100, intervalMs: 10,
+    read: () => "1.2.321", sleep: noSleep, now: () => (t += 50),
+  });
+  assert.equal(r.ok, false, "a marker that never reaches the target is NOT success");
+  assert.equal(r.saw, "1.2.321", "reports what it actually saw, for the message");
+
+  // The marker arrives late but within the budget: still success. The swap kills
+  // the agent and restarts the task, so a delay is normal, not a failure.
+  let n = 0;
+  t = 0;
+  r = await awaitReleaseMarker({
+    want: "1.2.322", timeoutMs: 5000, intervalMs: 10,
+    read: () => (++n < 3 ? "1.2.321" : "1.2.322"), sleep: noSleep, now: () => (t += 50),
+  });
+  assert.equal(r.ok, true, "a marker that arrives within the budget is success");
+
+  // Unreadable marker (absent, or a torn write) is NOT success and NOT a crash.
+  t = 0;
+  r = await awaitReleaseMarker({
+    want: "1.2.322", timeoutMs: 100, intervalMs: 10,
+    read: () => { throw new Error("ENOENT"); }, sleep: noSleep, now: () => (t += 50),
+  });
+  assert.equal(r.ok, false, "a missing marker is a failure, never a silent pass");
+  assert.equal(r.saw, null, "absence is reported as null, not as a fabricated version");
+
+  // Whitespace/newline around the marker is not a mismatch (Set-Content -NoNewline
+  // is used, but a hand-edited or pre-v2 marker may carry a trailing newline).
+  r = await awaitReleaseMarker({
+    want: "1.2.322", timeoutMs: 100, intervalMs: 10,
+    read: () => "1.2.322\r\n", sleep: noSleep, now: () => 0,
+  });
+  assert.equal(r.ok, true, "the marker is compared trimmed");
+});
+
+test("releaseMarkerVerdict: the pin is written ONLY on a proven swap", () => {
+  const { releaseMarkerVerdict } = require("../bin/vale.js");
+  // Proven: write the pin, say so.
+  let v = releaseMarkerVerdict({ want: "1.2.322", saw: "1.2.322", ok: true });
+  assert.equal(v.writePin, true);
+  assert.equal(v.exitCode, 0);
+  // Unproven: do NOT write the pin, do NOT report success, and say what is real.
+  v = releaseMarkerVerdict({ want: "1.2.322", saw: "1.2.321", ok: false });
+  assert.equal(v.writePin, false, "an unproven swap must not pin the device to a version it is not running");
+  assert.equal(v.exitCode, 1, "the caller must see a non-zero exit so scripts can react");
+  assert.match(v.message, /1\.2\.321/, "names the version the device is ACTUALLY on");
+  assert.match(v.message, /NOT pinned|not pinned/i, "states plainly that the pin was not written");
+});
+
+// The ORIGINAL bug was a WIRING bug: `rollback()` wrote the marker
+// unconditionally at its call site. Every pure helper can be perfect while the
+// caller ignores it — and mutation testing proved exactly that, because
+// restoring the original bug (`if (false)`) left the whole suite GREEN. The
+// call site does real I/O (spawnSync, process.exit) and cannot be driven from
+// `node --test`, so it is pinned STRUCTURALLY, the same way this repo pins
+// `module_map` and the run-id credential rule.
+//
+// LIMIT, stated rather than implied: this is a source scan. It asserts the
+// gate exists and that the CLI never writes the release marker itself; it does
+// not execute the branch.
+test("rollback: the pin is gated on the verdict, and the CLI never writes the release marker", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { fileURLToPath } = require("node:url");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = fs.readFileSync(path.join(here, "..", "bin", "vale.js"), "utf8");
+
+  // (a) The marker is written by the SWAP SCRIPT (gated on $ok), never by the
+  //     CLI. A CLI write is the regression: it erases the swap's proof.
+  assert.ok(
+    !/writeFileSync\(path\.join\(ETC_DIR,\s*"\.vale-release"\)/.test(src),
+    "the CLI must NOT write etc\\.vale-release — only the swap script may, and only from a provable copy",
+  );
+
+  // (b) The rollback body consults the read-back verdict before pinning.
+  const start = src.indexOf("async rollback(args)");
+  assert.ok(start > 0, "rollback found in the compiled CLI");
+  const body = src.slice(start, src.indexOf("\n    },", start));
+  assert.match(body, /awaitReleaseMarker\(/, "rollback must READ THE MARKER BACK rather than trust the handoff");
+  assert.match(body, /releaseMarkerVerdict\(/, "rollback must derive its outcome from the verdict");
+  assert.match(body, /if \(!verdict\.writePin\)/, "the pin write must be GATED on the verdict");
+  assert.match(body, /process\.exit\(verdict\.exitCode\)/, "an unproven swap must exit non-zero so scripts can react");
+
+  // (c) A throw while staging must release the in-progress marker, or the next
+  //     update refuses for ten minutes citing an update that never started.
+  const stage = src.slice(src.indexOf("const BUSYM = updateBusyPath()"), src.indexOf("Invoke-CimMethod"));
+  assert.match(stage, /catch \(e\)/, "the staging region is guarded");
+  assert.match(stage, /unlinkSync\(BUSYM\)/, "a staging failure releases the in-progress marker");
+});

@@ -50,6 +50,8 @@ exports.busyIsFresh = busyIsFresh;
 exports.statusReport = statusReport;
 exports.updateReceiptPs = updateReceiptPs;
 exports.updateBusyPath = updateBusyPath;
+exports.awaitReleaseMarker = awaitReleaseMarker;
+exports.releaseMarkerVerdict = releaseMarkerVerdict;
 exports.boxedVersions = boxedVersions;
 exports.writeBoxedVersions = writeBoxedVersions;
 exports.writeReleaseMarker = writeReleaseMarker;
@@ -502,6 +504,56 @@ function updateReceiptPs(dataDirQ, fromVersion, toVersion) {
  */
 function updateBusyPath() {
     return path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
+}
+/**
+ * Poll `etc\.vale-release` until it shows `want`, or the budget expires.
+ *
+ * Bounded on purpose: the swap kills the agent and restarts a scheduled task, so
+ * a delay is NORMAL — but a marker that never arrives is a failed swap and must
+ * be reported as one. `read`/`sleep`/`now` are injected so the behaviour is
+ * testable without real timers or a device.
+ */
+async function awaitReleaseMarker(o) {
+    const deadline = o.now() + o.timeoutMs;
+    let saw = null;
+    for (;;) {
+        try {
+            const v = String(o.read()).trim();
+            saw = v || null;
+            if (saw === o.want)
+                return { ok: true, saw };
+        }
+        catch {
+            saw = null; // absent / unreadable is NOT success and NOT a crash
+        }
+        if (o.now() >= deadline)
+            return { ok: false, saw };
+        await o.sleep(o.intervalMs);
+    }
+}
+/**
+ * What to do about a rollback whose swap could not be proven.
+ *
+ * Separated from the I/O so the DECISION is assertable: the pin is the device's
+ * protection against being auto-upgraded back, and the marker is what every UI
+ * believes — writing either on an unproven swap is how a device ends up
+ * misreporting its own version and refusing the update that would fix it.
+ */
+function releaseMarkerVerdict(c) {
+    if (c.ok) {
+        return {
+            writePin: true,
+            exitCode: 0,
+            message: `rollback: pinned to ${c.want} -- auto-upgrade refused until 'vale rollback --clear' or a forced agent_update`,
+        };
+    }
+    return {
+        writePin: false,
+        exitCode: 1,
+        message: `rollback: the swap did NOT take -- device is on ${c.saw ?? "an unknown version"}, ` +
+            `not ${c.want}. NOT pinned (the pin would claim a version this device is not running) ` +
+            `and no release marker written. Check the update log, then re-run 'vale rollback ${c.want}'.`,
+    };
 }
 function boxedVersions(installDir, pkgDir) {
     const pkgVer = (p) => {
@@ -1115,17 +1167,38 @@ const commands = {
         catch { /* best-effort: a missing receipt must never block a real update */ }
         // Swap the exe in-place: stop -> replace (with retry; the running agent
         // locks its own file) -> start.
-        if (!fs.existsSync(EXE_SRC)) {
-            console.error("exe missing from package:", EXE_SRC);
+        //
+        // THE MARKER IS ALREADY CREATED at this point, and the only things that
+        // release it are the WMI-failure handler below and the swap script's own
+        // cleanup. Staging in between is NOT guarded by either: a full disk, an
+        // antivirus lock or a permission error on the copy throws straight out to
+        // the top level, leaving the marker behind — and the NEXT `vale update`
+        // then refuses for ten minutes citing an update that never started, while
+        // the operator sees only a stack trace. Its neighbours
+        // (`writeBoxedVersions`, `writeReleaseMarker`) are best-effort for the same
+        // reason; this is the one region where a throw strands a LOCK.
+        try {
+            if (!fs.existsSync(EXE_SRC)) {
+                console.error("exe missing from package:", EXE_SRC);
+                throw new Error("exe missing from package: " + EXE_SRC);
+            }
+            fs.mkdirSync(DIR, { recursive: true });
+            fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
+            // stage-l: ship the Electron desktop shell's main/preload alongside —
+            // the desktop app (components\vale-desktop-electron) loads these sources;
+            // without the sync, new menu/command features never reach the device.
+            // (setup writes in place; update stages *.new for the atomic swap.)
+            stageDesktopShell(DIR, ".new");
+        }
+        catch (e) {
+            try {
+                fs.unlinkSync(BUSYM);
+            }
+            catch { /* never created, or already gone */ }
+            console.error("update: staging failed before the swap (" + (e && e.message ? e.message : e) + ")");
+            console.error("update: nothing was swapped and the in-progress marker was released -- safe to re-run");
             process.exit(1);
         }
-        fs.mkdirSync(DIR, { recursive: true });
-        fs.copyFileSync(EXE_SRC, path.join(DIR, "vale-agent.new.exe"));
-        // stage-l: ship the Electron desktop shell's main/preload alongside —
-        // the desktop app (components\vale-desktop-electron) loads these sources;
-        // without the sync, new menu/command features never reach the device.
-        // (setup writes in place; update stages *.new for the atomic swap.)
-        stageDesktopShell(DIR, ".new");
         // P2-4: refresh the boxed-component manifest from the staged package +
         // the current install dir (best-effort, never fail-closed).
         writeBoxedVersions(DIR, path.join(__dirname, ".."));
@@ -1381,7 +1454,7 @@ const commands = {
     // does NOT clear the pin: the update flow swaps whatever npm-global
     // holds, so after rollback that IS the pinned version (no-op), and the
     // pin stays authoritative for the auto path.
-    rollback(args) {
+    async rollback(args) {
         const NPM_GLOBAL = path.join(COMPONENTS_DIR, "npm-global");
         const PIN = path.join(ETC_DIR, ".rollback-pin");
         const val = String(args[0] || "");
@@ -1436,17 +1509,37 @@ const commands = {
             console.error("rollback: swap failed -- pin NOT written, device still runs the previous release");
             process.exit(1);
         }
+        // status 0 means the HANDOFF was accepted, not that the swap succeeded (the
+        // script that decides that runs afterwards, parented by WmiPrvSE, with
+        // nobody reading its exit code). So ASK THE DEVICE: read the marker back and
+        // require it to show the version we just staged. Only then is the pin — and
+        // the claim to every UI — earned.
+        const markerFile = path.join(ETC_DIR, ".vale-release");
+        const check = await awaitReleaseMarker({
+            want: val,
+            timeoutMs: 90_000,
+            intervalMs: 2_000,
+            read: () => fs.readFileSync(markerFile, "utf8"),
+            sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+            now: () => Date.now(),
+        });
+        const verdict = releaseMarkerVerdict({ ...check, want: val });
+        if (!verdict.writePin) {
+            console.error(verdict.message);
+            process.exit(verdict.exitCode);
+        }
         try {
             fs.mkdirSync(ETC_DIR, { recursive: true });
             fs.writeFileSync(PIN, val);
             // Heal a pre-v2 swap's split-brain marker (old CLI wrote ROOT
             // .vale-release; the agent reads etc\). Root leftover is garbage.
-            fs.writeFileSync(path.join(ETC_DIR, ".vale-release"), val);
+            // NOTE: etc\.vale-release is NOT written here — the swap script wrote it
+            // from a provable copy, and overwriting it would erase that proof.
             fs.rmSync(path.join(DIR, ".vale-release"), { force: true });
-            console.log(`rollback: pinned to ${val} -- auto-upgrade refused until 'vale rollback --clear' or a forced agent_update`);
+            console.log(verdict.message);
         }
         catch (e) {
-            console.error("rollback: WARNING -- pin/marker write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
+            console.error("rollback: WARNING -- pin write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
         }
     },
     // The ONLY uninstall path (NSIS installer is retired — npm CLI is the
@@ -1587,5 +1680,12 @@ if (require.main === module) {
         Object.keys(commands).forEach((k) => console.log(" ", k));
         process.exit(cmd ? 1 : 0);
     }
-    commands[cmd](rest);
+    // `rollback` is the only ASYNC command (it awaits the marker read-back), so
+    // the dispatcher must catch a rejected promise: an unhandled rejection is a
+    // raw stack trace with a non-obvious exit code, and this command runs on a
+    // device where the operator sees only the console.
+    Promise.resolve(commands[cmd](rest)).catch((e) => {
+        console.error(`vale ${cmd}: ${e && e.message ? e.message : e}`);
+        process.exit(1);
+    });
 }
