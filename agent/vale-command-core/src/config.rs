@@ -11,6 +11,7 @@ pub struct Config {
     pub browser: BrowserConfig,
     pub platform: PlatformConfig,
     pub memory: MemoryConfig,
+    pub retention: RetentionConfig,
 }
 
 /// Deployment endpoints — where this agent finds the console and the
@@ -114,6 +115,74 @@ impl MemoryConfig {
                 .filter(|&n| n > 0)
                 .unwrap_or(64 * 1024 * 1024),
             self.retention_days,
+        )
+    }
+}
+
+/// Retention for the device's two append-only AI records (`retention:` block
+/// in config.yaml): the evidence feed (`DataDir\pwout`) and the runs log
+/// (`DataDir\runs`). Both are written once per AI action and, before this
+/// block existed, had NO bound at all — the only two durable records on the
+/// device that grew forever.
+///
+/// AGE-BOUNDED ON PURPOSE, and the reason is in `evidence::prune`: a SIZE
+/// trigger fires exactly when a long operation has produced the most evidence,
+/// i.e. it destroys the most recent material first — the material that
+/// explains what the AI is doing right now. An age bound is predictable, it is
+/// what the operator reasons about ("a month of evidence"), and it cannot
+/// prefer the current run's artifacts for deletion.
+///
+/// ALL fields optional — absent (or 0) means the compiled default, the same
+/// `Option` + `effective()` shape as [`MemoryConfig`].
+#[derive(Debug, Clone, Serialize, Deserialize, Default)]
+#[serde(default)]
+pub struct RetentionConfig {
+    /// Age bound in days for the evidence feed: `*.png` screenshots, the
+    /// `pwai_*.js` scripts that produced them, and the `actions.jsonl`
+    /// timeline. 0/absent = [`DEFAULT_EVIDENCE_RETENTION_DAYS`].
+    pub evidence_days: Option<u64>,
+    /// Age bound in days for `runs.jsonl`. 0/absent =
+    /// [`DEFAULT_RUNS_RETENTION_DAYS`].
+    pub runs_days: Option<u64>,
+}
+
+/// 30 days — the SAME window the session audit trail already prunes at
+/// (`session_log::prune_stale(30)`), so the device has one retention story an
+/// operator can hold in their head: "a month of AI evidence, a month of audit
+/// trail".
+///
+/// Volume behind the number: a screenshot is ~100 KB–2 MB, and a
+/// browser-heavy day produces a few hundred of them. At 300 shots × 500 KB
+/// that is ~150 MB/day, so this window holds ~4.5 GB at the top of that
+/// range — bounded and survivable, which is the entire point (the failure it
+/// replaces is unbounded growth over a year with no operator watching). An
+/// operator who wants less disk turns it down; the floor in
+/// `evidence::MIN_RETENTION_DAYS` is what stops them turning it to zero.
+pub const DEFAULT_EVIDENCE_RETENTION_DAYS: u64 = 30;
+
+/// 90 days — deliberately 3× the evidence window.
+///
+/// The runs log is the INDEX of the evidence (`run/begin` … `run/end` bracket
+/// the actions and commands an execution produced), and it is tiny: ~300 bytes
+/// per record, so a heavy day of 50 runs is ~30 KB and a whole year is ~11 MB.
+/// Deleting the index while the events it names still exist would be
+/// backwards, so a run's record outlives every artifact it can be grouping.
+pub const DEFAULT_RUNS_RETENTION_DAYS: u64 = 90;
+
+impl RetentionConfig {
+    /// Resolve to concrete windows in days. Zero is treated as absent rather
+    /// than as "delete everything now" — the same guard, for the same reason,
+    /// as [`MemoryConfig::effective`]. The modules that own the two records
+    /// apply a further hard floor (`evidence::MIN_RETENTION_DAYS`), so a
+    /// config that reaches them by another route cannot empty the feed either.
+    pub fn effective(&self) -> (u64, u64) {
+        (
+            self.evidence_days
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_EVIDENCE_RETENTION_DAYS),
+            self.runs_days
+                .filter(|&n| n > 0)
+                .unwrap_or(DEFAULT_RUNS_RETENTION_DAYS),
         )
     }
 }
@@ -288,6 +357,32 @@ mod tests {
         let cfg: Config =
             serde_yaml::from_str("memory:\n  max_entries: 0\n  max_bytes: 0\n").unwrap();
         assert_eq!(cfg.memory.effective(), (10_000, 64 * 1024 * 1024, None));
+    }
+
+    #[test]
+    fn retention_block_parses_partial_and_defaults() {
+        // Absent block → all None → compiled defaults via effective().
+        let cfg: Config = serde_yaml::from_str("server:\n  port: 18080\n").unwrap();
+        assert_eq!(
+            cfg.retention.effective(),
+            (DEFAULT_EVIDENCE_RETENTION_DAYS, DEFAULT_RUNS_RETENTION_DAYS)
+        );
+        // Partial block → the set field wins, the other defaults.
+        let cfg: Config = serde_yaml::from_str("retention:\n  evidence_days: 7\n").unwrap();
+        assert_eq!(cfg.retention.effective(), (7, DEFAULT_RUNS_RETENTION_DAYS));
+        // Zero is treated as ABSENT, never as "delete everything now" — the
+        // same guard MemoryConfig carries, for the same reason: a
+        // `retention: {evidence_days: 0}` typo must not empty the feed.
+        let cfg: Config =
+            serde_yaml::from_str("retention:\n  evidence_days: 0\n  runs_days: 0\n").unwrap();
+        assert_eq!(
+            cfg.retention.effective(),
+            (DEFAULT_EVIDENCE_RETENTION_DAYS, DEFAULT_RUNS_RETENTION_DAYS)
+        );
+        // The two windows are deliberately DIFFERENT: the runs log is the
+        // index of the evidence and must outlive it. If they ever agree, the
+        // reasoning in DEFAULT_RUNS_RETENTION_DAYS has been lost.
+        assert!(DEFAULT_RUNS_RETENTION_DAYS > DEFAULT_EVIDENCE_RETENTION_DAYS);
     }
 
     // SOLID Round-11 (contract completion): ensure_token is the credential

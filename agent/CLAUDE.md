@@ -220,17 +220,22 @@ src/
   session_log.rs   per-session JSONL audit log (trim-on-close + 30 d retention)
   evidence.rs      the pwout AI-evidence feed (crate-private, SOLID R98):
                    actions.jsonl append/newest-first read, shot listing,
-                   basename guard, `browser-actions-changed` push. ONE owner
-                   for both producers (playwright browser_run_script +
-                   mcp-client tools) and the /api/browser/* readers.
+                   basename guard, `browser-actions-changed` push, and the
+                   feed's AGE-BOUNDED RETENTION (`prune`: screenshots +
+                   pwai_*.js + old action lines; a 1-day floor makes an
+                   in-flight action's artifacts undeletable). ONE owner for
+                   both producers (playwright browser_run_script + mcp-client
+                   tools) and the /api/browser/* readers.
   text.rs          byte-budget text clipping (crate-private, SOLID R105):
                    `boundary_at_or_below` / `clip` — the "cut to <= N bytes on
                    a char boundary" rule that was hand-written at 8 sites and
                    panicked the session drainer three times.
   jsonl.rs         append-only JSONL crash safety (crate-private, SOLID R111):
                    `prepare_append` (version header on a fresh file, terminate
-                   a torn final line) + `has_torn_tail`. Shared by the audit
-                   trail and the memory store.
+                   a torn final line) + `has_torn_tail` + `rewrite_atomically`
+                   (temp file, fsync, rename — what the two retention prunes
+                   age records out with, and why their writers hold a lock).
+                   Shared by the audit trail and the memory store.
   operation.rs     the device's MERGED operation timeline (crate-private):
                    terminal audit + browser actions on ONE ordered axis,
                    served by GET /api/operation. Orders on `ts_ms` only — the
@@ -239,11 +244,12 @@ src/
                    than placed by guess. Device-level, not session-level: the
                    embedded browser has no session ownership.
   runs.rs          RUN identity, one AI execution's mint/end log
-                   (crate-private): `begin`/`end`/`recent` over an
-                   append-only runs.jsonl. The id is minted DEVICE-side and
-                   is a LABEL, NEVER A CREDENTIAL — nothing here returns an
-                   authorization decision, and `run_id_is_never_a_credential`
-                   pins that.
+                   (crate-private): `begin`/`end`/`recent`/`trim` over an
+                   append-only runs.jsonl (age-bounded by `trim`, same 1-day
+                   floor as the evidence feed). The id is minted DEVICE-side
+                   and is a LABEL, NEVER A CREDENTIAL — nothing here returns
+                   an authorization decision, and
+                   `run_id_is_never_a_credential` pins that.
   state.rs         AppState { serial_pool, terminal_mgr, event_bus,
                    plugin_registry, config } — managers are Arc<Manager>,
                    managers own their locks internally (inside AppState only

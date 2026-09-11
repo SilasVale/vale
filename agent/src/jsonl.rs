@@ -64,6 +64,43 @@ pub(crate) fn prepare_append(
     Ok(())
 }
 
+/// Replace `path`'s contents with `body` ATOMICALLY: write a sibling temp
+/// file, flush + `sync_all`, then rename over the original.
+///
+/// This is the rewrite half of the same crash-safety concern
+/// [`prepare_append`] owns for appends. `File::create` truncates IN PLACE, so
+/// a crash (Windows service kill, power loss) between truncate and rewrite
+/// loses the whole file; a temp file plus rename is atomic on both platforms,
+/// so a reader sees the old file or the new one and never a half-written one.
+///
+/// THE PRECONDITION IS THE WHOLE LESSON, and it is the caller's to keep: the
+/// rename installs a NEW inode at this path, so any writer still holding an
+/// append handle from BEFORE the call keeps succeeding against the orphaned
+/// one — every byte landing in a file nothing can reach. That is not
+/// hypothetical: `session_log::recover_interrupted` used to call its own trim
+/// here and silently swallowed the tail of a LIVE session's audit trail
+/// (round-116; the handle read 528 bytes while the path held 393). So a caller
+/// MUST serialize its writers against this call — `evidence.rs` and `runs.rs`
+/// both hold their own write mutex across both the append and this rewrite.
+///
+/// The temp file is left behind on failure (a caller that wants to clean up
+/// may) and shares the target's directory, which is what keeps the rename on
+/// one filesystem.
+pub(crate) fn rewrite_atomically(path: &Path, body: &str) -> std::io::Result<()> {
+    let tmp = path.with_extension("jsonl.tmp");
+    let res = (|| -> std::io::Result<()> {
+        let mut out = std::fs::File::create(&tmp)?;
+        out.write_all(body.as_bytes())?;
+        out.flush()?;
+        out.sync_all()?;
+        std::fs::rename(&tmp, path)
+    })();
+    if res.is_err() {
+        let _ = std::fs::remove_file(&tmp);
+    }
+    res
+}
+
 #[cfg(test)]
 mod tests {
     use super::*;
@@ -159,6 +196,46 @@ mod tests {
             seed,
             "nothing is written when the file is already well-formed"
         );
+    }
+
+    /// The rewrite half: the file is REPLACED whole, and the caller's new
+    /// bytes are what a reader sees even though the old file was longer.
+    #[test]
+    fn rewrite_atomically_replaces_the_whole_file() {
+        let p = tmp("rewrite");
+        std::fs::write(&p, "{\"a\":1}\n{\"b\":2}\n{\"c\":3}\n").expect("seed");
+        rewrite_atomically(&p, "{\"c\":3}\n").expect("rewrite");
+        assert_eq!(
+            std::fs::read_to_string(&p).expect("read"),
+            "{\"c\":3}\n",
+            "the body REPLACES the file — a truncate-and-rewrite that lost \
+             bytes here would silently corrupt an append-only log"
+        );
+        // No temp residue: a leftover .tmp beside the log is exactly the
+        // litter a crash during the session trail's own trim used to leave.
+        assert!(!p.with_extension("jsonl.tmp").exists());
+    }
+
+    /// The temp file is a SIBLING, and it is cleaned up on failure.
+    ///
+    /// A rename across filesystems is not atomic (and fails on Windows), so
+    /// the sibling placement is load-bearing rather than cosmetic.
+    #[test]
+    fn rewrite_atomically_fails_cleanly_on_an_unwritable_target() {
+        let p = tmp("rewrite-fail");
+        std::fs::write(&p, "keep\n").expect("seed");
+        // A DIRECTORY at the temp path makes File::create fail.
+        std::fs::create_dir_all(p.with_extension("jsonl.tmp")).expect("blocker dir");
+        assert!(
+            rewrite_atomically(&p, "new\n").is_err(),
+            "an unusable temp path must report failure, not silently succeed"
+        );
+        assert_eq!(
+            std::fs::read_to_string(&p).expect("read"),
+            "keep\n",
+            "a FAILED rewrite must leave the original untouched"
+        );
+        let _ = std::fs::remove_dir_all(p.with_extension("jsonl.tmp"));
     }
 
     #[test]

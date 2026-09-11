@@ -181,7 +181,7 @@ mod tests {
     }
 
     #[test]
-    fn tail_keeps_the_END_of_a_long_string() {
+    fn tail_keeps_the_end_of_a_long_string() {
         assert_eq!(tail("abcdefghij", 3), "hij");
         assert_eq!(tail("abcdefghij", 1), "j");
         assert_eq!(tail("abcdefghij", 0), "");

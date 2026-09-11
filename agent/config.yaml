@@ -33,3 +33,31 @@ serial:
 platform:
   console_url: "https://api.saisi.online"
   download_url: "https://agent.saisi.online"
+
+# Retention for the two append-only AI records that would otherwise grow
+# forever — the evidence feed (DataDir\pwout: screenshots, the scripts that
+# produced them, actions.jsonl) and the runs log (DataDir\runs\runs.jsonl).
+#
+# AGE-bounded on purpose. A size trigger fires exactly when a long operation
+# has produced the most evidence, so it destroys the most recent material
+# first — the material that explains what the AI is doing RIGHT NOW. An age
+# bound cannot prefer the current run's artifacts for deletion, and it is the
+# number an operator can reason about.
+#
+# The values below are the compiled defaults (vale-command-core
+# RetentionConfig::effective), stated here so they are visible and editable
+# rather than buried in a binary; the agent crate's
+# `retention_defaults_agree_with_the_compiled_ones` fails if the two ever
+# drift. Delete the block (or set a field to 0) and the same defaults apply.
+retention:
+  # Evidence window. 30 d matches the session audit trail's prune_stale(30),
+  # so the device keeps "a month of AI evidence, a month of audit trail".
+  # Sizing: a screenshot is ~100 KB–2 MB and a browser-heavy day produces a
+  # few hundred, so this holds ~4.5 GB at the top of that range — bounded,
+  # which is the point. Turn it down on a small disk.
+  evidence_days: 30
+  # Runs window, deliberately 3× the evidence window: runs.jsonl is the INDEX
+  # of the evidence (begin/end bracket the actions and commands of one
+  # execution) and is tiny (~300 B/record, ~11 MB/year at 50 runs/day).
+  # Dropping the index while the events it names survive would be backwards.
+  runs_days: 90

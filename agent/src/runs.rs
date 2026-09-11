@@ -48,9 +48,30 @@
 //! `run_begin` therefore needs no locking to be correct: the id embeds a
 //! millisecond stamp plus randomness, so two simultaneous begins cannot collide
 //! even across processes.
+//!
+//! ## Retention — the log has a bound now, and it is AGE
+//!
+//! `runs.jsonl` was append-only FOREVER: [`recent`] caps only what it READS, so
+//! the file itself grew one line per begin and one per end with nothing to stop
+//! it. [`trim`] is the bound, and it lives here for the same reason the
+//! evidence prune lives in `evidence.rs` — this module is already the log's one
+//! owner, and a new `retention.rs` would be a shared primitive with one
+//! consumer (the repo's PROMOTION rule).
+//!
+//! The bound is AGE rather than SIZE because a size trigger fires exactly when
+//! a long execution has produced the most records — i.e. it deletes the run
+//! that is HAPPENING, which is the one an operator is looking at. See
+//! `evidence.rs`'s header for the full argument; the two records make the same
+//! choice for the same reason.
+//!
+//! The default window is longer than the evidence feed's
+//! (`DEFAULT_RUNS_RETENTION_DAYS` in vale-command-core): this file is the INDEX
+//! of that evidence, and dropping the index while the actions it brackets
+//! survive would be backwards.
 
 use serde_json::{json, Value};
 use std::path::Path;
+use std::sync::Mutex;
 
 /// The runs log, beside the sessions and evidence directories.
 pub(crate) const RUNS_FILE: &str = "runs.jsonl";
@@ -189,6 +210,10 @@ fn append(dir: &Path, rec: &Value) {
     if std::fs::create_dir_all(dir).is_err() {
         return;
     }
+    // Held across open+write+close — the same discipline (and the same reason)
+    // as `evidence::FEED_LOCK`: the trim REPLACES this file by rename, so an
+    // append that raced it would succeed against an orphaned inode and vanish.
+    let _guard = RUNS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
@@ -196,6 +221,85 @@ fn append(dir: &Path, rec: &Value) {
     {
         let _ = writeln!(f, "{rec}");
     }
+}
+
+// ── retention ────────────────────────────────────────────────
+
+/// Serializes every mutation of the log: the append and the trim. Readers do
+/// not take it — the trim is atomic, so a reader sees the old file or the new
+/// one. See [`crate::jsonl::rewrite_atomically`] for the incident behind it.
+static RUNS_LOCK: Mutex<()> = Mutex::new(());
+
+/// Hard floor on the window, in days, independent of configuration — the same
+/// in-flight guarantee the evidence feed carries, for the same reason: a
+/// `retention: {runs_days: 0}` typo (or a caller that skipped
+/// `RetentionConfig::effective`) must not be able to drop the run that is
+/// running right now.
+pub(crate) const MIN_RETENTION_DAYS: u64 = 1;
+
+/// What one trim removed.
+///
+/// A count of DELETIONS only: what survived is readable from the file, and a
+/// field nobody reports is a field that drifts.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub(crate) struct Trimmed {
+    /// Records dropped from `runs.jsonl`.
+    pub records: usize,
+}
+
+/// Drop the records older than `max_age_days` (floored at
+/// [`MIN_RETENTION_DAYS`]). Returns what was removed.
+///
+/// The window is `max(MIN_RETENTION_DAYS, max_age_days)`, and `now_ms` is a
+/// parameter so the boundary is testable exactly.
+///
+/// WHAT THIS DOES NOT DO, stated rather than implied: records are filtered one
+/// at a time by their own `ts_ms`, so a `run/begin` and its `run/end` that
+/// straddle the cutoff can part company. That leaves an `run/end` naming an id
+/// with no begin — which this module ALREADY treats as a legitimate shape (see
+/// [`known`]: "an id without a begin is a legitimate record of a client that
+/// closed something it never opened"), and [`recent`] passes it through
+/// unharmed. Keeping whole pairs would mean the retention window depended on
+/// which runs happened to straddle it, which is worse than a stale end record.
+///
+/// A line that does not parse is KEPT: an unknown age is not an old age, and
+/// the failure mode of guessing is destroyed history. [`recent`] already skips
+/// such a line when reading, so keeping it costs nothing but bytes.
+pub(crate) fn trim(dir: &Path, max_age_days: u64, now_ms: u64) -> Trimmed {
+    let mut out = Trimmed::default();
+    let _guard = RUNS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let days = max_age_days.max(MIN_RETENTION_DAYS);
+    let cutoff_ms = now_ms.saturating_sub(days.saturating_mul(86_400_000));
+    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+        return out;
+    };
+    let mut kept = String::with_capacity(contents.len());
+    for line in contents.lines() {
+        let old = match serde_json::from_str::<Value>(line) {
+            Ok(v) => v
+                .get("ts_ms")
+                .and_then(|t| t.as_u64())
+                .is_some_and(|ts| ts < cutoff_ms),
+            Err(_) => false,
+        };
+        if old {
+            out.records += 1;
+            continue;
+        }
+        kept.push_str(line);
+        kept.push('\n');
+    }
+    if out.records == 0 {
+        // Nothing aged out: leave the file alone rather than rewriting it (a
+        // no-op write would bump its mtime for no reason).
+        return out;
+    }
+    if crate::jsonl::rewrite_atomically(&runs_path(dir), &kept).is_err() {
+        // The file is untouched by a failed rewrite; report nothing removed so
+        // a caller never logs a deletion that did not happen.
+        return Trimmed::default();
+    }
+    out
 }
 
 #[cfg(test)]
@@ -640,5 +744,232 @@ mod tests {
             id.len(),
             "the cap must land on a char boundary — a naive byte slice panics here"
         );
+    }
+
+    // ── retention ────────────────────────────────────────────
+
+    /// A fixed "now" so the boundary assertions are exact rather than drifting
+    /// with the wall clock, plus a helper that writes a record with a chosen
+    /// stamp (the module's own writers always stamp NOW, which is useless for
+    /// testing a window).
+    const NOW: u64 = 1_800_000_000_000;
+    const DAY_MS: u64 = 86_400_000;
+
+    fn seed(d: &std::path::Path, run_id: &str, ts_ms: u64) {
+        append(
+            d,
+            &json!({ "kind": "run/begin", "run_id": run_id, "ts_ms": ts_ms,
+                     "label": null, "goal": null }),
+        );
+    }
+
+    /// Old records go, fresh ones stay, and the survivors are byte-identical.
+    ///
+    /// The wire shape is the point of the last assertion: readers (the panel's
+    /// grouping, `/api/operation`, `known`) parse these lines, so a trim that
+    /// reformatted them would be a format change wearing a retention change's
+    /// clothes.
+    #[test]
+    fn trim_removes_old_records_and_keeps_fresh_ones() {
+        let d = dir("trim-age");
+        seed(&d, "run-old", NOW - 120 * DAY_MS);
+        seed(&d, "run-fresh", NOW - 2 * DAY_MS);
+        let before = std::fs::read_to_string(runs_path(&d)).expect("seed read");
+
+        let out = trim(&d, 90, NOW);
+
+        assert_eq!(out.records, 1, "only the 120-day-old record");
+        let after = std::fs::read_to_string(runs_path(&d)).expect("read");
+        let fresh_line = before.lines().nth(1).expect("second seeded line");
+        assert_eq!(
+            after,
+            format!("{fresh_line}\n"),
+            "the surviving record keeps its EXACT bytes — a reader depends on \
+             this shape, so retention may drop lines but never reformat them"
+        );
+        assert_eq!(recent(&d, 10).len(), 1);
+        assert!(!known(&d, "run-old"));
+        assert!(known(&d, "run-fresh"));
+        assert!(!runs_path(&d).with_extension("jsonl.tmp").exists());
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The boundary is the WINDOW and it is exclusive, mirroring
+    /// `session_log::prune_stale`'s `age > max_age`: a record exactly at the
+    /// cutoff survives.
+    #[test]
+    fn trim_boundary_is_exactly_the_window() {
+        let d = dir("trim-boundary");
+        seed(&d, "at-cutoff", NOW - 90 * DAY_MS);
+        seed(&d, "one-ms-past", NOW - 90 * DAY_MS - 1);
+
+        let out = trim(&d, 90, NOW);
+
+        assert_eq!(out.records, 1);
+        assert!(known(&d, "at-cutoff"), "the boundary is exclusive");
+        assert!(!known(&d, "one-ms-past"));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// (b) AGE, NOT COUNT: a busy period's records all survive.
+    #[test]
+    fn a_burst_of_recent_runs_survives_any_window() {
+        let d = dir("trim-burst");
+        for i in 0..500 {
+            seed(&d, &format!("run-{i}"), NOW - i);
+        }
+
+        assert_eq!(trim(&d, 90, NOW), Trimmed { records: 0 });
+        assert_eq!(
+            recent(&d, 1_000).len(),
+            500,
+            "AGE, not count: 500 recent runs must all survive"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// The in-flight guarantee: a zero-day window cannot drop the run that is
+    /// running now — and it is a floor, not an off switch, so yesterday's
+    /// records still age out under the same degenerate config.
+    #[test]
+    fn trim_never_removes_the_run_that_is_in_flight() {
+        let d = dir("trim-inflight");
+        // `begin` stamps with the REAL clock, so this test's "now" must be the
+        // real clock too — the fixed NOW the seeded tests use is a synthetic
+        // instant far in the future and would age the live run out on paper.
+        //
+        // And it is five seconds LATER than the stamp, deliberately: with
+        // `now == stamp` the record survives a zero-day window for the trivial
+        // reason that `ts < now` is false, so the assertion would ALSO hold
+        // with the floor deleted — a pin that cannot fail. Five seconds in
+        // makes the floor the only thing keeping it.
+        let live = begin(&d, Some("still going"), None);
+        let now = crate::now_millis() + 5_000;
+
+        assert_eq!(
+            trim(&d, 0, now).records,
+            0,
+            "a zero-day window (a typo, or a caller that skipped effective()) \
+             must not drop the run that is happening right now"
+        );
+        assert!(known(&d, &live), "the live run's begin is still on disk");
+        assert_eq!(recent(&d, 10).len(), 1);
+
+        // The floor is a FLOOR: record yesterday's run and it is gone.
+        seed(&d, "run-yesterday", now - 2 * DAY_MS);
+        let out = trim(&d, 0, now);
+        assert_eq!(
+            out.records, 1,
+            "the floor bounds the window, it does not \
+                                    disable the trim"
+        );
+        assert!(known(&d, &live));
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// An unparseable line is KEPT: its age is unknown, and guessing costs
+    /// history. `recent` already skips it when reading.
+    #[test]
+    fn trim_keeps_lines_it_cannot_read() {
+        let d = dir("trim-unparsed");
+        let path = runs_path(&d);
+        std::fs::create_dir_all(&d).expect("dir");
+        std::fs::write(
+            &path,
+            "{\"garbage\":\n{\"kind\":\"run/begin\",\"run_id\":\"r\",\"ts_ms\":1}\n",
+        )
+        .expect("seed");
+
+        let out = trim(&d, 30, NOW);
+
+        assert_eq!(out.records, 1, "only the parseable ancient record");
+        assert_eq!(
+            std::fs::read_to_string(&path).expect("read"),
+            "{\"garbage\":\n",
+            "the unreadable line survives verbatim"
+        );
+        let _ = std::fs::remove_dir_all(&d);
+    }
+
+    /// A missing log is a no-op (the trim runs at boot on devices that have
+    /// never begun a run).
+    #[test]
+    fn trim_on_a_missing_log_is_a_noop() {
+        let d = std::env::temp_dir().join(format!("vale-runs-notrim-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        assert_eq!(trim(&d, 30, NOW), Trimmed::default());
+    }
+
+    /// A trim's rewrite must not lose a record appended while it runs — the
+    /// same orphaned-inode hazard `evidence` guards with its own mutex, so the
+    /// two owners are pinned the same way.
+    #[test]
+    fn appends_racing_a_trim_are_never_lost() {
+        use std::sync::atomic::{AtomicBool, AtomicU64, Ordering};
+        use std::sync::Arc;
+
+        const TARGET: u64 = 100;
+
+        let d = std::env::temp_dir().join(format!("vale-runs-race-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&d);
+        std::fs::create_dir_all(&d).expect("dir");
+
+        let stop = Arc::new(AtomicBool::new(false));
+        let written = Arc::new(AtomicU64::new(0));
+        let writer = {
+            let (d, stop, written) = (d.clone(), stop.clone(), written.clone());
+            std::thread::spawn(move || {
+                let mut n = 0u64;
+                while !stop.load(Ordering::Relaxed) {
+                    // Expired: guarantees the next trim rewrites the file.
+                    seed(&d, &format!("old-{n}"), NOW - 400 * DAY_MS);
+                    seed(&d, &format!("fresh-{n}"), NOW - 1_000);
+                    n += 1;
+                    written.store(n, Ordering::Relaxed);
+                }
+                n
+            })
+        };
+        // A short back-off between passes: without it the trimming thread
+        // starves the writer on an unfair mutex, the writer never reaches
+        // TARGET, and the test measures the scheduler instead of the lock.
+        let deadline = std::time::Instant::now() + std::time::Duration::from_secs(20);
+        while written.load(Ordering::Relaxed) < TARGET && std::time::Instant::now() < deadline {
+            let _ = trim(&d, 90, NOW);
+            std::thread::yield_now();
+            std::thread::sleep(std::time::Duration::from_micros(200));
+        }
+        stop.store(true, Ordering::Relaxed);
+        let n = writer.join().expect("writer thread");
+        assert!(
+            n >= TARGET,
+            "the writer only managed {n} passes — the trimmer starved it, so \
+             this run says nothing about the lock"
+        );
+        let _ = trim(&d, 90, NOW);
+
+        let text = std::fs::read_to_string(runs_path(&d)).expect("read");
+        // Counted through the PARSER, not `str::matches`: without the lock a
+        // lost write can fuse two records into one unparseable line, and a
+        // substring count would then still "find" a run that no reader can see.
+        let parsed: Vec<Value> = text
+            .lines()
+            .filter_map(|l| serde_json::from_str::<Value>(l).ok())
+            .collect();
+        let with_prefix = |p: &str| {
+            parsed
+                .iter()
+                .filter(|v| v["run_id"].as_str().is_some_and(|r| r.starts_with(p)))
+                .count()
+        };
+        assert_eq!(with_prefix("old-"), 0, "every expired record aged out");
+        assert_eq!(
+            with_prefix("fresh-") as u64,
+            n,
+            "every concurrent append must survive the rewrite — a short count \
+             is the orphaned-inode bug (or a fused line from a lost write) that \
+             the session trail already paid for"
+        );
+        let _ = std::fs::remove_dir_all(&d);
     }
 }

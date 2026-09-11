@@ -58,6 +58,81 @@ pub(crate) fn hex_encode(bytes: &[u8]) -> String {
     s
 }
 
+/// What one RETENTION sweep removed, per record.
+///
+/// A struct rather than a `usize` because the two records answer different
+/// questions: "pruned 412" cannot tell an operator whether the AI's screenshots
+/// disappeared or its action timeline was shortened. Reported (never logged
+/// here) by whoever ran the sweep — the `prune_stale` precedent, where the
+/// owning module returns a count and the caller narrates it.
+#[derive(Debug, Clone, Copy, Default, PartialEq, Eq)]
+pub struct RetentionSweep {
+    pub shots: usize,
+    pub scripts: usize,
+    pub action_lines: usize,
+    pub run_records: usize,
+}
+
+impl RetentionSweep {
+    pub fn total(&self) -> usize {
+        self.shots + self.scripts + self.action_lines + self.run_records
+    }
+
+    /// One line for the agent log. Written here rather than at the call site so
+    /// the device's record of WHAT WAS DELETED has one wording, and so the
+    /// wording is unit-pinned instead of being rebuilt by each caller.
+    pub fn describe(&self) -> String {
+        format!(
+            "retention: pruned {} screenshot(s), {} script(s), {} action line(s), \
+             {} run record(s)",
+            self.shots, self.scripts, self.action_lines, self.run_records
+        )
+    }
+}
+
+/// Age-bound the device's two append-only AI records: the `pwout` evidence feed
+/// and `runs.jsonl`.
+///
+/// WHY THIS LIVES IN `lib.rs`: the two prunes belong to the modules that own
+/// their records (`evidence::prune`, `runs::trim` — a shared `retention.rs`
+/// would be a primitive with one consumer, which the repo's PROMOTION rule
+/// rejects), and both modules are crate-private, so the BINARY cannot call them.
+/// This function is the single piece of glue that resolves the real directories
+/// through `paths.rs` and applies the configured windows; the tested core below
+/// takes the directories as parameters, the same design the two modules use.
+///
+/// Call it at boot and periodically — `main.rs` does both. It is deliberately
+/// NOT wired into `AppState::new` or the plugin registry: those are constructed
+/// by tests, and a sweep that ran there would prune the developer's real
+/// `DataDir` from the test suite.
+pub fn retention_sweep(cfg: &Config) -> RetentionSweep {
+    retention_sweep_in(
+        &paths::evidence_dir(),
+        &paths::runs_dir(),
+        cfg,
+        now_millis(),
+    )
+}
+
+/// The sweep, with its two directories and the clock as parameters — the
+/// testable core of [`retention_sweep`].
+pub(crate) fn retention_sweep_in(
+    evidence_dir: &std::path::Path,
+    runs_dir: &std::path::Path,
+    cfg: &Config,
+    now_ms: u64,
+) -> RetentionSweep {
+    let (evidence_days, runs_days) = cfg.retention.effective();
+    let ev = evidence::prune(evidence_dir, evidence_days, now_ms);
+    let rr = runs::trim(runs_dir, runs_days, now_ms);
+    RetentionSweep {
+        shots: ev.shots,
+        scripts: ev.scripts,
+        action_lines: ev.action_lines,
+        run_records: rr.records,
+    }
+}
+
 /// Cross-task control channel for the cloudflared tunnel supervisor
 /// (supervision audit #1): provision_tunnel (tunnel.rs) rewrites tunnel.yml
 /// and then REQUESTS a restart; main.rs's supervisor task owns the single
@@ -193,5 +268,136 @@ mod now_helpers {
             secs_as_millis < now_millis(),
             "unix_now()*1000 must stay below now_millis()"
         );
+    }
+}
+
+/// The RETENTION sweep's own pins: the glue that ties the two owners together,
+/// and the promise that the shipped `config.yaml` says what the binary does.
+#[cfg(test)]
+mod retention {
+    use super::*;
+    use vale_agent_core::config::{DEFAULT_EVIDENCE_RETENTION_DAYS, DEFAULT_RUNS_RETENTION_DAYS};
+
+    const NOW: u64 = 1_800_000_000_000;
+    const DAY_MS: u64 = 86_400_000;
+
+    /// THE AGREEMENT PIN, and it is the same class of trap the platform block
+    /// already documents: `config.yaml` is what a fresh install receives, while
+    /// `RetentionConfig::default()` (all `None`) is what the test suite builds
+    /// on. The two are allowed to DIFFER in which fields they set — but not in
+    /// the VALUES the operator ends up with, or the numbers in the shipped
+    /// config become a comment that lies.
+    #[test]
+    fn retention_defaults_agree_with_the_compiled_ones() {
+        let embedded: Config = serde_yaml::from_str(DEFAULT_CONFIG_YAML)
+            .expect("the embedded config.yaml must parse as a Config");
+        assert_eq!(
+            embedded.retention.effective(),
+            (DEFAULT_EVIDENCE_RETENTION_DAYS, DEFAULT_RUNS_RETENTION_DAYS),
+            "agent/config.yaml's retention block no longer matches the compiled \
+             defaults. Fix whichever is wrong — but a fresh install and a \
+             `Config::default()` must not mean two different windows"
+        );
+        // And the block is EXPLICIT in the file, not merely defaulted through:
+        // an operator reading config.yaml has to be able to see the number.
+        assert!(
+            DEFAULT_CONFIG_YAML.contains("retention:")
+                && DEFAULT_CONFIG_YAML.contains("evidence_days:"),
+            "the shipped config must spell the retention block out — a bound \
+             the operator cannot see is one they cannot change"
+        );
+        assert_eq!(
+            Config::default().retention.effective(),
+            embedded.retention.effective(),
+            "Config::default() and the shipped file must resolve to the SAME \
+             window (unlike platform, where the divergence is deliberate)"
+        );
+    }
+
+    /// A `retention:` block an operator typed is honoured — the sweep is not
+    /// silently pinned to the compiled defaults.
+    #[test]
+    fn a_configured_window_reaches_both_records() {
+        let base = std::env::temp_dir().join(format!("vale-sweep-{}", std::process::id()));
+        let (ev, rr) = (base.join("pwout"), base.join("runs"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&ev).unwrap();
+        std::fs::create_dir_all(&rr).unwrap();
+
+        let aged = |dir: &std::path::Path, name: &str, ms: u64| {
+            let p = dir.join(name);
+            std::fs::write(&p, b"x").unwrap();
+            let f = std::fs::File::options().write(true).open(&p).unwrap();
+            f.set_modified(std::time::UNIX_EPOCH + std::time::Duration::from_millis(ms))
+                .unwrap();
+        };
+        aged(&ev, "old.png", NOW - 10 * DAY_MS);
+        aged(&ev, "fresh.png", NOW - DAY_MS);
+        aged(&rr, "unused", NOW);
+
+        let cfg: Config = serde_yaml::from_str("retention:\n  evidence_days: 7\n").unwrap();
+        let swept = retention_sweep_in(&ev, &rr, &cfg, NOW);
+
+        assert_eq!(swept.shots, 1, "the 10-day-old shot is past a 7-day window");
+        assert!(ev.join("fresh.png").exists());
+        assert_eq!(swept.total(), 1);
+        assert!(
+            swept.describe().contains("pruned 1 screenshot(s)"),
+            "the report must name WHAT was deleted, got: {}",
+            swept.describe()
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// The sweep is a no-op on empty/missing directories — it runs at every
+    /// boot, including on a device that has never driven the browser.
+    #[test]
+    fn a_sweep_over_empty_dirs_reports_nothing() {
+        let base = std::env::temp_dir().join(format!("vale-sweep-empty-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        let cfg = Config::default();
+        let swept = retention_sweep_in(&base.join("pwout"), &base.join("runs"), &cfg, NOW);
+        assert_eq!(swept, RetentionSweep::default());
+        assert_eq!(swept.total(), 0);
+    }
+
+    /// The two records are swept with DIFFERENT windows, from one config read.
+    ///
+    /// A sweep that used the evidence window for both would silently shorten
+    /// the run index — the exact inversion of the reasoning behind the two
+    /// defaults, and invisible in the totals.
+    #[test]
+    fn each_record_gets_its_own_window() {
+        let base = std::env::temp_dir().join(format!("vale-sweep-two-{}", std::process::id()));
+        let (ev, rr) = (base.join("pwout"), base.join("runs"));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&ev).unwrap();
+        std::fs::create_dir_all(&rr).unwrap();
+
+        // 40 days old: past the 30 d evidence window, inside the 90 d runs one.
+        let p = ev.join("old.png");
+        std::fs::write(&p, b"x").unwrap();
+        std::fs::File::options()
+            .write(true)
+            .open(&p)
+            .unwrap()
+            .set_modified(
+                std::time::UNIX_EPOCH + std::time::Duration::from_millis(NOW - 40 * DAY_MS),
+            )
+            .unwrap();
+        crate::runs::begin(&rr, Some("old run"), None);
+        let line = std::fs::read_to_string(crate::runs::runs_path(&rr)).unwrap();
+        let mut stamped = serde_json::from_str::<serde_json::Value>(line.trim()).unwrap();
+        stamped["ts_ms"] = serde_json::json!(NOW - 40 * DAY_MS);
+        std::fs::write(crate::runs::runs_path(&rr), format!("{stamped}\n")).unwrap();
+
+        let swept = retention_sweep_in(&ev, &rr, &Config::default(), NOW);
+
+        assert_eq!(swept.shots, 1, "40 days is past the evidence window");
+        assert_eq!(
+            swept.run_records, 0,
+            "40 days is INSIDE the runs window — one config read, two windows"
+        );
+        let _ = std::fs::remove_dir_all(&base);
     }
 }

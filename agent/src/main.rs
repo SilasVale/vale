@@ -282,6 +282,39 @@ fn main() {
     rt.block_on(run_server(config_path));
 }
 
+/// The periodic retention sweep's interval.
+///
+/// Hours, not minutes: the two windows are measured in DAYS (`retention:` in
+/// config.yaml), so a finer interval buys nothing, and the sweep is one
+/// directory listing plus — only when something actually aged out — one
+/// rewrite. The interval exists at all because the boot sweep alone would never
+/// fire again on a box that stays up for months, which is exactly the machine
+/// the unbounded-growth failure mode describes.
+const RETENTION_SWEEP_SECS: u64 = 6 * 3600;
+
+/// Apply the retention windows and REPORT what was removed.
+///
+/// Never silent, and never fatal: this is the record that justifies what the AI
+/// did, so a deletion an operator cannot see is worse than no deletion at all —
+/// while a failure to prune must never stop the boot or the supervision loop
+/// (the records are observability; the device is not).
+///
+/// The count goes to `agent.log` (via tracing) and NOT to the session audit
+/// trail, and the reason is categorical rather than convenient: that trail is
+/// per-SESSION by construction (`SessionLogger::log(sid, ev)` needs a session
+/// id), while this sweep is DEVICE-level — filing a device-wide deletion under
+/// whichever session happened to be handy would misattribute it, and a device
+/// with no live session has no file to file it in. Tracing is the device-level
+/// record, it is what `session_log::prune_stale`'s own caller uses, and it is
+/// readable remotely through `GET /api/logs`.
+fn report_retention(config: &Config) -> vale_agent::RetentionSweep {
+    let swept = vale_agent::retention_sweep(config);
+    if swept.total() > 0 {
+        tracing::info!("[vale-agent] {}", swept.describe());
+    }
+    swept
+}
+
 fn load_config(config_path: &Path) -> Config {
     // Core-audit #9 FOLLOW-UP (caught on d1 post-recovery): atomic_write
     // hardening only covers files written AFTER 1.2.224 — a PRE-EXISTING
@@ -386,6 +419,12 @@ pub(crate) fn unknown_key_warnings(config_path: &Path) -> Vec<String> {
         // "unknown top-level key 'memory'" about a key the agent itself writes
         // and reads.
         ("memory", &["max_entries", "max_bytes", "retention_days"]),
+        // The two append-only AI records' age bounds (vale-command-core
+        // RetentionConfig): the pwout evidence feed and runs.jsonl. Shipped
+        // explicitly in config.yaml and round-tripped by the Settings PUT, so —
+        // exactly like `memory` — a missing entry here would warn about a
+        // section the agent itself writes and reads.
+        ("retention", &["evidence_days", "runs_days"]),
     ];
     let Ok(raw) = std::fs::read_to_string(config_path) else {
         return Vec::new();
@@ -426,6 +465,13 @@ pub(crate) async fn run_server(config_path: PathBuf) {
     let config = load_config(&config_path);
 
     tracing::info!("Config loaded from {}", config_path.display());
+    // RETENTION (boot sweep). The evidence feed and runs.jsonl were the only
+    // durable records on this device with NO bound; this is where the bound is
+    // applied. It runs BEFORE the server binds, i.e. before any browser work
+    // can start, which is half of the in-flight guarantee — the other half
+    // (a hard floor on the window) lives in `evidence::prune` / `runs::trim`,
+    // so neither depends on this ordering alone.
+    report_retention(&config);
     out!("  Server: {}:{}", config.server.host, config.server.port);
     out!("  Name:   {}", config.server.name);
     // system_file_upload posts to the gateway /api/upload with the device
@@ -544,6 +590,20 @@ pub(crate) async fn run_server(config_path: PathBuf) {
     // restart for dev/custom invocations).
     *state.config_path.lock().unwrap_or_else(|p| p.into_inner()) = Some(config_path.clone());
 
+    // RETENTION (periodic sweep). Reads the LIVE config each cycle, like the
+    // self-register loop above, so a `retention:` change (or a Settings save)
+    // takes effect without a restart. Sleeps FIRST: the boot sweep already ran
+    // for this generation, and this loop's job is the box that never restarts.
+    {
+        let ret_state = state.clone();
+        tokio::spawn(async move {
+            loop {
+                tokio::time::sleep(std::time::Duration::from_secs(RETENTION_SWEEP_SECS)).await;
+                report_retention(&ret_state.config_snapshot());
+            }
+        });
+    }
+
     // round-142 unified process model — the agent OWNS its browser stack:
     // auto-start playwright-mcp at boot. The kill-on-close reaper ties the
     // child to this process (an update restarts both), so no scheduled task
@@ -651,8 +711,28 @@ mod tests {
             "browser:\n  page_load_timeout_secs: 30\n  headless_executable: null\n  headless_cdp_port: null\n",
             "platform:\n  console_url: https://api.saisi.online\n  download_url: https://agent.saisi.online\n",
             "memory:\n  max_entries: null\n  max_bytes: null\n  retention_days: null\n",
+            // The retention block is SHIPPED in config.yaml (unlike memory,
+            // which only appears once settings have been saved), so it must be
+            // known for the reason above AND because a fresh boot would
+            // otherwise warn about a section the agent itself wrote.
+            "retention:\n  evidence_days: 30\n  runs_days: 90\n",
         ));
         assert_eq!(unknown_key_warnings(&p), Vec::<String>::new());
+        std::fs::remove_file(&p).ok();
+    }
+
+    /// The retention section is KNOWN, not a blanket allow: a typo inside it is
+    /// still flagged, so the entry above cannot rot into "any key goes".
+    #[test]
+    fn unknown_keys_retention_section_is_known_but_not_blanket() {
+        let p = scratch("retention:\n  evidence_dayz: 30\n  runs_days: 90\n");
+        let w = unknown_key_warnings(&p);
+        assert_eq!(w.len(), 1, "{w:?}");
+        assert!(
+            w[0].contains("unknown key 'retention.evidence_dayz'"),
+            "a typo'd retention key silently keeps the default window — the \\
+             whole point of flagging it: {w:?}"
+        );
         std::fs::remove_file(&p).ok();
     }
 
