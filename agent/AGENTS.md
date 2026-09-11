@@ -412,7 +412,67 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 game-design round 12 (doc coherence, a job-object
+Last updated: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
+  compiler, and one feature wired end to end across four layers). Commits
+  b5947440 (agent+gateway) + cd5d24ff (panel).
+  (0) THE SESSION ENVIRONMENT WAS BROKEN BEFORE ANY CODE WAS READ, and it
+  would have silently poisoned every cargo command: `CC`/`CXX` were exported
+  pointing at `~/gcc10-root/usr/bin/gcc-10`, a userspace root that was missing
+  `cc1` — that binary ships in Ubuntu's `cpp-10` package, which the original
+  extraction (documented in this file for the dsh upgrade) never unpacked.
+  Every C compile failed with "cannot execute 'cc1'", so `ring` could not
+  build and NOTHING in the workspace compiled. Fixed by extracting `cpp-10`
+  into `~/gcc10-root/`; verified with a real C compile AND a C++20 compile.
+  METHOD NOTE: the first attempt reported success because the command ended
+  `cargo clippy ... | tail -40` — the pipe made `$?` the exit of `tail`, so a
+  hard build failure read as exit 0. Check `PIPESTATUS`, always.
+  (1) THE TREE WAS RED, and had been since round 12: `runs.rs` and
+  `operation.rs` were committed-in-progress with ZERO callers, so clippy
+  `-D warnings` failed on 9 `never used` errors, and `tests/module_map.rs`
+  failed because neither module appeared in the module map of BOTH guides.
+  Both fixed first, before adding anything.
+  (2) RUN IDENTITY, WIRED END TO END. The device could not tell two AIs
+  apart (the token identifies the DEVICE; `clientInfo` is a software constant;
+  the console implements no MCP session id), so a set of commands and browser
+  actions could not be attributed to one execution. `run_begin`/`run_end` are
+  new MCP tools in a new `plugins/runs/` (a separate plugin because a run
+  explicitly CROSSES the terminal/browser boundary); the id is minted
+  device-side and stamped by all four producers (terminal_execute,
+  terminal_plan, browser_run_script, mcp_client_call); `/api/operation`
+  returns the boundaries beside the events. The rule is stated in
+  `runs.rs` and pinned by `no_caller_derives_authority_from_a_run_id`, a
+  repo-wide scan for a `run_id` line naming an authorization verb — the first
+  run of it flagged the rule's OWN prose, so comments are skipped and that
+  limit is written into the test. Mutation-proven: a planted
+  `run_id == "x"` in production code fails it with the exact line.
+  (3) THREE DEFECTS FOUND WHILE WIRING, all of the silent class:
+  `runs::end` wrote the client's id VERBATIM into an append-only log (now
+  capped on a char boundary, like every other remote string here);
+  `operation.rs`'s two mappings are field ALLOWLISTS so `run_id` was dropped
+  from the timeline with every test green (now named on both feeds, pinned);
+  and the console bridge nests args inside `arguments`, which the device
+  forwards to playwright-mcp — so a console run would have shown commands and
+  ZERO browser actions, indistinguishable from "the AI never opened the
+  browser". Lifted to the top level and pinned in both directions.
+  (4) THE PINNED CONTRACTS EARNED THEIR KEEP — three of them failed the moment
+  the tools were added, each naming exactly what to update: the gateway's
+  param-parity contract (`run_id` accepted by the device but unadvertised on
+  the console), its device-direct partition, and the agent's 50-tool count.
+  That is the round-554 lesson working as designed.
+  (5) A DOC CLAIMED A WIRE SHAPE THAT IS NOT TRUE. `runs.rs` said a blank
+  label becomes "ABSENT"; `json!` cannot skip a `None`, so the wire actually
+  carries `"label": null` — invisible to a careful reader, decisive to a
+  `"label" in record` check. Found by the PANEL agent going looking for the
+  shape the docs implied. The doc now states the real shape and
+  `an_absent_label_is_a_null_value_not_a_missing_key` pins it.
+  Gates: agent 559 passing feat-gated / 459 default (summed from the runners,
+  not counted by grep — this file's own R113 warns that grep-counting `#[test]`
+  over-counts), clippy -D warnings clean BOTH configs, fmt clean, xwin check
+  OK, module_map green; gateway 759; panel 350 (was 306) + build. NOT ON A
+  DEVICE — the delivery gap from round 12 applies to all of this; no version
+  bump yet, so nothing here is reachable by a user until a release round.
+
+Previous round: 2026-09-11 game-design round 12 (doc coherence, a job-object
   incident, and the DELIVERY GAP). Three things, in order of what they taught:
   (1) NO-BENEFIT ASSUMPTION — I shipped the round-11 Windows build to d1 and
   started it on a spare port to verify it, launched from an agent-hosted
