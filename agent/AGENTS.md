@@ -487,7 +487,74 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 18 (the update path audited, and the last silent
+Last updated: 2026-09-11 round 19 (I SHIPPED A BUG, FOUND IT ON THE DEVICE, AND
+  FIXED IT IN THE SAME ROUND). Commits: c9309ed8 (1.2.323), 13983349 (the shell
+  fix), then 1.2.324.
+  (1) THE BUG I SHIPPED. Round 7's update receipt is the thing that tells an
+  operator "the CLI ran and the swap did not" apart from "nothing ran" — and it
+  landed on d1 mangled:
+      update requested 1.2.322 - (CLI reached the device...)
+  The arrow and the TARGET VERSION were gone, and a stray ZERO-BYTE FILE named
+  `1.2.323` had appeared in the working directory. Confirmed on the device by
+  char code, not by eye (the gap is `... 1.2.322 <sp> 45 <sp> 40`, i.e. `- (`).
+  CAUSE: `ps()` built a command STRING and ran it with `shell: true`, so cmd.exe
+  re-parsed it. cmd has no `\"` escape — a quote is a TOGGLE — so the quoted
+  region ended early and the `>` in `1.2.322 -> 1.2.323` became a REDIRECTION
+  OPERATOR. The target version was written to a FILE NAME. The fix is structural:
+  spawn `powershell` with argv (`["-NoProfile", "-Command", script]`), so nothing
+  sits between the two and the script arrives VERBATIM. That is what every other
+  spawn in that file already did — `ps()` was the lone exception, which is exactly
+  what an audit catches and a feature-by-feature test does not.
+  IT ALSO THREATENED `vale setup`: `firewallPs()` contains BOTH double quotes and
+  unquoted `|` pipes, so firewall provisioning was equally exposed. One function,
+  one fix.
+  (2) WHY THE ROUND-7 TEST COULD NOT SEE IT, and this is the round's real lesson.
+  The test asserted the string `updateReceiptPs` GENERATES. That string was
+  correct. What was wrong was what ARRIVED. **GENERATE vs LAND is a gap, and a
+  test on the generating side cannot close it.** The fix's test therefore asserts
+  the transport (one argv element, verbatim, no cmd-style escaping anywhere,
+  `shell: true` absent), and it is structural because the real thing needs a
+  Windows PowerShell to execute. Mutation-proven BOTH ways: reverting to the
+  string form fails it, and so does keeping argv while adding `shell: true` back.
+  This is the same shape as round 18's rollback finding — the helpers were perfect
+  and the bug was in how they were CALLED — and it is the second time the lesson
+  has cost a round.
+  (3) RELEASED TWICE, deliberately. 1.2.323 carried round 7/18's work to devices
+  (the tgz ships `bin/`, so CLI fixes reach nobody without a release). 1.2.324
+  fixes the bug 1.2.323 shipped. Both: CI + release workflow green on the tag,
+  dual-builder audit passes (source-identical; only the exe differs by toolchain),
+  keep-latest left exactly ONE release and ONE tag, and the CDN's last-5 window
+  still holds 1.2.320-324 so a rollback is possible.
+  (4) VERIFIED ON d1 BY EFFECT, which is the only way that counts here. Before:
+  `vale status` printed `release: 1.2.322 / this CLI: 1.2.323` plus the drift line
+  — round 7's feature earning its keep on a real device, telling me plainly the
+  device was behind. After the update to 1.2.324, the receipt reads
+      update requested 1.2.323 -> 1.2.324 (CLI reached the device...)
+  with the arrow AND the target intact, and the stray-file count is 0. I also
+  verified the PUBLISHED tgz by extracting it and reading `ps()` out of the
+  shipped bytes — "generate vs land" applies to releases too, and checking the
+  build directory would not have caught a staging mistake.
+  (5) THE HONEST SUMMARY: I introduced a defect in round 7, shipped it in 1.2.323,
+  and it was caught by reading the log on a device rather than by any gate — the
+  suite was green, CI was green, the audit passed. The gates check that a release
+  is CONSISTENT, not that its behaviour is right; only driving the real thing does
+  that. The correction cost one extra release and is fully closed.
+  (6) A SCOUT FOUND A REAL DEFECT WHILE RANKING DIRECTIONS (same pattern as round
+  18, and worth recording as a method): `MemoryStore::update()` never maintains
+  the `total_bytes` ledger that `enforce_limits` reads for `max_bytes` eviction —
+  `insert()` and `load()` do, `update()` does not. So an edit undercounts (the
+  byte cap silently stops being enforced) and a soft-delete overcounts (live
+  records get evicted early — the exact defect a load-time comment claims was
+  fixed). The only test that names the ledger DROPS AND REOPENS the store, which
+  recomputes it, so the in-process ledger is asserted nowhere, and no production
+  reader exists to notice. NOT FIXED YET — it is the first item for the next
+  round, with the scout's other finding that "LRU" is really oldest-WRITTEN
+  (reads never touch `updated_at`).
+  Gates: agent 555 default / 605 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean; CLI 28 (was 26), both new properties mutation-proven.
+  Released 1.2.324, live and verified on d1.
+
+Previous round: 2026-09-11 round 18 (the update path audited, and the last silent
   governance loss closed). Commits: 4457f52e + d4662e12 + 91839497 (update
   path), 2de64c25 (rollback marker), 27ba321e (abandoned question).
   (1) THE ROLLBACK PIN LIED, and it is the worst defect of the three because it
