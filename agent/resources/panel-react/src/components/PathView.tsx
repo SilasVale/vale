@@ -325,11 +325,12 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
 
       <p className="path-note">
         A step records what ran and how it ended, and <b>who was driving</b> when it
-        started — a handoff is marked, so a step with no marker is the agent's. It
-        does <b>not</b> record the alternatives the agent passed over, which are not
-        in the audit trail yet. Typing done while a person held the keyboard is not
-        reconstructed into commands either: keystrokes are bytes, not command
-        boundaries, so this view marks the window rather than inventing steps in it.
+        started — a handoff is marked, so a step with no marker is the agent's. Where
+        the agent said why, the reason and the alternatives it passed over are shown
+        under the command; where it said nothing, none are invented. Typing done
+        while a person held the keyboard is not reconstructed into commands: keystrokes
+        are bytes, not command boundaries, so this view marks the window rather than
+        inventing steps in it.
       </p>
     </div>
   );

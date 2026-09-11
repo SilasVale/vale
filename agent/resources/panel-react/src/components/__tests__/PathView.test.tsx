@@ -28,6 +28,23 @@ import type { CommandEvent } from "../../hooks/useCommandEvents";
 
 const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
 
+/** A session whose single command carries per-step reasoning. Module-scope so
+ *  more than one describe block can use it (the note pin needs it too). */
+function withIntent(extra: Partial<CommandEvent> = {}): CommandEvent[] {
+  return [
+    ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
+    ev({
+      seq: 2,
+      ts: 200,
+      kind: "command/start",
+      command: "display ont info 0 1",
+      ...extra,
+    }),
+    ev({ seq: 3, ts: 201, kind: "output", text: "ONT 0/1 online" }),
+    ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+  ];
+}
+
 /** A session: one ok command, one failed, one interrupted, one still running. */
 function session(): CommandEvent[] {
   return [
@@ -188,13 +205,47 @@ describe("PathView", () => {
     // reads as a known limit rather than missing data.
     const note = container.querySelector(".path-note")!.textContent!;
     expect(note).toContain("alternatives");
-    expect(note).toMatch(/not\b.*record|does not invent/i);
+    expect(note).toMatch(/invent/i);
   });
 
-  it("never claims to know WHO ran a step", () => {
+  it("the note does NOT claim the alternatives are absent while showing them", () => {
+    // The note was written when `considered` was not in the audit trail, and it
+    // said so. Once the intent layer landed the view began RENDERING those
+    // alternatives — and the note kept denying they existed, contradicting the
+    // content a few lines above it on the same screen. A rendered guarantee has
+    // to match the rendered text, so this is asserted against the DOM rather
+    // than against a phrasing.
+    const { container } = render(
+      <PathView
+        events={withIntent({
+          intent: "why this ran",
+          considered: ["the other way", "a third way"],
+        })}
+      />,
+    );
+    const shown = container.querySelectorAll(".path-step-alt-item").length;
+    expect(shown, "the fixture must actually render alternatives").toBe(2);
+    const note = container.querySelector(".path-note")!.textContent!;
+    // The false claim, in the words it was made in.
+    expect(note).not.toMatch(/does not record the alternatives/i);
+    expect(note).not.toMatch(/not in the audit trail/i);
+    // And it must still be honest about what IS missing: the alternatives that
+    // were legal but never attempted (the tree), which is why no branches.
+    expect(note).toMatch(/invent/i);
+  });
+
+  it("never fabricates actor prose about a step", () => {
+    // This used to be named "never claims to know WHO ran a step" — true when
+    // SessionEvent had no actor field. It does now (`control` events, folded by
+    // ownerAt), and the view renders a `you` tag plus a "N by you" summary, so
+    // the NAME was a lie. The assertion was always the narrower, still-valid
+    // property, and that is what it is called now: the view marks ownership
+    // from the trail and never narrates an actor it did not read.
     const { container } = render(<PathView events={session()} />);
     const text = container.textContent!;
     expect(text).not.toMatch(/\bAI ran\b|\buser ran\b|\bby: /);
+    // No control events in this fixture, so no step may be marked as human.
+    expect(container.querySelector(".path-step-owner")).toBeNull();
   });
 
   it("shows an honest empty state before any command", () => {
@@ -300,21 +351,6 @@ describe("the intent layer in the path", () => {
   // Events exactly as the agent now writes them: the reasoning rides the
   // command/start event. Driven through the REAL component so the test covers
   // the whole path from event shape to rendered pixels.
-  function withIntent(extra: Partial<CommandEvent> = {}): CommandEvent[] {
-    return [
-      ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
-      ev({
-        seq: 2,
-        ts: 200,
-        kind: "command/start",
-        command: "display ont info 0 1",
-        ...extra,
-      }),
-      ev({ seq: 3, ts: 201, kind: "output", text: "ONT 0/1 online" }),
-      ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
-    ];
-  }
-
   it("renders the reason under the command, and the branches NOT taken", () => {
     render(
       <PathView
