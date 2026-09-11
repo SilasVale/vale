@@ -36,10 +36,18 @@
 //! Runs are an append-only log beside the other device records, read through a
 //! directory PARAMETER — the same shape as `evidence.rs`. That is deliberate:
 //!
-//!   * the four PRODUCERS (`terminal_execute`, `browser_run_script`,
+//!   * the PRODUCERS (`terminal_execute`, `terminal_plan`, `browser_run_script`,
 //!     `mcp_client_call`, `memory_save`) only need to STAMP the id the client
 //!     gave them. They never look a run up, so they need no access to a registry
-//!     and none of them gains a dependency on this module's internals;
+//!     and none of them gains a dependency on this module's internals.
+//!
+//!     That list is a CLAIM ABOUT THE TREE, and it was wrong twice over when it
+//!     was first written: it named `memory_save`, which stamped nothing, and
+//!     omitted `terminal_plan`, which does. Corrected here after a scout checked
+//!     it rather than trusting it — the same "documented feature does not exist"
+//!     class as R109's `set_source`. Either make the claim true or stop making
+//!     it: a reader who trusts a producer list will look for a field that is not
+//!     there, or fail to look for one that is.
 //!   * no process-global accessor means no repeat of the `JobsMap` incident,
 //!     where a global let the background waiter write one map while readers read
 //!     another and completion was never observed;

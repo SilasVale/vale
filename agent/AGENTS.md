@@ -675,9 +675,16 @@ Previous round: 2026-09-11 game-design round 12 (doc coherence, a job-object
   etc\.vale-release were the only evidence. Both guides now use `--prefix
   (Split-Path (Get-Command vale).Source)`, which `vale rollback` had always done
   and the update path never had. Commits: 3ed26cf3 + b081e80d (the release).
-  NOTE: no installer was rebuilt (no makensis on this box), so the manifest is
-  tgz-only for 1.2.320 — fresh installs still work via the npm channel; the
-  installer fields are absent rather than stale, which is the fail-safe case.
+  NOTE: no installer was rebuilt for the FIRST 1.2.320 publish, so that
+  manifest was briefly tgz-only — fresh installs still worked via the npm
+  channel, and absent fields are the fail-safe case. **THIS PARAGRAPH USED TO
+  CLAIM "no makensis on this box", AND THAT WAS FALSE** — see round 15: the
+  binary is at `~/nsis-dist/bin/makensis` and simply is NOT ON PATH, which is
+  why `command -v makensis` came back empty. The 1.2.320 republish (d899709b)
+  did build the installer. Corrected in place rather than left standing,
+  because I believed this line for two rounds and it cost a release feature
+  every time: a false negative about the environment is worth less than no
+  claim at all.
 
 Previous round: 2026-09-11 game-design round 11 (the PLAN, + an
   evidence-loss bug it uncovered). `terminal_plan` lets the agent declare
