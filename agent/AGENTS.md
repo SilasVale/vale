@@ -176,6 +176,35 @@ then: stop ValeAgent task → kill agent tree → copy with retry →
 restart task. The terminal connection DROPS for ~10 s mid-update; reconnect
 and verify via `/api/status` → `version`.
 
+**A DROPPED CONNECTION IS NOT PROOF THE UPDATE STARTED.** It is the documented
+signature of a successful swap, and that is exactly the trap: a transport
+failure that never delivered the command looks identical from the caller's side.
+Observed on d1 (round 17): `vale update` returned a connection error, was read
+as "the swap is running", and had in fact never reached the device — no
+`update-busy` marker, no staged `vale-agent.new.exe`, no `scripts\vale-update.ps1`,
+no `update start` line. The device was still on the old version.
+
+Verify by EFFECT, with two commands that answer it without guessing:
+
+```powershell
+vale status                  # release running, this CLI's version, and the update state
+Get-Content "$env:ProgramData\Vale\logs\vale-update.log" -Tail 20
+```
+
+`vale status` reads the update-busy marker and reports one of three things, which
+mean different things and only one of them is an error: **none in flight** (no
+marker — a finished swap clears it), **IN FLIGHT** (fresh marker, a swap is
+running now), or **STARTED AND DID NOT FINISH** (marker past the 10-minute
+freshness window — the update died before its cleanup, and re-running is safe).
+It also prints the drift between the running release and this CLI, which is the
+plainest answer to "did the update take?".
+
+`vale update` now appends an `update requested X -> Y` receipt to
+`vale-update.log` BEFORE the handoff. So one file separates the cases the
+connection drop conflates: receipt present + `update start` absent ⇒ the command
+reached the device and the swap never launched; NEITHER present ⇒ the command
+never ran. Re-running is always safe — the operation is idempotent.
+
 `vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
 (last-5-per-minor keeps the recent line), `npm install -g --prefix
 <components\npm-global> <tgz>`, then runs the TARGET build's own `vale update`

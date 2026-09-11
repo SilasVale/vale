@@ -311,3 +311,138 @@ test("writeBoxedVersions: writes a parseable manifest; hostile dirs stay silent"
     fs.rmSync(dir, { recursive: true, force: true });
   }
 });
+
+// ── The update that left no trace ───────────────────────────────────────────
+//
+// INCIDENT: a device update was issued through the sanctioned flow and the
+// connection dropped, which is the DOCUMENTED behaviour of a successful swap
+// ("the terminal connection DROPS for ~10 s mid-update"). It was therefore read
+// as "the update started". It had not: on the device there was no
+// update-busy marker, no staged vale-agent.new.exe, no scripts\vale-update.ps1,
+// and no `update start` line in vale-update.log — the command never reached the
+// device at all, and the transport failure was indistinguishable from the
+// success signal. Only the RELEASE MARKER, still reading the old version, told
+// the truth, and the operator had to go and read four things by hand to learn it.
+//
+// `vale status` is the command a person runs to ask "where is this device". It
+// reported RUNNING / install dir / panel URL and NOTHING about the release or a
+// pending swap, so it could not answer the only question that mattered.
+//
+// These tests pin the report's CONTENT, because the failure mode is an
+// omission: a `status` that prints three plausible lines while leaving out the
+// release version looks perfectly healthy.
+test("statusReport: reports the running release and a FAILED update, not just RUNNING", () => {
+  const { statusReport } = require("../bin/vale.js");
+  const now = 1_700_000_000_000;
+
+  // (a) An update was attempted and never finished: the marker survives with
+  //     its original mtime. This is THE diagnostic the incident lacked.
+  const stalled = statusReport({
+    agentRunning: true,
+    installDir: "D:\\Vale",
+    exeExists: true,
+    port: 18080,
+    releaseVersion: "1.2.321",
+    updateMarkerMs: now - 27 * 60_000,
+    packageVersion: "1.2.322",
+    nowMs: now,
+  }).join("\n");
+  assert.match(stalled, /1\.2\.321/, "must name the version the device is actually running");
+  assert.match(
+    stalled,
+    /did not finish|DID NOT FINISH/i,
+    "a marker past the freshness window means an update STARTED AND DID NOT FINISH — status must say so, not stay silent",
+  );
+  // The DRIFT line specifically — the one that answers "am I up to date?".
+  // Pinned separately from the bare version numbers above, because those also
+  // match the `this CLI:` line and would keep passing if the drift line were
+  // dropped in a refactor. That is the whole failure mode under test: a status
+  // that looks informative while omitting the fact that matters.
+  assert.match(
+    stalled,
+    /device runs 1\.2\.321.*1\.2\.322/,
+    "must state the DRIFT (device runs X, this CLI is Y), not merely print both numbers somewhere",
+  );
+
+  // (b) Nothing in flight and the device matches this CLI: say so plainly.
+  const current = statusReport({
+    agentRunning: true,
+    installDir: "D:\\Vale",
+    exeExists: true,
+    port: 18080,
+    releaseVersion: "1.2.322",
+    updateMarkerMs: null,
+    packageVersion: "1.2.322",
+    nowMs: now,
+  }).join("\n");
+  assert.match(current, /1\.2\.322/);
+  assert.ok(
+    !/DID NOT FINISH/i.test(current),
+    "an absent marker must NOT be reported as a failed update — absent is not the same as broken",
+  );
+
+  // (c) An update IS in flight (fresh marker): distinct from both above.
+  const inFlight = statusReport({
+    agentRunning: true,
+    installDir: "D:\\Vale",
+    exeExists: true,
+    port: 18080,
+    releaseVersion: "1.2.321",
+    updateMarkerMs: now - 30_000,
+    packageVersion: "1.2.322",
+    nowMs: now,
+  }).join("\n");
+  assert.match(inFlight, /in flight|IN FLIGHT/i, "a fresh marker means a swap is running right now");
+
+  // (d) An install with no release marker at all (pre-round-298 or a fresh box)
+  //     says "unknown" rather than inventing a version.
+  const unknown = statusReport({
+    agentRunning: false,
+    installDir: "D:\\Vale",
+    exeExists: false,
+    port: 18080,
+    releaseVersion: null,
+    updateMarkerMs: null,
+    packageVersion: "1.2.322",
+    nowMs: now,
+  }).join("\n");
+  assert.match(unknown, /STOPPED/);
+  assert.match(unknown, /unknown/i, "no marker => unknown, never a fabricated version");
+});
+
+// The receipt that makes "the command never ran" provable from the log alone.
+test("updateReceiptPs: appends the INTENT before the handoff, to the same log the swap writes", () => {
+  const { updateReceiptPs } = require("../bin/vale.js");
+  const lines = updateReceiptPs("D:\\Vale", "1.2.321", "1.2.322");
+  const body = lines.join("\n");
+  assert.match(body, /vale-update\.log/, "same file the swap script appends to — one timeline");
+  assert.match(body, /1\.2\.321/, "records the version being replaced");
+  assert.match(body, /1\.2\.322/, "records the version being installed");
+  assert.match(body, /-Append/, "appends; must never truncate the swap's own log");
+  assert.match(body, /requested/i, "the word that distinguishes it from the swap's own 'update start'");
+  // The swap script's first line is `update start`. The receipt must be a
+  // DIFFERENT marker, or the two become indistinguishable and the whole point
+  // (did the CLI run? did the swap run?) is lost.
+  assert.ok(!/update start/.test(body), "must not reuse the swap's 'update start' marker");
+});
+
+// The receipt is only worth anything if it lands in the SAME file the swap
+// appends to. A receipt written to a different path is worse than none: the
+// log would look like the swap never started, which is the false conclusion
+// this whole change exists to prevent. Pinned against the swap's own
+// construction rather than against a literal, so moving one moves the test.
+test("updateReceiptPs: the sink is byte-identical to the swap script's log sink", () => {
+  const { updateReceiptPs, psq } = require("../bin/vale.js");
+  const probe = ["D:\\Vale", "D:\\ProgramData\\Vale", "C:\\Program Files\\Vale"];
+  for (const dataDir of probe) {
+    // Mirrors the `const log = ...` line in update(), verbatim.
+    const swapLog = `Out-File '${dataDir.replace(/'/g, "''")}\\logs\\vale-update.log' -Append`;
+    const receipt = updateReceiptPs(psq(dataDir), "1.0.0", "1.0.1")[0];
+    const receiptLog = receipt.slice(receipt.indexOf("Out-File"));
+    assert.equal(receiptLog, swapLog, `sinks must agree for ${dataDir}`);
+  }
+  // A quote in the data dir must be doubled, exactly as the swap does it —
+  // otherwise the single-quoted PS literal breaks and the receipt never lands.
+  const quoted = updateReceiptPs(psq("D:\\it's\\Vale"), "1.0.0", "1.0.1")[0];
+  assert.match(quoted, /it''s/, "embedded quote doubled for the PS single-quoted literal");
+});

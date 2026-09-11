@@ -47,6 +47,9 @@ exports.uninstallVersionPs = uninstallVersionPs;
 exports.autostartArgv = autostartArgv;
 exports.playwrightProbePs = playwrightProbePs;
 exports.busyIsFresh = busyIsFresh;
+exports.statusReport = statusReport;
+exports.updateReceiptPs = updateReceiptPs;
+exports.updateBusyPath = updateBusyPath;
 exports.boxedVersions = boxedVersions;
 exports.writeBoxedVersions = writeBoxedVersions;
 exports.writeReleaseMarker = writeReleaseMarker;
@@ -430,6 +433,75 @@ function playwrightProbePs() {
 // exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
 function busyIsFresh(mtimeMs, nowMs) {
     return nowMs - mtimeMs < 10 * 60 * 1000;
+}
+function statusReport(f) {
+    const out = [];
+    out.push(f.agentRunning ? "status: RUNNING" : "status: STOPPED");
+    out.push("install dir: " + f.installDir);
+    out.push("panel: " + (f.exeExists ? `http://127.0.0.1:${f.port}/panel/` : "(not installed)"));
+    // A device without a release marker is not "on some version" — it is a device
+    // whose version is UNKNOWN (a fresh box, or an install predating the marker).
+    // Printing this CLI's version here would be a fabricated fact.
+    out.push("release: " + (f.releaseVersion ? f.releaseVersion : "unknown (no release marker)"));
+    out.push("this CLI: " + f.packageVersion);
+    if (f.updateMarkerMs === null) {
+        out.push("update: none in flight");
+    }
+    else if (busyIsFresh(f.updateMarkerMs, f.nowMs)) {
+        const secs = Math.max(0, Math.round((f.nowMs - f.updateMarkerMs) / 1000));
+        out.push(`update: IN FLIGHT (marker ${secs}s old -- a swap is running now; the connection drops for ~10s)`);
+    }
+    else {
+        const mins = Math.round((f.nowMs - f.updateMarkerMs) / 60_000);
+        out.push(`update: a previous update STARTED AND DID NOT FINISH (marker ${mins} min old). ` +
+            `Check the log tail, then re-run 'vale update' -- a stale marker is safe to overwrite.`);
+    }
+    // The drift line: what a human actually wants from `status` after an update.
+    // Only claimed when the running version is KNOWN — otherwise the comparison
+    // would be against a guess.
+    if (f.releaseVersion && f.releaseVersion !== f.packageVersion) {
+        out.push(`update: device runs ${f.releaseVersion}, this CLI is ${f.packageVersion} -- ` +
+            `run 'vale update' to swap, then 'vale status' again to confirm.`);
+    }
+    return out;
+}
+/**
+ * The CLI's pre-handoff receipt, appended to the swap's own log.
+ *
+ * Takes the resolved DATA dir and rebuilds the same `<data>\logs\vale-update.log`
+ * path the swap script appends to — NOT a `..` relative guess, because
+ * `DATA_DIR` can be a registry-remapped location that is not `DIR`, and a
+ * receipt written to a different file than the swap writes is worse than none:
+ * it would look like the swap never started.
+ *
+ * Deliberately NOT the swap's `update start` wording: the value of the receipt
+ * is that its presence-without-`update start` proves the CLI ran and the swap
+ * did not, so the two markers must stay distinguishable in the file.
+ */
+function updateReceiptPs(dataDirQ, fromVersion, toVersion) {
+    const log = `Out-File '${dataDirQ}\\logs\\vale-update.log' -Append`;
+    const line = `"[$(Get-Date -Format o)] update requested ${fromVersion} -> ${toVersion} ` +
+        `(CLI reached the device; the swap has not started yet)"`;
+    return [`${line} | ${log}`];
+}
+/**
+ * The update mutual-exclusion marker — ONE owner for the path.
+ *
+ * Three readers now depend on it agreeing: the mutual-exclusion check in
+ * `setup()`, the guard in `update()`, and `statusReport`'s "is a swap pending"
+ * line. If they ever computed the path differently, `status` would confidently
+ * report "none in flight" while an update was refusing to start because a
+ * marker it could not see was in the way.
+ *
+ * A SURVIVING STALE MARKER means the update started and never finished: the
+ * swap script clears it on its own known-failure paths (task repoint, migration
+ * gate) and after a successful restart, so one still sitting there is an update
+ * that died before cleanup. `statusReport` deliberately reuses `busyIsFresh` —
+ * the SAME predicate `update()` refuses on — so "stale" cannot mean one thing
+ * to the guard and another to the report.
+ */
+function updateBusyPath() {
+    return path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
 }
 function boxedVersions(installDir, pkgDir) {
     const pkgVer = (p) => {
@@ -900,9 +972,39 @@ const commands = {
         const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq vale-agent.exe"], {
             encoding: "utf8",
         }).stdout || "";
-        console.log(out.includes("vale-agent") ? "status: RUNNING" : "status: STOPPED");
-        console.log("install dir:", DIR);
-        console.log("panel:", fs.existsSync(EXE_DST) ? "http://127.0.0.1:" + agentPort(ETC_DIR) + "/panel/" : "(not installed)");
+        // The report answers "where is this device, and is a swap still pending" —
+        // the question that cost four hand reads (and one wrong conclusion) in the
+        // incident. Gathering the facts is thin I/O; the SHAPE lives in the pure
+        // `statusReport`, which is where the tests can reach it.
+        let releaseVersion = null;
+        try {
+            const v = fs.readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8").trim();
+            if (v)
+                releaseVersion = v;
+        }
+        catch { /* absent => unknown, never fabricated */ }
+        let updateMarkerMs = null;
+        try {
+            updateMarkerMs = fs.statSync(updateBusyPath()).mtimeMs;
+        }
+        catch { /* no marker => nothing in flight */ }
+        let packageVersion = "";
+        try {
+            packageVersion = String(require("../package.json").version || "");
+        }
+        catch { /* best-effort */ }
+        for (const line of statusReport({
+            agentRunning: out.includes("vale-agent"),
+            installDir: DIR,
+            exeExists: fs.existsSync(EXE_DST),
+            port: agentPort(ETC_DIR),
+            releaseVersion,
+            updateMarkerMs,
+            packageVersion,
+            nowMs: Date.now(),
+        })) {
+            console.log(line);
+        }
     },
     start() {
         svc("Run");
@@ -962,7 +1064,7 @@ const commands = {
         // MEDIUM npm audit: use 'wx' exclusive-create so two racing updaters
         // cannot BOTH pass the freshness check — the second openSync throws
         // EEXIST and the WMI swap is never launched concurrently.
-        const BUSYM = path.join(process.env.ProgramData || "C:\\ProgramData", "ValeAgent", "update-busy");
+        const BUSYM = updateBusyPath();
         try {
             fs.mkdirSync(path.dirname(BUSYM), { recursive: true });
             const fd = fs.openSync(BUSYM, "wx");
@@ -990,6 +1092,27 @@ const commands = {
                 throw e; // a real FS error — do not proceed
             }
         }
+        // THE RECEIPT, before anything irreversible happens. Everything past this
+        // point ends with the agent being killed — which is the DOCUMENTED success
+        // signal ("the connection drops for ~10 s"), and therefore indistinguishable
+        // from a transport failure that never ran this command at all. One line in
+        // the log the swap itself appends to is what separates the two cases for
+        // whoever reads the device afterwards.
+        let fromVersion = "";
+        try {
+            fromVersion = fs.readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8").trim();
+        }
+        catch { /* unknown */ }
+        let toVersion = "";
+        try {
+            toVersion = String(require("../package.json").version || "");
+        }
+        catch { /* best-effort */ }
+        console.log(`update: ${fromVersion || "unknown"} -> ${toVersion || "unknown"} -- staging, the connection will drop`);
+        try {
+            ps(updateReceiptPs((0, exports.psq)(DATA_DIR), fromVersion || "unknown", toVersion || "unknown").join("; "));
+        }
+        catch { /* best-effort: a missing receipt must never block a real update */ }
         // Swap the exe in-place: stop -> replace (with retry; the running agent
         // locks its own file) -> start.
         if (!fs.existsSync(EXE_SRC)) {
