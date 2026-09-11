@@ -29,6 +29,10 @@ const entry = (
   extra: Partial<NonNullable<ArchiveEntry["last"]>> = {},
 ): ArchiveEntry => ({
   sid,
+  // Identity is absent by default here: the fixtures are about ordering and
+  // wording, and a record written before the device kept identity is the case
+  // those tests must keep working for.
+  identity: null,
   last: ts == null && Object.keys(extra).length === 0
     ? null
     : { kind: "status", ts, status: "closed", exitCode: null, reason: null, ...extra },

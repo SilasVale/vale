@@ -80,6 +80,18 @@ function ArchiveRow({ entry, live, onOpen }: { entry: ArchiveEntry; live: boolea
         title={`Open the recorded audit trail of ${entry.sid}`}
       >
         <span className="archive-row-name">{entry.sid}</span>
+        {/* WHAT IT WAS. A recorded session used to be an opaque
+            `term-<hex>-<n>`, so 620 rows on a real device were indistinguishable
+            from each other after a restart. Identity comes from the session's own
+            header; a record written before the device kept it draws NOTHING
+            rather than a placeholder, because "unknown" and "pty" are different
+            facts and only one of them is true. */}
+        {entry.identity && (
+          <span className="archive-row-identity" title={`${entry.identity.kind} · ${entry.identity.label}`}>
+            {entry.identity.label}
+            <span className="archive-row-kind">{entry.identity.kind}</span>
+          </span>
+        )}
         <StateMark live={live} />
         {/* Both facts are optional: an entry whose last event carries no stamp
             or no usable kind draws neither, rather than a stand-in. */}
@@ -183,7 +195,7 @@ export function ArchivePage({ sessions }: {
   // later read the trail still renders (its sid does not depend on the list),
   // but no state word is invented for it.
   const openEntry: ArchiveEntry | null = openSid
-    ? entries.find((e) => e.sid === openSid) ?? { sid: openSid, last: null }
+    ? entries.find((e) => e.sid === openSid) ?? { sid: openSid, last: null, identity: null }
     : null;
 
   return (
@@ -203,7 +215,7 @@ export function ArchivePage({ sessions }: {
         <p className="archive-lede">
           Every session this device has written to disk, newest first. These files
           outlive the session and the agent process, so a session that is closed —
-          or one from before a restart — opens here with its full audit trail.
+          or one from before a restart — opens here with its recorded audit trail.
         </p>
         {entries.length > 0 && (
           <div className="archive-stats">

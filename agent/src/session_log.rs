@@ -559,6 +559,33 @@ impl SessionEvent {
 static SEQ: std::sync::LazyLock<Mutex<HashMap<String, u64>>> =
     std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
 
+/// What a session IS — its `kind` and the label the operator sees — staged for
+/// the version header.
+///
+/// Shared by every instance for the same reason `SEQ` is: the header is written
+/// by whichever logger performs the session's FIRST write, and that is not
+/// necessarily the one that opened it. Keyed by dir+sid so tests and separate
+/// data dirs cannot collide.
+static IDENTITY: std::sync::LazyLock<Mutex<HashMap<String, (String, String)>>> =
+    std::sync::LazyLock::new(|| Mutex::new(HashMap::new()));
+
+/// One row of the session list: which session, its folded state, and what it
+/// was when the header says so.
+///
+/// Named rather than a tuple for the reason clippy rejected the anonymous form
+/// twice in this crate already — `Option<(String, String)>` as the third element
+/// of a triple is exactly the shape that invites transposing the label into the
+/// kind.
+pub struct SessionRow {
+    pub sid: String,
+    /// The folded terminal state (see `terminal_state_of`).
+    pub state: serde_json::Value,
+    /// `(kind, label)` from the session's version header, or `None` for a record
+    /// written before identity existed. A consumer must render `None` as UNKNOWN
+    /// rather than substituting a placeholder.
+    pub identity: Option<(String, String)>,
+}
+
 /// One session's audit record, as a reader sees it.
 ///
 /// A STRUCT rather than a tuple because the three fields answer three different
@@ -699,16 +726,24 @@ impl SessionLogger {
                     // for the fused-record incident that motivated them.
                     // Prepared on the raw File BEFORE the BufWriter wraps it, so
                     // nothing is buffered yet.
-                    let _ = crate::jsonl::prepare_append(
-                        &mut file,
-                        &path,
-                        &serde_json::json!({
-                            "type": "session", "version": 1, "id": sid,
-                            "createdAt": std::time::SystemTime::now()
-                                .duration_since(std::time::UNIX_EPOCH)
-                                .map(|d| d.as_secs()).unwrap_or(0),
-                        }),
-                    );
+                    // Identity rides the HEADER so the list route can answer
+                    // "what was this session" from the first line alone, without
+                    // reading a trail that can be megabytes. Omitted entirely
+                    // when unknown — a fabricated kind would be worse than an
+                    // absent one, because it would read as fact.
+                    let mut header = serde_json::json!({
+                        "type": "session", "version": 1, "id": sid,
+                        "createdAt": std::time::SystemTime::now()
+                            .duration_since(std::time::UNIX_EPOCH)
+                            .map(|d| d.as_secs()).unwrap_or(0),
+                    });
+                    if let Ok(m) = IDENTITY.lock() {
+                        if let Some((k, l)) = m.get(&format!("{}\0{sid}", self.dir.display())) {
+                            header["kind"] = serde_json::json!(k);
+                            header["label"] = serde_json::json!(l);
+                        }
+                    }
+                    let _ = crate::jsonl::prepare_append(&mut file, &path, &header);
                     let w = std::io::BufWriter::new(file);
                     f.insert(sid.to_string(), w);
                 }
@@ -941,7 +976,22 @@ impl SessionLogger {
     /// events (for recovery/fold) — or None if the file has no events.
     fn read_events(&self, sid: &str) -> Option<(Vec<serde_json::Value>, u64)> {
         let path = self.dir.join(format!("{sid}.jsonl"));
-        let content = std::fs::read_to_string(&path).ok()?;
+        // BYTES, DECODED LOSSLY — the same rule the tail reader follows, and for
+        // the same reason. `read_to_string` requires the WHOLE file to be valid
+        // UTF-8, so ONE damaged byte made this function fail and three callers
+        // with it: the detail route answered `found:false` for a session that
+        // exists, `recover_interrupted` skipped the file so an interrupted
+        // command never got its `interrupted`/`abandoned` arm (round 18's silent
+        // governance loss), and `max_seq_on_disk` returned 0 so a restarted
+        // counter re-issued `seq` values already on disk (round 22's collision).
+        //
+        // A crash mid-write of a multi-byte character leaves exactly that: a
+        // truncated sequence, which `String::from_utf8` rejects. The damaged
+        // LINE is then skipped by the parse below, like any other junk line —
+        // which is the policy this function already had for unparseable lines,
+        // now actually reachable.
+        let raw = std::fs::read(&path).ok()?;
+        let content = String::from_utf8_lossy(&raw);
         let mut events = Vec::new();
         let mut max_seq = 0u64;
         for line in content.lines() {
@@ -1032,6 +1082,37 @@ impl SessionLogger {
             // with no way to tell opened from closed.
             "status": last.get("status").and_then(|s| s.as_str()),
         }))
+    }
+
+    /// Stage what this session IS, for the version header of its first write.
+    ///
+    /// Called by `terminal_open` right before the `opened` event — the first
+    /// write a session ever makes, and therefore the one that creates the file
+    /// and its header. Later calls for the same sid overwrite: the last open of
+    /// an id is the one that describes the file it is appended to.
+    pub fn remember_identity(&self, sid: &str, kind: &str, label: &str) {
+        if let Ok(mut m) = IDENTITY.lock() {
+            m.insert(
+                format!("{}\0{sid}", self.dir.display()),
+                (kind.to_string(), label.to_string()),
+            );
+        }
+    }
+
+    /// What a recorded session was, read from its version HEADER — the file's
+    /// first line, so this never touches the rest of the trail. `None` when the
+    /// file predates this field (620 such rows existed on d1 when it landed) or
+    /// has no readable header; a caller must report that as unknown rather than
+    /// substitute a guess.
+    pub fn identity_of(&self, sid: &str) -> Option<(String, String)> {
+        let path = self.dir.join(format!("{sid}.jsonl"));
+        let f = std::fs::File::open(&path).ok()?;
+        let mut line = String::with_capacity(256);
+        std::io::BufReader::new(f).read_line(&mut line).ok()?;
+        let v: serde_json::Value = serde_json::from_str(&line).ok()?;
+        let kind = v.get("kind").and_then(|k| k.as_str())?;
+        let label = v.get("label").and_then(|l| l.as_str()).unwrap_or("");
+        Some((kind.to_string(), label.to_string()))
     }
 
     /// The LAST parseable event in a session file, read from the TAIL.
@@ -1125,6 +1206,29 @@ impl SessionLogger {
             }
         }
         out
+    }
+
+    /// The session list, each row carrying WHAT THE SESSION WAS when the header
+    /// says so.
+    ///
+    /// Identity comes from the header — one line — so this stays the bounded
+    /// read the list needs; a session recorded before identity existed reports
+    /// it as ABSENT rather than guessed at, and the caller must show that as
+    /// unknown. (620 such rows existed on d1 when this landed; they do not
+    /// become identifiable retroactively, and pretending otherwise would be
+    /// worse than the gap.)
+    pub fn list_sessions_with_identity(&self) -> Vec<SessionRow> {
+        self.list_sessions()
+            .into_iter()
+            .map(|(sid, state)| {
+                let identity = self.identity_of(&sid);
+                SessionRow {
+                    sid,
+                    state,
+                    identity,
+                }
+            })
+            .collect()
     }
 
     /// Age of a session file in seconds. Prefers the stored `createdAt` from
@@ -1787,6 +1891,146 @@ mod tests {
              one landed last (got {seqs:?}) — a consumer using seq as a \
              watermark would drop the event that arrived out of order"
         );
+    }
+
+    /// ONE DAMAGED BYTE MUST NOT ERASE A RECORD FROM ITS THREE OTHER READERS.
+    ///
+    /// Round 23 taught the LIST to read bytes and decode lossily, and this file
+    /// states the property generally. It was NOT general: `read_events` — a
+    /// different function — still did `read_to_string`, so a single invalid byte
+    /// made the WHOLE file unreadable to three callers that are not the list:
+    ///
+    /// * `events_of` -> `/api/sessions/{sid}` answers `found:false` for a
+    ///   session that demonstrably exists;
+    /// * `recover_interrupted` -> `continue`s past the file, so an interrupted
+    ///   command NEVER gets its `interrupted`/`abandoned` arm — the round-18
+    ///   silent governance loss, back again through a different door;
+    /// * `max_seq_on_disk` -> returns 0, so after a restart the shared counter
+    ///   re-seeds at 0 and re-issues a `seq` that already exists — round 22's
+    ///   collision, re-reachable through the file round 23 proved reachable.
+    ///
+    /// A crash mid-write of a multi-byte character leaves exactly that byte
+    /// sequence, which is the mechanism `memory/store.rs` spells out for its own
+    /// reader.
+    #[test]
+    fn one_damaged_byte_does_not_erase_a_record() {
+        let dir = temp_dir("lossyread");
+        let logger = SessionLogger::new(dir.clone());
+        logger.log_status("s", "opened");
+        logger.log_command_start("s", "echo hi");
+        logger.log_command_end("s", Some(0), None, None);
+        logger.flush_all();
+
+        // A torn multi-byte sequence written over a line boundary, the way a
+        // crash mid-write leaves one.
+        use std::io::Write;
+        let path = dir.join("s.jsonl");
+        let mut f = std::fs::OpenOptions::new()
+            .append(true)
+            .open(&path)
+            .unwrap();
+        f.write_all(b"{\"seq\":9,\"kind\":\"status\",\"status\":\"\xe4\xb8")
+            .unwrap();
+        f.write_all(b"\"}\n").unwrap();
+        drop(f);
+
+        // 1) The detail route still finds the record and its events.
+        let rec = logger.events_of("s");
+        assert!(
+            rec.found,
+            "the record EXISTS — one damaged line must not make the route answer \
+             'no record', which is a different and false claim"
+        );
+        let kinds: Vec<String> = rec
+            .events
+            .iter()
+            .map(|e| {
+                format!(
+                    "{}/{}",
+                    e.get("seq").and_then(|v| v.as_u64()).unwrap_or(0),
+                    e.get("kind").and_then(|k| k.as_str()).unwrap_or("?")
+                )
+            })
+            .collect();
+        assert!(
+            rec.events.len() >= 3,
+            "the intact events are still returned, with the damaged line skipped: {kinds:?}"
+        );
+        assert!(
+            !kinds.iter().any(|k| k.contains("status/9")),
+            "and the damaged line is NOT among them — a skipped junk line, not a              half-parsed one: {kinds:?}"
+        );
+
+        // 2) The seq counter still seeds from the file, so a restart cannot
+        //    re-issue a seq that is already on disk.
+        assert!(
+            logger.max_seq_on_disk("s") >= 3,
+            "the damaged line must not reset the seed to 0 — that re-issues seqs \
+             that already exist (round 22's defect)"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// A RECORDED SESSION MUST BE ABLE TO SAY WHAT IT WAS.
+    ///
+    /// Session ids are server-generated (`term-<hex>-<n>`), and the `opened`
+    /// event carried only `"opened"` while `kind` and `target` sat unused in
+    /// scope at the call site. So a recorded session was an OPAQUE ID: after a
+    /// restart the live kind/label are gone, and an operator facing the archive
+    /// (620 rows on d1) could not tell a serial console from a PowerShell tab.
+    /// The id leaks nothing, so there was nothing to infer from either.
+    ///
+    /// It goes in the VERSION HEADER, not in an event, for a reason the list
+    /// route depends on: the header is the file's first line, so identity can be
+    /// read without touching the rest of the file. That is the same economy the
+    /// tail fold uses — and it matters more here, because the largest session
+    /// file is 10 MB.
+    ///
+    /// WHAT IS RECORDED, AND WHAT IS NOT. `kind` is a category (`pty`/`ssh`/
+    /// `serial`) and `label` is the name the operator ALREADY sees on the live
+    /// tab (`user@host`, `serial:COM4`). The raw `target` is deliberately NOT
+    /// recorded: it can carry a port and connection options the label drops, and
+    /// "what the tab showed" is the defensible thing to persist. This is still a
+    /// privacy judgment and it is made explicitly rather than by omission — the
+    /// corpus already holds FULL COMMAND TEXT and command OUTPUT, so the
+    /// operator-facing name of the session is strictly less revealing than what
+    /// is already on the same disk.
+    #[test]
+    fn a_recorded_session_says_what_it_was() {
+        let dir = temp_dir("identity");
+        let logger = SessionLogger::new(dir.clone());
+        logger.remember_identity("s", "ssh", "ops@box-a");
+        logger.log_status("s", "opened");
+        logger.flush_all();
+
+        let (kind, label) = logger
+            .identity_of("s")
+            .expect("the header must carry the identity the session was opened with");
+        assert_eq!(kind, "ssh");
+        assert_eq!(label, "ops@box-a");
+
+        // The header is the FIRST LINE, so a reader can answer without the rest
+        // of the file — which is the whole point on a 10 MB trail.
+        let first = std::fs::read_to_string(dir.join("s.jsonl")).unwrap();
+        let head = first.lines().next().unwrap().to_string();
+        assert!(
+            head.contains("\"kind\":\"ssh\"") && head.contains("ops@box-a"),
+            "identity belongs in the version header, not in an event: {head}"
+        );
+
+        // A session opened before this existed has no identity, and the reader
+        // must say UNKNOWN rather than invent one. 620 such rows exist on d1.
+        let logger2 = SessionLogger::new(dir.clone());
+        logger2.log_status("old", "opened");
+        logger2.flush_all();
+        assert_eq!(
+            logger2.identity_of("old"),
+            None,
+            "a pre-identity record has no identity to report — not a fabricated one"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// THE LIST MUST NOT READ EVERY FILE END TO END.

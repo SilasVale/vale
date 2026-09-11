@@ -212,7 +212,13 @@ const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_read",
     description:
-      "Read buffered output from a terminal session. Non-destructive cursor; `offset` is an ABSOLUTE byte offset (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. ANSI escapes stripped by default; pass clean:false for raw bytes.",
+      // The claim that `offset: 0` "re-reads from the beginning" was FALSE past
+      // 1 MiB of spill and was corrected on the device in round 21 — while this
+      // hand-copied string kept serving it to every console client. A single
+      // read returns AT MOST 1 MiB and then the window's TAIL, so a `start`
+      // greater than the offset you asked for is the only signal that the head
+      // was withheld, and no offset can retrieve it.
+      "Read buffered output from a terminal session. Non-destructive cursor; `offset` is an ABSOLUTE byte offset and `start`/`end` are the absolute span actually returned. A single read returns AT MOST 1 MiB: for a longer stream the OLDEST bytes in the window are withheld, so a `start` GREATER than your `offset` means the head is unavailable and cannot be fetched by any offset. ANSI escapes stripped by default; pass clean:false for raw bytes.",
     inputSchema: {
       type: "object",
       properties: {

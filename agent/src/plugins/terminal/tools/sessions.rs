@@ -111,6 +111,19 @@ pub(super) fn tool_open(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     persist_pre_restart(&m);
                 }
                 // Audit trail: session opened (round-54).
+                //
+                // STAGE THE IDENTITY FIRST, so the header of the file this very
+                // event creates can say what the session IS. Without it a
+                // recorded session is an opaque `term-<hex>-<n>`: the live
+                // kind/label die with the process, and the archive can only show
+                // an id. `target` is deliberately not recorded — see
+                // `SessionLogger::remember_identity` for the judgment.
+                let label = terminal_mgr
+                    .term_info(&id)
+                    .await
+                    .map(|m| m.label)
+                    .unwrap_or_default();
+                logger.remember_identity(&id, &kind, &label);
                 logger.log_status(&id, "opened");
                 // stage-m: NO PSReadLine removal — the VS Code shell
                 // integration (OSC 633) DEPENDS on PSReadLine: the script
@@ -471,4 +484,45 @@ pub(super) fn tool_select(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
             }
         },
     )
+}
+
+#[cfg(test)]
+mod identity_tests {
+    /// THE WIRING, NOT THE HELPER.
+    ///
+    /// `remember_identity` and `identity_of` are covered by real round-trip
+    /// tests, and BOTH OF THEM PASS WITH THE CALL SITE REMOVED — verified by
+    /// mutation. That is this repo's recorded lesson from rounds 18 and 19
+    /// ("the helpers were perfect; the bug was in how they were CALLED"), and it
+    /// bites the same way here: deleting one line leaves the compiler, the
+    /// suite, and every other gate green while a recorded session silently goes
+    /// back to being an opaque `term-<hex>-<n>`.
+    ///
+    /// The open path needs a REAL terminal backend — the stub answers every
+    /// `term_open` with `disabled` — so the wiring is pinned structurally, the
+    /// same way `the_approval_gate_is_placed_before_the_shell_write` pins the
+    /// gate's position in the execute path.
+    #[test]
+    fn the_open_path_stages_identity_before_it_logs_the_session_opened() {
+        let src = include_str!("sessions.rs");
+        let production = src.split("#[cfg(test)]").next().expect("file is not empty");
+        let staged = production.find("remember_identity(").expect(
+            "terminal_open no longer stages the session's identity — every \
+             recorded session goes back to being an opaque id, and the archive \
+             has nothing to show. Re-point this pin rather than deleting it.",
+        );
+        let opened = production.find("log_status(&id, \"opened\")").expect(
+            "the opened audit event moved or was renamed; re-point this pin \
+             rather than deleting it — it is the write whose HEADER must carry \
+             the identity",
+        );
+        assert!(
+            staged < opened,
+            "identity must be staged BEFORE the `opened` event: that event is the \
+             session's FIRST write, so it is the one that creates the file and \
+             its version header. Staging after it means the header is written \
+             without identity and can never be corrected (the header is written \
+             once)."
+        );
+    }
 }

@@ -48,6 +48,12 @@ export interface ArchiveEntry {
   sid: string;
   /** The folded last event, or `null` when the device folded nothing usable. */
   last: ArchiveLastEvent | null;
+  /** WHAT THE SESSION WAS, from the session's own version header: its `kind`
+   *  (`pty`/`ssh`/`serial`) and the label the live tab showed (`user@host`,
+   *  `serial:COM4`). `null` for a record written before the device kept this —
+   *  the header is written once, so those rows never become identifiable and the
+   *  panel must render them as unknown rather than invent a kind. */
+  identity: { kind: string; label: string } | null;
 }
 
 /** How many recorded sessions one page of the list renders.
@@ -108,7 +114,16 @@ export function archiveEntries(payload: unknown): ArchiveEntry[] {
     if (!row || typeof row !== "object") continue;
     const sid = nonEmptyString((row as Record<string, unknown>).id);
     if (!sid) continue; // unnameable — the panel cannot open what it cannot name
-    out.push({ sid, last: mapLast((row as Record<string, unknown>).state) });
+    // Both keys must be present for the identity to be usable: a row carrying a
+    // kind but no label is a shape the device does not produce, and half an
+    // identity rendered as if whole is how a placeholder becomes a fact.
+    const kind = nonEmptyString((row as Record<string, unknown>).kind);
+    const label = nonEmptyString((row as Record<string, unknown>).label);
+    out.push({
+      sid,
+      last: mapLast((row as Record<string, unknown>).state),
+      identity: kind && label ? { kind, label } : null,
+    });
   }
   return out;
 }

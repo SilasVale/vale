@@ -838,14 +838,22 @@ fn sessions_logger() -> crate::session_log::SessionLogger {
 fn api_sessions_list() -> serde_json::Value {
     let logger = sessions_logger();
     let list: serde_json::Value = logger
-        .list_sessions()
+        .list_sessions_with_identity()
         .iter()
-        .map(|(sid, state)| serde_json::json!({ "id": sid, "state": state }))
+        .map(|row| match &row.identity {
+            Some((kind, label)) => {
+                serde_json::json!({ "id": row.sid, "state": row.state, "kind": kind, "label": label })
+            }
+            // Recorded before identity existed. The KEYS ARE OMITTED rather than
+            // sent as `null` or as a placeholder: a consumer must be able to tell
+            // "this device does not know" from "this session was a pty".
+            None => serde_json::json!({ "id": row.sid, "state": row.state }),
+        })
         .collect();
     serde_json::json!({ "ok": true, "sessions": list })
 }
 
-/// GET /api/sessions/{sid} — full audit events for one session (round-68):
+/// GET /api/sessions/{sid} — the recorded events of one session (round-68):
 /// events_of() existed for /api/sessions but no endpoint called it — the
 /// durable audit corpus was write-only, unqueryable by the panel or MCP.
 /// This reads the session's jsonl (permanent, survives agent restarts).
@@ -4760,6 +4768,62 @@ mod tests {
             "an untrimmed record begins at its first event: {v}"
         );
 
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    /// THE ARCHIVE ROW MUST SAY WHAT THE SESSION WAS.
+    ///
+    /// A recorded session used to be an opaque `term-<hex>-<n>`: the live
+    /// kind/label die with the process, the id leaks nothing, and d1's archive
+    /// held 620 such rows. The kind and the operator-facing label now ride the
+    /// session's version HEADER, so the list route can answer from one line
+    /// instead of reading a trail that can be megabytes.
+    ///
+    /// The two arms are asserted separately because they mean different things:
+    /// a known session must NAME itself, and a record from before the field
+    /// existed must OMIT the keys — sending `null` or a placeholder would make
+    /// "unknown" indistinguishable from a real value at the consumer.
+    #[tokio::test]
+    async fn the_session_list_names_what_each_session_was() {
+        let (st, cfg_path) = state_with_cfg("sess-identity", CFG_YAML_TOKEN_ONLY);
+        let dir = crate::paths::sessions_dir();
+        let _ = std::fs::create_dir_all(&dir);
+        let mk = format!("web-ident-{}-{}", std::process::id(), crate::now_millis());
+
+        // One session that staged its identity, and one that did not.
+        let known = format!("{mk}-known");
+        let anon = format!("{mk}-anon");
+        let logger = sessions_logger();
+        logger.remember_identity(&known, "ssh", "ops@box-a");
+        logger.log_status(&known, "opened");
+        logger.log_status(&anon, "opened");
+        logger.flush_all();
+
+        let v = json_body(handle_request(req("GET", "/api/sessions"), st.clone()).await).await;
+        let rows = v["sessions"].as_array().expect("sessions array");
+        let find = |id: &str| {
+            rows.iter()
+                .find(|r| r["id"] == id)
+                .unwrap_or_else(|| panic!("{id} must be listed"))
+                .clone()
+        };
+
+        let k = find(&known);
+        assert_eq!(k["kind"], "ssh", "the row names the kind: {k}");
+        assert_eq!(
+            k["label"], "ops@box-a",
+            "and the operator-facing label: {k}"
+        );
+
+        let a = find(&anon);
+        assert!(
+            a.get("kind").is_none() && a.get("label").is_none(),
+            "an unidentified record must OMIT the keys, so a consumer can tell \
+             'the device does not know' from a real value: {a}"
+        );
+
+        let _ = std::fs::remove_file(dir.join(format!("{known}.jsonl")));
+        let _ = std::fs::remove_file(dir.join(format!("{anon}.jsonl")));
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 

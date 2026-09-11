@@ -686,3 +686,39 @@ test("mcp: device dial failure → -32603 with DEVICE_UNREACHABLE in data", asyn
     globalThis.fetch = realFetch;
   }
 });
+
+// ── contract: the DESCRIPTION must not state a fact the device disproved ────
+//
+// The parameter-name contract above is what this suite has always checked, and
+// it is why a stale DESCRIPTION can ship indefinitely: the gateway hand-copies
+// each tool's prose, and nothing compared it.
+//
+// That is not hypothetical. Round 21 corrected `terminal_read`'s description on
+// the DEVICE — it had claimed "`offset: 0` re-reads from the beginning", which is
+// false past 1 MiB of spill, where a single read returns the window's TAIL and
+// the head is unreachable by ANY offset. The gateway's own copy kept serving the
+// disproven sentence to every console client, and no gate could see it, because
+// descriptions were not an enforced axis.
+//
+// Descriptions are deliberately re-worded for the console, so asserting textual
+// equality would be wrong and would rot. This pins the FACT instead of the
+// prose: the disproven claim must be absent, and the real limit must be present.
+test("contract: terminal_read does not re-state the disproven 're-reads from the beginning'", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const tool = allMcpTools().find((t) => t.name === "terminal_read");
+  assert.ok(tool, "terminal_read must be advertised");
+  const d = String(tool.description || "");
+
+  assert.ok(
+    !/re-reads from the beginning/i.test(d),
+    "terminal_read's description claims `offset: 0` re-reads from the beginning. " +
+      "That is FALSE past 1 MiB of spill — read_spill caps one read and returns the " +
+      "window's TAIL, so the head cannot be fetched by any offset. Round 21 fixed the " +
+      "device copy; this is the console copy, and it reaches the model verbatim.",
+  );
+  assert.ok(
+    /1 MiB|1 MB/i.test(d),
+    "terminal_read's description must state the per-read cap, because a client that " +
+      "does not know it will read a truncated window as the whole stream: " + d,
+  );
+});
