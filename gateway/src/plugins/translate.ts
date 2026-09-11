@@ -1234,11 +1234,7 @@ async function handleGatewayImpl(
       // No response AT ALL (network error / timeout before headers): there is
       // no body to normalize, so the retry detail is all we have. 502 is the
       // "upstream unreachable" default this arm has always used here.
-      return jsonError(
-        502,
-        `${route.kind}: ${detail || "upstream 502"}`,
-        errorTypeForStatus(502),
-      );
+      return jsonError(502, `${route.kind}: ${detail || "upstream 502"}`, errorTypeForStatus(502));
     }
     if (!upstream.ok) {
       // SOLID R129: this arm used to hand-roll the envelope and copy the

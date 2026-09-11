@@ -260,8 +260,7 @@ const TERMINAL_TOOLS: McpTool[] = [
         ...DEVICE_PARAM,
         limit: {
           type: "integer",
-          description:
-            "Max entries to return (default 20; live sessions are always included).",
+          description: "Max entries to return (default 20; live sessions are always included).",
         },
       },
       required: [],
