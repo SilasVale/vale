@@ -296,7 +296,7 @@ const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_history",
     description:
-      "List terminal sessions with their byte ranges: LIVE sessions AND closed ones retained in history. (This said \"closed sessions\" only, contradicting its own `limit` parameter below and the device, which always includes live sessions.)",
+      'List terminal sessions with their byte ranges: LIVE sessions AND closed ones retained in history. (This said "closed sessions" only, contradicting its own `limit` parameter below and the device, which always includes live sessions.)',
     inputSchema: {
       type: "object",
       properties: {
