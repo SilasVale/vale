@@ -1273,6 +1273,19 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
     // Round-358: live memory capacity (Settings page Memory card edits it
     // via PUT below; bytes reported in MiB for the UI).
     let mem = state.memory.limits();
+    // USAGE as well as the caps. The operator could lower a cap to below the
+    // current contents — after which the device silently starts evicting the
+    // OLDEST knowledge — with nothing in the UI able to show it was about to
+    // happen. These two numbers come from the SAME store the cap is enforced
+    // against, so the meter cannot disagree with the eviction it explains.
+    //
+    // Reported UNCONDITIONALLY, including at zero, because the caps are: a
+    // consumer must be able to divide usage by cap without special-casing an
+    // absent field. (Contrast `pending_approvals` on /api/status, which IS
+    // omitted at zero — there a non-zero value is an EVENT, whereas here zero
+    // is a legitimate reading.)
+    let mem_entries = state.memory.len();
+    let mem_bytes = state.memory.total_bytes_live();
     serde_json::json!({
         "ok": true,
         "buffer_mb": state.terminal_buf_bytes.load(std::sync::atomic::Ordering::Relaxed) / (1024 * 1024),
@@ -1282,6 +1295,8 @@ async fn api_settings_get(state: &AppState) -> serde_json::Value {
         "memory_max_entries": mem.max_entries,
         "memory_max_bytes_mb": mem.max_bytes / (1024 * 1024),
         "memory_retention_days": mem.retention_days,
+        "memory_entries": mem_entries,
+        "memory_bytes": mem_bytes,
     })
 }
 
@@ -4569,6 +4584,77 @@ mod tests {
             v["console_url"].is_null(),
             "unbound config must read back null: {v}"
         );
+        let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
+    }
+
+    /// The operator can SET a memory cap; they must be able to SEE the fill.
+    ///
+    /// `/api/settings` reported `memory_max_entries` / `memory_max_bytes_mb` /
+    /// `memory_retention_days` and nothing about usage, so a cap could be
+    /// lowered to below the current contents — after which the device begins
+    /// silently evicting the OLDEST knowledge — with no way to notice from the
+    /// UI. The only accessor that could answer it, `total_bytes_live`, was
+    /// documented "Test/reliability hook" and had exactly one caller: its own
+    /// test.
+    ///
+    /// THE ORDER OF THIS WORK MATTERED: shipping a meter before round 20's
+    /// ledger fix would have published a number that was WRONG after any edit
+    /// (undercount) or soft-delete (overcount) — a meter nobody can trust is
+    /// worse than no meter, because it drives decisions. The ledger moves with
+    /// the record now, so these two assertions can be exact rather than
+    /// approximate.
+    #[tokio::test]
+    async fn settings_reports_memory_usage_not_just_the_caps() {
+        let (st, cfg_path) = state_with_cfg("mem-usage", CFG_YAML_TOKEN_ONLY);
+
+        // Empty store: usage is present and zero, not absent. A UI that has to
+        // distinguish "0" from "field missing on an older agent" cannot render
+        // a bar; the caps are reported unconditionally, so usage is too.
+        let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
+        assert_eq!(v["memory_entries"], 0, "empty store reports 0 entries: {v}");
+        assert_eq!(v["memory_bytes"], 0, "empty store reports 0 bytes: {v}");
+        assert!(
+            v["memory_max_entries"].is_u64() && v["memory_bytes"].is_u64(),
+            "usage and cap must be the same kind of number so they can be divided: {v}"
+        );
+
+        // Two records of known size: the meter must reflect EXACTLY what the
+        // cap is measured against. An edit is included on purpose — it is the
+        // write path whose ledger was wrong before round 20.
+        let store = st.memory.clone();
+        let mk = |title: &str, content: &str| crate::plugins::memory::store::MemoryRecord {
+            id: format!("m-{title}"),
+            title: title.to_string(),
+            content: content.to_string(),
+            tags: vec![],
+            namespace: "shared".to_string(),
+            source: "test".to_string(),
+            run_id: None,
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
+            deleted: false,
+        };
+        let a = store.insert(mk("alpha", "0123456789")); // 10 bytes
+        store.insert(mk("beta", "abc")); // 3 bytes
+        store.update(&a, None, Some("0123456789ABCDEF".into()), None, None, None); // -> 16
+
+        let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
+        assert_eq!(v["memory_entries"], 2, "two live records: {v}");
+        assert_eq!(
+            v["memory_bytes"], 19,
+            "16 + 3. The meter must be the SAME ledger the byte cap evicts on — \
+             a reader that recomputes it some other way can disagree with the \
+             eviction it is supposed to explain: {v}"
+        );
+
+        // A soft-delete must leave the meter, not just the list.
+        let b = store.list(None, None, 10, false);
+        let doomed = b.iter().find(|r| r.title == "beta").unwrap().id.clone();
+        store.delete(&doomed);
+        let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;
+        assert_eq!(v["memory_entries"], 1, "tombstones are not live entries: {v}");
+        assert_eq!(v["memory_bytes"], 16, "tombstone bytes leave the meter: {v}");
+
         let _ = std::fs::remove_dir_all(cfg_path.parent().unwrap());
     }
 
