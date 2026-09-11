@@ -488,7 +488,92 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 24 (a damaged byte stopped erasing records, the
+Last updated: 2026-09-11 round 25 (the console really did keep serving a
+disproven claim — I checked the LIVE URL this time — plus the `required` axis,
+off-plan visibility, and a format gate I skipped). Commits: 71aabe17, 5124e8aa,
+plus 1.2.329.
+  (1) MY ROUND-24 COMMIT MESSAGE WAS FALSE, and a scout caught it by FETCHING THE
+  LIVE URL instead of reading the repo. Round 24 said "the console stops serving a
+  disproven claim". What the console SERVES is a TRACKED SECOND COPY of the
+  catalogue at `gateway/public/code/files/vale-gate/src/mcp-tools.ts`, and it still
+  carried the sentence round 21 disproved. It was **13 commits behind, 10 files
+  differed**, and NOTHING could see it: the mirror is refreshed only inside
+  `scripts/build.sh` at deploy time, `check-live-parity.sh` compares LIVE against
+  the MIRROR (never mirror against `src`), and CI runs `wrangler deploy --dry-run`
+  while no test mentioned `code/files` at all. A direct `wrangler deploy` — which
+  the docs ALSO prescribe — refreshes the worker and leaves the served source
+  stale, and the repo could not tell those two states apart. THAT
+  INDISTINGUISHABILITY IS THE DEFECT, more than the stale bytes.
+  (2) AND ROUND 24'S TEST HAD A WRONG PREMISE — this log's most-repeated finding
+  class. It asserted a property of `src/` while the claim was about the CONSOLE: a
+  test on the source cannot see a stale copy of the source. `code-viewer-mirror`
+  now compares the two and was RED when written, naming all ten files. It APPLIES
+  THE SCRIPT'S OWN RULES rather than restating them — the mirror is deliberately
+  NOT byte-identical (three files have the production host redacted, fail-loudly
+  counted), so the test parses the `redact` lines out of `sync-code-viewer.sh` and
+  applies them itself. One source of truth for the rules; a changed rule cannot
+  silently leave the test checking the wrong thing.
+  (3) I ALMOST REPEATED THE ERROR ONE LEVEL UP. After committing the fix I checked
+  the LIVE URL: it STILL served the old sentence, because fixing the repo mirror is
+  not deploying it. I ran the deploy and re-verified: the live copy is now
+  byte-equal to the repo mirror (same sha256 prefix), carries the 1 MiB cap, and
+  has RUNS_TOOLS it never had. The one surviving occurrence of the phrase is the
+  explanatory COMMENT, confirmed by checking it is a `//` line and not a served
+  string — a grep count alone would have read as a failure.
+  (4) THE `required` AXIS IS NOW CONTRACT-CHECKED, closing the hole that let the
+  drift through. `spec-tools.json` carried parameter NAMES only, so nothing
+  compared the arrays; it now carries `required` and a gateway test compares it in
+  BOTH directions (a required parameter the device does not require discourages a
+  valid call; a missing one turns a schema error into a runtime rejection). RED
+  when written, naming three real drifts: the console required `session_id` for
+  `terminal_execute` where the device makes it optional and has a whole non-session
+  branch — so a schema-validating client was FORBIDDEN a call the device supports —
+  and the DEVICE's own `terminal_resize` declared `rows`/`cols` required while its
+  handler had always defaulted them to 24x80. Both fixed, defaults now stated in
+  the schema, and VERIFIED ON d1: `resize required=session_id`,
+  `execute required=command`.
+  (5) TWO MORE FALSE DESCRIPTIONS, and the direction REVERSES between them, which
+  is why each is read rather than assumed. The DEVICE told AI clients `secret_set`
+  stores "in the OS keychain ... Desktop only": it is a file-backed store with a
+  keychain attempt first, and there has been no desktop build since the Tauri shell
+  was retired (round-330). The harm chain is labelled rather than measured — a
+  model that believes storage is desktop-only inlines a plaintext SSH password into
+  a command, and the audit corpus keeps full command text. Meanwhile the GATEWAY's
+  `terminal_history` said "closed sessions" only, contradicting its own `limit`
+  parameter three lines below and the device; for that one the hand-copied twin was
+  the WRONG one and the device was right.
+  (6) `plan_step` CLAIMS THE PLAN CANNOT HOLD ARE NO LONGER DROPPED. `plan_step` is
+  recorded verbatim — the device does not validate it — so a plan revised from five
+  steps to three leaves earlier claims pointing past the end. `PathView` counted
+  only `planStep === n` over the DECLARED steps, putting those in no bucket at all
+  while its own comment promised to surface "work that was never announced". They
+  get their own line rather than being folded into a numbered step: attributing one
+  to step 3 would invent a fact about which step the command served.
+  (7) I SKIPPED A GATE CI RUNS, AND CI SAID SO. The gateway has a prettier gate
+  (`npm run format:check`); I never ran it, so CI failed on `gateway (test +
+  typecheck + lint + format)` → Format while every local suite was green. That is
+  the shape of "gates I did not run", not "gates that passed", and the per-subproject
+  gate list in this repo's convention section is the checklist that would have
+  caught it. Prettier's only change was quote style; the tag was re-pointed at the
+  CI-green commit so the release workflow gates on it, and the CDN artifact was
+  unaffected because `gateway/src` is not part of the agent tgz.
+  (8) RELEASED 1.2.329. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the FIFTH consecutive release. Verified on d1 by effect: `release:
+  1.2.329` and both `required` arrays answering correctly.
+  (9) SCOUT FINDINGS NOT ACTED ON: `mcp-browser.ts`'s timeout clamp is justified by
+  a parameter no bridge-routed tool advertises (`browser_run_script` is
+  device-direct), so the 300 s clamp is unreachable and the comment's reasoning
+  rests on an argument that cannot arrive — same rot, no behavioural consequence
+  established. The scout also swept ALL shared tools so the gap is closed: the
+  remainder is OMISSION (the execute state machine, the 120/600 browser timeout,
+  the diag cap 200), not falsehood, and it rejected its own candidate #7 (a
+  write-time bound on a LIVE session file rewrites a file a live writer holds open —
+  the round-11/116 defect class) with that reason.
+  Gates: agent 570 default / 621 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 762 (was 761) + format; panel 468 (was 467) + build.
+
+Previous round: 2026-09-11 round 24 (a damaged byte stopped erasing records, the
 console stopped serving a claim round 21 disproved, and a recorded session can
 now say what it was — then RELEASED). Commit: ddfc4301, plus 1.2.328.
   (1) THE ROUND'S SHAPE, and it is now the dominant one: a delegated audit of the
