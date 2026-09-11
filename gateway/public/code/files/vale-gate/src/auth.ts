@@ -18,6 +18,26 @@
  *           (the single Worker-secret trust anchor).
  */
 
+/** PBKDF2 iteration count.
+ *
+ * ⚠️ **THIS CONSTANT IS BAKED INTO EVERY STORED HASH.** A user record holds
+ * only `{ salt, passwordHash }` (store/users.ts) — no iteration count and no
+ * algorithm version — and `verifyPassword` derives with the value below. So
+ * RAISING this number (the normal hardening direction) makes every existing
+ * hash stop matching: nobody can log in, and `verifyPassword` cannot tell
+ * "wrong password" from "the constants moved", because it only compares
+ * derived bits.
+ *
+ * CONTRAST — `SESSION_TTL_MS` below is safely changeable, and the difference
+ * is worth understanding before "fixing" anything here: the session token
+ * carries its own `exp` INSIDE the signed payload, so a changed TTL applies
+ * to newly issued tokens and old ones keep the expiry they were minted with.
+ * The password hash has no equivalent self-description.
+ *
+ * Migration recipe (NOT implemented — needs sign-off, see the ledger's Open
+ * threads): persist the iteration count beside the hash, verify against the
+ * STORED value, then re-hash on the next successful login to upgrade in place.
+ * `auth.test.mjs` pins the current value and this consequence. */
 export const PASSWORD_ITERATIONS = 100000;
 
 export function randomHex(bytes: number): string {
@@ -99,6 +119,10 @@ function timingSafeEqual(a: string, b: string): boolean {
 /* ---- Sessions (HMAC-signed, key = ADMIN_PASSWORD) ---- */
 
 export const SESSION_COOKIE = "ag_session";
+/** Session lifetime. SAFELY CHANGEABLE, unlike `PASSWORD_ITERATIONS` above:
+ *  the value is not read at VERIFY time — it is written into the signed
+ *  payload as `exp` when a token is issued, and verification trusts that
+ *  embedded expiry. Changing this therefore affects only newly issued tokens. */
 export const SESSION_TTL_MS = 24 * 3600 * 1000;
 
 async function hmacKey(secret: string): Promise<CryptoKey> {

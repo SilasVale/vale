@@ -1,4 +1,5 @@
-// Device MCP tool inventory (name + owning plugin + parameter names),
+// Device MCP tool inventory (name + owning plugin + parameter names +
+// required),
 // generated from
 // the live PluginRegistry by web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.
 // The gateway MCP registry contract test reads this file.
@@ -9,12 +10,14 @@
     "params": [
       "force"
     ],
-    "plugin": "update"
+    "plugin": "update",
+    "required": []
   },
   {
     "name": "browser_pw_info",
     "params": [],
-    "plugin": "playwright"
+    "plugin": "playwright",
+    "required": []
   },
   {
     "name": "browser_run_script",
@@ -23,7 +26,10 @@
       "script",
       "timeout_secs"
     ],
-    "plugin": "playwright"
+    "plugin": "playwright",
+    "required": [
+      "script"
+    ]
   },
   {
     "name": "mcp_client_call",
@@ -31,7 +37,10 @@
       "arguments",
       "tool"
     ],
-    "plugin": "mcp-client"
+    "plugin": "mcp-client",
+    "required": [
+      "tool"
+    ]
   },
   {
     "name": "mcp_client_connect",
@@ -40,31 +49,38 @@
       "transport",
       "url"
     ],
-    "plugin": "mcp-client"
+    "plugin": "mcp-client",
+    "required": []
   },
   {
     "name": "mcp_client_disconnect",
     "params": [],
-    "plugin": "mcp-client"
+    "plugin": "mcp-client",
+    "required": []
   },
   {
     "name": "mcp_client_list",
     "params": [],
-    "plugin": "mcp-client"
+    "plugin": "mcp-client",
+    "required": []
   },
   {
     "name": "memory_delete",
     "params": [
       "id"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": [
+      "id"
+    ]
   },
   {
     "name": "memory_export",
     "params": [
       "namespace"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": []
   },
   {
     "name": "memory_list",
@@ -74,7 +90,8 @@
       "namespace",
       "tag"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": []
   },
   {
     "name": "memory_save",
@@ -85,7 +102,11 @@
       "tags",
       "title"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": [
+      "content",
+      "title"
+    ]
   },
   {
     "name": "memory_search",
@@ -94,7 +115,10 @@
       "namespace",
       "query"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": [
+      "query"
+    ]
   },
   {
     "name": "memory_update",
@@ -106,7 +130,10 @@
       "tags",
       "title"
     ],
-    "plugin": "memory"
+    "plugin": "memory",
+    "required": [
+      "id"
+    ]
   },
   {
     "name": "page_view",
@@ -114,7 +141,10 @@
       "page",
       "target"
     ],
-    "plugin": "design"
+    "plugin": "design",
+    "required": [
+      "page"
+    ]
   },
   {
     "name": "run_begin",
@@ -122,7 +152,8 @@
       "goal",
       "label"
     ],
-    "plugin": "runs"
+    "plugin": "runs",
+    "required": []
   },
   {
     "name": "run_end",
@@ -130,21 +161,30 @@
       "outcome",
       "run_id"
     ],
-    "plugin": "runs"
+    "plugin": "runs",
+    "required": [
+      "run_id"
+    ]
   },
   {
     "name": "secret_delete",
     "params": [
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "target"
+    ]
   },
   {
     "name": "secret_get",
     "params": [
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "target"
+    ]
   },
   {
     "name": "secret_set",
@@ -152,7 +192,11 @@
       "password",
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "password",
+      "target"
+    ]
   },
   {
     "name": "sftp",
@@ -167,7 +211,13 @@
       "remote_path",
       "user"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "host",
+      "op",
+      "remote_path",
+      "user"
+    ]
   },
   {
     "name": "system_file_download",
@@ -175,7 +225,11 @@
       "path",
       "url"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path",
+      "url"
+    ]
   },
   {
     "name": "system_file_list",
@@ -183,7 +237,10 @@
       "path",
       "recursive"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path"
+    ]
   },
   {
     "name": "system_file_read",
@@ -193,21 +250,30 @@
       "path",
       "raw"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path"
+    ]
   },
   {
     "name": "system_file_stat",
     "params": [
       "path"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path"
+    ]
   },
   {
     "name": "system_file_upload",
     "params": [
       "path"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path"
+    ]
   },
   {
     "name": "system_file_write",
@@ -217,7 +283,10 @@
       "path",
       "text"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "path"
+    ]
   },
   {
     "name": "system_net_test",
@@ -226,7 +295,10 @@
       "port",
       "timeout_secs"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": [
+      "host"
+    ]
   },
   {
     "name": "system_process_kill",
@@ -234,21 +306,26 @@
       "name",
       "pid"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": []
   },
   {
     "name": "system_process_list",
     "params": [
       "name"
     ],
-    "plugin": "system"
+    "plugin": "system",
+    "required": []
   },
   {
     "name": "terminal_close",
     "params": [
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_connect_saved",
@@ -257,24 +334,32 @@
       "id",
       "rows"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "id"
+    ]
   },
   {
     "name": "terminal_diag_read",
     "params": [],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_diag_write",
     "params": [
       "line"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "line"
+    ]
   },
   {
     "name": "terminal_env",
     "params": [],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_execute",
@@ -290,21 +375,28 @@
       "session_id",
       "timeout_secs"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "command"
+    ]
   },
   {
     "name": "terminal_forget_saved",
     "params": [
       "id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "id"
+    ]
   },
   {
     "name": "terminal_history",
     "params": [
       "limit"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_jobs",
@@ -312,17 +404,20 @@
       "job_id",
       "wait_secs"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_list",
     "params": [],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_list_ports",
     "params": [],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_open",
@@ -338,7 +433,10 @@
       "stop_bits",
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "kind"
+    ]
   },
   {
     "name": "terminal_plan",
@@ -347,7 +445,10 @@
       "run_id",
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_read",
@@ -356,7 +457,10 @@
       "offset",
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_resize",
@@ -365,12 +469,16 @@
       "rows",
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_saved_connections",
     "params": [],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": []
   },
   {
     "name": "terminal_screen",
@@ -378,21 +486,30 @@
       "lines",
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_secret_delete",
     "params": [
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "target"
+    ]
   },
   {
     "name": "terminal_secret_get",
     "params": [
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "target"
+    ]
   },
   {
     "name": "terminal_secret_set",
@@ -400,14 +517,21 @@
       "password",
       "target"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "password",
+      "target"
+    ]
   },
   {
     "name": "terminal_select",
     "params": [
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   },
   {
     "name": "terminal_sftp",
@@ -422,7 +546,13 @@
       "remote_path",
       "user"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "host",
+      "op",
+      "remote_path",
+      "user"
+    ]
   },
   {
     "name": "terminal_write",
@@ -431,6 +561,9 @@
       "data_base64",
       "session_id"
     ],
-    "plugin": "terminal"
+    "plugin": "terminal",
+    "required": [
+      "session_id"
+    ]
   }
 ]

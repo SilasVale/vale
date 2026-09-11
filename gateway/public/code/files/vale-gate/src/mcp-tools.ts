@@ -48,6 +48,23 @@ const DEVICE_PARAM: Record<string, unknown> = {
   },
 };
 
+/**
+ * The `run_id` parameter, shared by every browser control tool.
+ *
+ * One definition rather than seven copies: these tools all reach the device
+ * through the SAME bridge (`mcp-browser.ts`), and the bridge lifts `run_id` out
+ * of the playwright arguments to the device call's top level. A tool whose
+ * schema omitted it could not be attributed to a run — and a per-tool copy is
+ * how such an omission survives review.
+ */
+const RUN_PARAM: Record<string, unknown> = {
+  run_id: {
+    type: "string",
+    description:
+      "Optional: the id returned by run_begin, naming the execution this browser action belongs to. One run spans browser actions AND terminal commands, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id run_begin gave you.",
+  },
+};
+
 const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_open",
@@ -91,6 +108,16 @@ const TERMINAL_TOOLS: McpTool[] = [
           type: "integer",
           description: "(serial) Stop bits 1 or 2. Overrides the target string.",
         },
+        key_path: {
+          type: "string",
+          description:
+            "(ssh) Path to a private key file. When set, public-key auth is used; password (if any) is the key passphrase.",
+        },
+        auto_reconnect: {
+          type: "boolean",
+          description:
+            "(serial) Auto-reconnect when the port disappears (unplug / device reboot): the session stays open and re-opens the SAME port with the SAME framing when it reappears. Default false.",
+        },
       },
       required: ["kind"],
     },
@@ -125,8 +152,44 @@ const TERMINAL_TOOLS: McpTool[] = [
           description:
             "(fallback) Quiet period in ms before considering output complete. Default 200.",
         },
+        run_in_background: {
+          type: "boolean",
+          description:
+            "(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false.",
+        },
+        intent: {
+          type: "string",
+          description:
+            "Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself.",
+        },
+        considered: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something.",
+        },
+        plan_step: {
+          type: "integer",
+          description:
+            "Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step.",
+        },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim.",
+        },
+        approval_id: {
+          type: "string",
+          description:
+            "Optional: the approval id from a result whose state was `awaiting_approval`. If the operator has since approved, the command runs without asking again; the permit covers exactly this command text, once. Omit it for a normal execute.",
+        },
       },
-      required: ["session_id", "input"],
+      // `session_id` is NOT required: the device makes it optional and has a
+      // whole non-session branch, and the relay never injects one — so requiring
+      // it here forbade a schema-validating client from making a call the device
+      // supports. The device's own `required` is `["command"]`, which is `input`
+      // on this side of the declared rename.
+      required: ["input"],
     },
   },
   {
@@ -154,7 +217,13 @@ const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_read",
     description:
-      "Read buffered output from a terminal session. Non-destructive cursor; `offset` is an ABSOLUTE byte offset (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. ANSI escapes stripped by default; pass clean:false for raw bytes.",
+      // The claim that `offset: 0` "re-reads from the beginning" was FALSE past
+      // 1 MiB of spill and was corrected on the device in round 21 — while this
+      // hand-copied string kept serving it to every console client. A single
+      // read returns AT MOST 1 MiB and then the window's TAIL, so a `start`
+      // greater than the offset you asked for is the only signal that the head
+      // was withheld, and no offset can retrieve it.
+      "Read buffered output from a terminal session. Non-destructive cursor; `offset` is an ABSOLUTE byte offset and `start`/`end` are the absolute span actually returned. A single read returns AT MOST 1 MiB: for a longer stream the OLDEST bytes in the window are withheld, so a `start` GREATER than your `offset` means the head is unavailable and cannot be fetched by any offset. ANSI escapes stripped by default; pass clean:false for raw bytes.",
     inputSchema: {
       type: "object",
       properties: {
@@ -201,13 +270,41 @@ const TERMINAL_TOOLS: McpTool[] = [
     },
   },
   {
-    name: "terminal_history",
+    name: "terminal_plan",
     description:
-      "List closed sessions retained in history with their byte ranges (for terminal_read on finished sessions).",
+      "Declare, revise, clear or read this session's PLAN — the steps you intend to take, in order. Call it before starting a multi-step task so the operator can see what you are about to do and judge it; call it again with a revised list when the plan changes. Pass an empty array to clear it. With `plan` omitted it just returns the current plan. Steps are short labels, not explanations — put the reasoning for a specific command in terminal_execute's `intent`, and name the step a command advances with terminal_execute's `plan_step`.",
     inputSchema: {
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        session_id: { type: "string", description: "The session this plan is for." },
+        plan: {
+          type: "array",
+          items: { type: "string" },
+          description:
+            "The steps, in order (max 24, each a short line). An empty array CLEARS the plan. Omit the key entirely to read the current plan without changing it.",
+        },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this plan belongs to. A declared plan belongs to the run that declared it, so passing the id lets an operator see what a run said it would do next to what it actually did.",
+        },
+      },
+      required: ["session_id"],
+    },
+  },
+  {
+    name: "terminal_history",
+    description:
+      "List terminal sessions with their byte ranges: LIVE sessions AND closed ones retained in history. (This said \"closed sessions\" only, contradicting its own `limit` parameter below and the device, which always includes live sessions.)",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        limit: {
+          type: "integer",
+          description: "Max entries to return (default 20; live sessions are always included).",
+        },
       },
       required: [],
     },
@@ -331,6 +428,8 @@ const TERMINAL_TOOLS: McpTool[] = [
       properties: {
         ...DEVICE_PARAM,
         id: { type: "string" },
+        rows: { type: "integer", description: "Override the saved row count." },
+        cols: { type: "integer", description: "Override the saved column count." },
       },
       required: ["id"],
     },
@@ -369,6 +468,11 @@ const TERMINAL_TOOLS: McpTool[] = [
         ...DEVICE_PARAM,
         script: { type: "string" },
         timeout_secs: { type: "integer" },
+        run_id: {
+          type: "string",
+          description:
+            "Optional: the id returned by run_begin, naming the execution this browser action belongs to. One run spans browser actions AND terminal commands. This is NOT VALE_RUN_ID (the per-call env stem used for screenshot namespacing) — pass back the id run_begin gave you.",
+        },
       },
       required: ["script"],
     },
@@ -437,6 +541,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         url: { type: "string" },
       },
       required: ["url"],
@@ -449,6 +554,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
       },
       required: [],
     },
@@ -460,6 +566,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         full_page: { type: "boolean" },
       },
       required: [],
@@ -473,6 +580,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         element_ref: {
           type: "integer",
           description: "snapshot ref number (rendered as e<N> target)",
@@ -488,6 +596,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         element_ref: { type: "integer" },
         text: { type: "string" },
       },
@@ -501,6 +610,7 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
         condition: { type: "string" },
         timeout_s: { type: "integer" },
       },
@@ -514,12 +624,69 @@ const BROWSER_TOOLS: McpTool[] = [
       type: "object",
       properties: {
         ...DEVICE_PARAM,
+        ...RUN_PARAM,
       },
       required: [],
     },
   },
 ];
 
+/**
+ * RUN IDENTITY — declaring the boundaries of one AI execution on the device.
+ *
+ * A run crosses the terminal/browser boundary, so these belong to no existing
+ * group; they are device-direct (relayed to `/api/tools/<name>`) and must also
+ * match `isDeviceDirectTool()` in mcp.ts, which is a SEPARATE gate: registering
+ * here without that predicate reaches `throw ToolErr(TOOL_ERROR, "No route for
+ * registered tool …")` at call time.
+ *
+ * `run_id` is a LABEL the device mints, never a credential — see
+ * `agent/src/runs.rs`. The console advertises these so a model can group its own
+ * work; the gateway stores nothing.
+ */
+const RUNS_TOOLS: McpTool[] = [
+  {
+    name: "run_begin",
+    description:
+      "Declare the start of ONE run — one execution of your work on this device — and get back the `run_id` that names it. Call it when you begin a piece of work that spans more than a single command, then pass the id to run_end when you stop. The device cannot tell two AIs apart (the token identifies the device, not the caller), so this declared boundary is what lets an operator see that a set of commands and browser actions belonged to one execution rather than to the day's whole traffic. The id is minted by the device and embeds its start time; store it and pass it back verbatim.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        label: {
+          type: "string",
+          description:
+            'Optional: a short human-readable name for this run, e.g. "provision the ONU on VLAN 100". Shown to the operator, so keep it to a phrase. A blank label is recorded as absent, not as an empty string.',
+        },
+        goal: {
+          type: "string",
+          description:
+            "Optional: the objective this run is pursuing, when you know it. Distinct from the session goal the OPERATOR sets — one goal can span several runs (a retry after a failure), and a run can have no goal at all.",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "run_end",
+    description:
+      "Declare that a run started with run_begin is finished, so an operator sees a closed interval instead of work that never stopped. Pass back the `run_id` run_begin gave you. A run left unclosed is NOT an error — the device renders it as open with the extent of the events it actually carries, because a client may still be working, may have stopped, or the agent may have restarted. `known` in the reply says whether this id was ever minted here; it is information for you, never a permission.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        run_id: { type: "string", description: "The id returned by run_begin." },
+        outcome: {
+          type: "string",
+          description:
+            'Optional: how it ended, in a word or a short phrase ("done", "failed: ONU did not register"). Omit it rather than guessing — an absent outcome is rendered as nothing, never as a failure.',
+        },
+      },
+      required: ["run_id"],
+    },
+  },
+];
+
 export function allMcpTools(): McpTool[] {
-  return [...TERMINAL_TOOLS, ...SYSTEM_TOOLS, ...BROWSER_TOOLS];
+  return [...TERMINAL_TOOLS, ...SYSTEM_TOOLS, ...BROWSER_TOOLS, ...RUNS_TOOLS];
 }

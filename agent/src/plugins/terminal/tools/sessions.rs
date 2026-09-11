@@ -452,8 +452,8 @@ pub(super) fn tool_resize(terminal_mgr: &Arc<TerminalManager>) -> ToolDef {
     let terminal_mgr = terminal_mgr.clone();
     ToolDef::new(
         "terminal_resize",
-        "Resize a terminal session (PTY or SSH). Updates rows and columns.",
-        json!({"type":"object","properties":{"session_id":{"type":"string"},"rows":{"type":"integer"},"cols":{"type":"integer"}},"required":["session_id","rows","cols"]}),
+        "Resize a terminal session (PTY or SSH). `rows`/`cols` are OPTIONAL and default to 24x80 — the handler has always defaulted them, so declaring them required was a schema claim the code contradicted, and it forbade a call the device answers.",
+        json!({"type":"object","properties":{"session_id":{"type":"string"},"rows":{"type":"integer","description":"Default 24 when omitted."},"cols":{"type":"integer","description":"Default 80 when omitted."}},"required":["session_id"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             async move {

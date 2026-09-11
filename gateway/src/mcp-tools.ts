@@ -184,7 +184,12 @@ const TERMINAL_TOOLS: McpTool[] = [
             "Optional: the approval id from a result whose state was `awaiting_approval`. If the operator has since approved, the command runs without asking again; the permit covers exactly this command text, once. Omit it for a normal execute.",
         },
       },
-      required: ["session_id", "input"],
+      // `session_id` is NOT required: the device makes it optional and has a
+      // whole non-session branch, and the relay never injects one — so requiring
+      // it here forbade a schema-validating client from making a call the device
+      // supports. The device's own `required` is `["command"]`, which is `input`
+      // on this side of the declared rename.
+      required: ["input"],
     },
   },
   {
@@ -291,7 +296,7 @@ const TERMINAL_TOOLS: McpTool[] = [
   {
     name: "terminal_history",
     description:
-      "List closed sessions retained in history with their byte ranges (for terminal_read on finished sessions).",
+      "List terminal sessions with their byte ranges: LIVE sessions AND closed ones retained in history. (This said \"closed sessions\" only, contradicting its own `limit` parameter below and the device, which always includes live sessions.)",
     inputSchema: {
       type: "object",
       properties: {

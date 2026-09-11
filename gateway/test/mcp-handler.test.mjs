@@ -366,7 +366,14 @@ test("contract: terminal_execute schema/quiet default match the agent", async ()
   // quiet_ms default must be the agent's 200ms, not a gateway invention.
   assert.equal(t.inputSchema.properties.quiet_ms.description.includes("200"), true);
   // round-160: device is OPTIONAL (single-device default resolution).
-  assert.equal(t.inputSchema.required.join(","), "session_id,input");
+  //
+  // `session_id` is optional too — the DEVICE says so, and it has a whole
+  // non-session branch. This assertion used to pin `session_id,input`, which
+  // made the console forbid a call the device answers; the device's own
+  // `required` is `["command"]`, which is `input` after the declared rename.
+  // (The paired contract test above now compares `required` in both directions,
+  // so this one only has to state what the console intends.)
+  assert.equal(t.inputSchema.required.join(","), "input");
 });
 
 // round-2026-09-08: callTerminalToolOnce's device path is now the mechanical
@@ -720,5 +727,57 @@ test("contract: terminal_read does not re-state the disproven 're-reads from the
     /1 MiB|1 MB/i.test(d),
     "terminal_read's description must state the per-read cap, because a client that " +
       "does not know it will read a truncated window as the whole stream: " + d,
+  );
+});
+
+// ── contract: `required` must agree, in BOTH directions ────────────────────
+//
+// The two tests above compare parameter NAMES. That axis let a real lie through:
+// the console advertised `terminal_execute` as requiring `session_id`, while the
+// device makes it OPTIONAL and requires only `command` — so a schema-validating
+// client was forbidden a call the device explicitly supports (there is a whole
+// non-session branch on the device side, and the relay never injects a session
+// id). Nothing compared the arrays, so nothing could see it.
+//
+// Both directions matter and they fail differently:
+//   * a required parameter the device does not require DISCOURAGES valid calls —
+//     the client refuses to make a call it would have been allowed to make;
+//   * a required parameter the device DOES require but the console omits means a
+//     client sends an incomplete call and gets a runtime rejection instead of a
+//     schema one.
+test("contract: the console's `required` matches the device's, after renames", async () => {
+  const { allMcpTools } = await import("../src/mcp-tools.ts");
+  const byName = new Map(allMcpTools().map((t) => [t.name, t]));
+  // Same declared seams as the name-contract tests above.
+  const GATEWAY_ONLY = new Set(["device"]);
+  const RENAMES = { terminal_execute: { input: "command" } };
+
+  const problems = [];
+  for (const t of deviceTools()) {
+    const tool = byName.get(t.name);
+    if (!tool || NOT_EXPOSED[t.name]) continue;
+    // The console's public name for a renamed device parameter.
+    const publicName = (deviceParam) => {
+      const map = RENAMES[t.name] || {};
+      for (const [pub, dev] of Object.entries(map)) if (dev === deviceParam) return pub;
+      return deviceParam;
+    };
+    const expectRequired = new Set(
+      (t.required || []).filter((p) => !GATEWAY_ONLY.has(p)).map(publicName),
+    );
+    const advertised = new Set(tool.inputSchema.required || []);
+    for (const p of expectRequired) {
+      if (!advertised.has(p)) problems.push(`${t.name}.${p} required by device, not advertised`);
+    }
+    for (const p of advertised) {
+      if (!expectRequired.has(p)) problems.push(`${t.name}.${p} advertised required, device optional`);
+    }
+  }
+  assert.deepEqual(
+    problems,
+    [],
+    "the console's `required` list disagrees with the device's, so a " +
+      "schema-validating client is told to send a call the device would reject or " +
+      `forbidden one it would accept: ${problems.join(", ")}`,
   );
 });

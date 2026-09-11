@@ -66,7 +66,23 @@ export async function isModelUsable(env: any, model: string, uid: string): Promi
 // out of balance (402 on every request) and its V4 names are retired, so the
 // default moved to Command Code's V4.1 Flash, the model the whole catalog
 // standardised on (and the one the console's health badge recommends).
-const DEFAULT_ROUTE_MODEL = "cm/deepseek/deepseek-v4.1-flash";
+export const DEFAULT_ROUTE_MODEL = "cm/deepseek/deepseek-v4.1-flash";
+
+/** The fallback ladder for `auto`, in PRIORITY ORDER.
+ *
+ * Exported so the registry can check it (SOLID R121). The ORDER here is the
+ * meaning — the default channel first, then alternatives — so this is NOT
+ * derived from MODELS the way ROUTE_INFO's per-route lists are. What it must
+ * be is SUBSET of the catalogue: a ladder entry that is not advertised (a
+ * typo, or a model removed from the catalogue) would be a fallback that can
+ * never satisfy `isModelUsable`, and the ladder would skip it in silence. */
+export const AUTO_FALLBACK_LADDER: string[] = [
+  DEFAULT_ROUTE_MODEL,
+  "qw/qwen3.8-max-preview",
+  "qw/qwen3.8-flash",
+  "og/deepseek-v4.1-flash",
+  "or/openai/gpt-5.6-luna:floor[1m]",
+];
 
 /**
  * Resolve Claude Code's fixed `auto` model name to this user's chosen
@@ -81,13 +97,7 @@ export async function resolveAutoModel(env: any, uid: string): Promise<string> {
   // now-unreachable index.ts copy, so a BYOK user without a DeepSeek key
   // still got a guaranteed 502 on model=auto. Fall back to the first
   // usable channel.
-  for (const m of [
-    DEFAULT_ROUTE_MODEL,
-    "qw/qwen3.8-max-preview",
-    "qw/qwen3.8-flash",
-    "og/deepseek-v4.1-flash",
-    "or/openai/gpt-5.6-luna:floor[1m]",
-  ]) {
+  for (const m of AUTO_FALLBACK_LADDER) {
     if (await isModelUsable(env, m, uid)) return m;
   }
   return DEFAULT_ROUTE_MODEL;

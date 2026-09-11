@@ -2268,16 +2268,34 @@ mod tests {
                     .map(|o| o.keys().cloned().collect())
                     .unwrap_or_default();
                 params.sort();
+                // `required` AS WELL AS the parameter names. Names alone let a
+                // whole class of contract lie through: the gateway advertised
+                // `terminal_execute` as requiring `session_id` where the device
+                // makes it optional and requires only `command`, so a
+                // schema-validating client was FORBIDDEN a call the device
+                // supports. Nothing compared the arrays, so nothing could see it.
+                let mut required: Vec<String> = t["schema"]["required"]
+                    .as_array()
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|v| v.as_str())
+                            .map(|v| v.to_string())
+                            .collect()
+                    })
+                    .unwrap_or_default();
+                required.sort();
                 entries.push(serde_json::json!({
                     "name": t["name"].as_str().unwrap(),
                     "plugin": p["name"].as_str().unwrap(),
                     "params": params,
+                    "required": required,
                 }));
             }
         }
         entries.sort_by(|a, b| a["name"].as_str().cmp(&b["name"].as_str()));
         let rendered = format!(
-            "// Device MCP tool inventory (name + owning plugin + parameter names),\n\
+            "// Device MCP tool inventory (name + owning plugin + parameter names +\n\
+             // required),\n\
              // generated from\n\
              // the live PluginRegistry by web::tests::spec_snapshot_pins_every_device_tool_for_the_gateway_contract.\n\
              // The gateway MCP registry contract test reads this file.\n\

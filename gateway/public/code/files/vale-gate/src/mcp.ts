@@ -207,6 +207,13 @@ export function isDeviceDirectTool(name: string): boolean {
     name.startsWith("terminal_") ||
     name.startsWith("secret_") ||
     name.startsWith("system_") ||
+    // RUN IDENTITY — the device-minted run boundaries. Registered in
+    // mcp-tools.ts AND routed here, because the two are separate gates: a name
+    // in only the first is registered-but-uncallable, failing at call time with
+    // "No route for registered tool …". The prefix is safe because the DEVICE's
+    // registry is the contract — a `run_*` name the device does not serve fails
+    // at the device, which is the honest place for it to fail.
+    name.startsWith("run_") ||
     name === "browser_pw_info" ||
     name === "browser_run_script"
   );

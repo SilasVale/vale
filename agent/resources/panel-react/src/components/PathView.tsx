@@ -87,7 +87,7 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   const [recipeMsg, setRecipeMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   if (path.steps.length === 0) {
-    return (
+  return (
       <div className="path-view">
         <RunStrip />
         <div className="path-empty">
@@ -133,6 +133,16 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
     }
   };
 
+  // Claims pointing at a step this plan does not have. Computed here rather than
+  // inside the map because it is a property of the WHOLE plan, not of one step —
+  // and because a `planStep` of 0 or negative is equally unattributable.
+  const offPlan =
+    plan && plan.length > 0
+      ? path.steps.filter(
+          (st) => st.planStep != null && (st.planStep < 1 || st.planStep > plan.length),
+        )
+      : [];
+
   return (
     <div className="path-view">
       <RunStrip />
@@ -146,7 +156,16 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
           what the agent said it would DO, and below each command states which
           step it served — so a step nobody claimed is visible as work that was
           never announced, and a step nobody did is visible as an abandoned
-          intention. That comparison is the whole reason both are recorded. */}
+          intention. That comparison is the whole reason both are recorded.
+
+          AND THE CLAIMS THE PLAN CANNOT HOLD. A command may name a step the plan
+          does not have — a plan revised from 5 steps to 3 leaves earlier claims
+          pointing past the end, and `plan_step` is recorded verbatim because the
+          device does not validate it. Counting only `planStep === n` for the
+          DECLARED steps put those claims in no bucket at all: they were counted
+          on the Activity row and NOWHERE here, which is exactly the "work that
+          was never announced" this block promises to surface. They get their own
+          line rather than being silently dropped. */}
       {plan && plan.length > 0 && (
         <div className="path-plan">
           <span className="path-plan-label">Plan</span>
@@ -176,6 +195,19 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
               );
             })}
           </ol>
+          {offPlan.length > 0 && (
+            // Claims that point at a step this plan does not have. Shown as
+            // THEIR OWN line, not folded into a numbered step: attributing them
+            // to some existing step would invent a fact, and dropping them would
+            // lose the signal.
+            <p className="path-plan-offplan" data-count={offPlan.length}>
+              <span className="path-plan-n">—</span>
+              {offPlan.length} command{offPlan.length === 1 ? "" : "s"} claimed a step
+              this plan does not have (
+              {[...new Set(offPlan.map((st) => st.planStep))].sort((a, b) => (a ?? 0) - (b ?? 0)).join(", ")}
+              ) — it was revised after they were attributed.
+            </p>
+          )}
         </div>
       )}
       <header className="path-summary">

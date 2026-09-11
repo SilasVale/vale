@@ -586,6 +586,16 @@
   color: var(--chrome-ink-dim);
 }
 .path-plan-count[data-zero="yes"] { color: var(--danger-on-soft); }
+/* Claims pointing at a step the plan does not have. Set apart from the numbered
+   steps because it is not one — it is the plan having moved under a claim. */
+.path-plan-offplan {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  margin: 6px 0 0;
+  font: 400 11px var(--font);
+  color: var(--danger-on-soft);
+}
 
 /* The goal in the PATH header — beside the summary, never as a verdict. */
 .path-goal {

@@ -465,6 +465,24 @@ describe("the plan in the path", () => {
     expect(open[0].className).toContain("open");
   });
 
+  it("does NOT silently drop a claim of a step the plan does not have", () => {
+    // `plan_step` is recorded VERBATIM — the device does not validate it against
+    // the declared plan — so a plan revised from 5 steps to 3 leaves earlier
+    // claims pointing past the end. Counting only `planStep === n` over the
+    // DECLARED steps put those in no bucket at all: they were counted on the
+    // Activity row and NOWHERE in the plan view, which is exactly the "work that
+    // was never announced" this block promises to surface.
+    render(<PathView events={withPlan([1, 5])} plan={["one", "two", "three"]} />);
+    const off = document.querySelector(".path-plan-offplan");
+    expect(off, "an out-of-range claim must be visible, not dropped").not.toBeNull();
+    expect(off!.getAttribute("data-count")).toBe("1");
+    expect(off!.textContent).toContain("5");
+    // It is NOT credited to any real step: attributing it to step 3 would invent
+    // a fact about which step the command served.
+    const counts = [...document.querySelectorAll(".path-plan-count")].map((e) => e.textContent);
+    expect(counts).toEqual(["1", "0", "0"]);
+  });
+
   it("renders no plan block at all when the agent declared none", () => {
     // Most sessions have no plan (no client sends one yet); an empty block would
     // be noise on every run.

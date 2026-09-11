@@ -45,7 +45,7 @@ import {
   scanTopLevelModel,
   estimateTokens,
 } from "../body-scan.ts";
-import { jsonOk, jsonError, CORS_HEADERS, stampCors } from "../http.ts";
+import { jsonOk, jsonError, CORS_HEADERS, stampCors, errorTypeForStatus } from "../http.ts";
 import {
   MODELS,
   OG_FORCE_US_PROXY,
@@ -56,6 +56,9 @@ import {
   VERIFY_PATH,
   museResponsesExit,
   usProxyBase,
+  isResponsesOnlyModel,
+  reasoningMaxRawFor,
+  reasoningMaxParsedFor,
 } from "../channels.ts";
 // Route table lives in the shared upstream module (also used by index.ts's
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
@@ -231,7 +234,7 @@ async function upstreamFetchFailedResponse(
   return jsonError(
     failStatus,
     `upstream ${failStatus} (${kind}): ${detail}`,
-    failStatus === 429 ? "rate_limit_error" : "api_error",
+    errorTypeForStatus(failStatus),
   );
 }
 
@@ -240,22 +243,108 @@ async function upstreamFetchFailedResponse(
  * {"detail":{...}} (AMD Radeon's FastAPI envelope), scrub any leaked key,
  * keep the upstream's OWN error.type when it is a known Anthropic type
  * (Claude Code keys retry/auth flows off it), and carry Retry-After when
- * present. Shared by the three /v1 arms' !upstream.ok handlers — they used
- * to each maintain a copy of the unwrap + KNOWN-whitelist logic (round-512
- * fixed one arm and the others had to be walked to parity by hand).
+ * present.
+ *
+ * CONSOLIDATION IS INCOMPLETE — the round-512 comment here used to claim this
+ * was "shared by the three /v1 arms' !upstream.ok handlers", but only ONE arm
+ * calls it. Two translate arms still hand-roll their own envelope, and both
+ * are measurably WORSE than this helper:
+ *
+ *   * the nv/gmi arm (search `route.kind === "nvidia" && isKeyMissing`) copies
+ *     `err.error?.message || err.message` into the client-visible message with
+ *     NO scrubKeys call. A provider that echoes the submitted credential in a
+ *     401 body ("Invalid API key provided: sk-live-…") therefore sends that
+ *     credential straight back to the caller. Verified on this branch:
+ *     scrubKeys turns `sk-live-ABCDEF1234567890` into `***`, and the arm does
+ *     not call it.
+ *   * the og/cm arm answers `${label}: ${detail || upstream N}` — it drops the
+ *     upstream's own message AND the Retry-After header, so a 429 there cannot
+ *     be paced by the client even though its sibling branches carry it (that
+ *     arm's own round-116 comment records fixing the status/type half of
+ *     exactly this).
+ *
+ * Both are CLIENT-VISIBLE behaviour changes, so rule 1 keeps them unfixed here:
+ * they are pinned by `upstream_error_envelope_gaps_are_pinned` and recorded in
+ * docs/solid-program.md → Open threads for a human decision.
  */
-async function upstreamBodyErrorResponse(upstream: any): Promise<Response> {
-  let message = `Upstream ${upstream.status}`;
+// Exported for direct pins (SOLID R129) under a `__test` name: the envelope
+// decides what a caller SEES on every upstream failure, including whether a
+// provider-echoed credential is redacted, and that must be testable without
+// standing up an upstream. The second caller (the nv/gmi arm) is what made the
+// missing scrubKeys reachable in the first place.
+export async function __testUpstreamBodyErrorResponse(
+  upstream: any,
+  label = "",
+  secrets: (string | null | undefined)[] = [],
+): Promise<Response> {
+  return upstreamBodyErrorResponse(upstream, label, secrets);
+}
+
+/** Redact the EXACT credential strings a request carried.
+ *
+ * Unlike `scrubKeys`, this is not a pattern: it replaces the known literal
+ * values, so it works for ANY provider key format — including ones that do not
+ * exist yet — and cannot be defeated by a provider that echoes a key verbatim
+ * in an unusual shape. Guards against the degenerate cases that would make a
+ * blunt replace dangerous:
+ *
+ *   * shorter than 8 chars — too generic, replacing it would mangle unrelated
+ *     text (and no real credential is that short);
+ *   * an empty/absent value.
+ *
+ * Ordering matters: longest first, so an overlapping shorter secret cannot
+ * carve up a longer one and leave a residue of it behind.
+ *
+ * Exported for direct pins (SOLID R129). */
+export function redactSecrets(text: string, secrets: (string | null | undefined)[]): string {
+  let out = text;
+  const distinct = [...new Set(secrets.filter((s): s is string => !!s && s.length >= 8))];
+  distinct.sort((a, b) => b.length - a.length);
+  for (const s of distinct) {
+    out = out.split(s).join("***");
+  }
+  return out;
+}
+
+async function upstreamBodyErrorResponse(
+  upstream: any,
+  label = "",
+  secrets: (string | null | undefined)[] = [],
+): Promise<Response> {
+  // `label` names the CHANNEL (e.g. "nvidia"). It is additive: the existing
+  // call site passes none and is byte-identical (SOLID R129).
+  //
+  // It is worth having because the upstream's own message is usually the only
+  // text a caller sees, and providers rarely name themselves: NVIDIA returns
+  // "Invalid API key provided: …", which says nothing about which of the
+  // user's keys is at fault. The label is prepended to whichever message wins.
+  const prefix = label ? `${label}: ` : "";
+  let message = `${prefix}Upstream ${upstream.status}`;
   // Default by status BEFORE body sniffing: OpenRouter's error envelope
   // carries no Anthropic-style type, and a bare api_error on a 429 told
   // clients to give up instead of backing off.
-  let type = upstream.status === 429 ? "rate_limit_error" : "api_error";
+  let type = errorTypeForStatus(upstream.status);
   let extra: Record<string, string> = {};
   try {
     const rawErr: any = await upstream.json();
     const err: any = rawErr?.detail && typeof rawErr.detail === "object" ? rawErr.detail : rawErr;
-    message =
-      scrubKeys(err.error?.message || err.message || JSON.stringify(err).slice(0, 200)) || message;
+    // THE SECURITY HALF — two layers, because the first is exact and the
+    // second is a heuristic (SOLID R129):
+    //
+    //   1. redactSecrets: replace the EXACT credentials this request carried.
+    //      The gateway knows what it sent, so this cannot miss a format and
+    //      cannot be outrun by a provider changing its key scheme. It is the
+    //      layer that actually closes the R119 finding.
+    //   2. scrubKeys: the prefix heuristic (sk-/or-/rc-/…), which catches keys
+    //      the request did not send — e.g. a provider echoing a key from its
+    //      own config, or a key appearing in a message we did not author.
+    //
+    // Layer 1 exists because layer 2 provably does not cover everything:
+    // measured, `nvapi-…` (NVIDIA's own format) passes scrubKeys untouched —
+    // and NVIDIA is one of the two channels whose arm had this leak.
+    const rawMsg = err.error?.message || err.message || JSON.stringify(err).slice(0, 200);
+    const upstreamMsg = scrubKeys(redactSecrets(rawMsg, secrets));
+    if (upstreamMsg) message = `${prefix}${upstreamMsg}`;
     const upType = err.error?.type || err.type;
     const KNOWN = [
       "rate_limit_error",
@@ -297,7 +386,20 @@ export function oxAlphaReasoningDefault(
   upstreamModel: string,
   body: string,
 ): string {
-  if (routeKind === "openrouter" && upstreamModel === "stealth/ox-alpha") {
+  // TWO gates, deliberately kept separate (SOLID R120):
+  //   * WHICH MODEL is a registry fact — `reasoningMaxRawFor` reads the
+  //     model's own `reasoningMax: "raw"` facet, so the ox-alpha spelling
+  //     lives in MODEL_REGISTRY and not here.
+  //   * WHICH CHANNEL is a routing fact, and stays a kind literal: the
+  //     model facet says "I default reasoning effort"; the route says "I am
+  //     the channel that forwards raw text". Collapsing them would make the
+  //     model record assert something about routing it does not own.
+  // The kind gate is redundant TODAY (or/stealth/ox-alpha is the only "raw"
+  // record and it rides this kind) — pinned as redundant rather than deleted,
+  // because `translate-units.test.mjs` asserts it and because removing it
+  // would be a behaviour change if a second "raw" model ever lands on another
+  // channel.
+  if (reasoningMaxRawFor(upstreamModel) && routeKind === "openrouter") {
     return rawWithOxAlphaReasoningDefault(body);
   }
   return body;
@@ -313,6 +415,10 @@ export async function relayUpstreamResult(
   inspectFailure: any,
   ctx: { generationId?: string | undefined },
   recordOgBodyFailure: boolean,
+  /// Credentials this request SENT, redacted from any upstream-echoed error
+  /// text before it reaches the caller (SOLID R129). Additive with a default,
+  /// so the call sites that predate it are unchanged.
+  secrets: (string | null | undefined)[] = [],
 ): Promise<Response> {
   if (!upstream) {
     // Shared fetch-failure path (all /v1 arms) — see upstreamFetchFailedResponse.
@@ -323,7 +429,7 @@ export async function relayUpstreamResult(
       await recordChannelFailure(env);
     }
     // Shared upstream-body normalization (all /v1 arms) — see upstreamBodyErrorResponse.
-    return upstreamBodyErrorResponse(upstream);
+    return upstreamBodyErrorResponse(upstream, routeKind, secrets);
   }
   if (routeKind === "opencode") await recordChannelSuccess(env);
   const headers = new Headers(upstream.headers);
@@ -391,6 +497,49 @@ export function extractByokKeys(ukeys: Record<string, any>) {
   };
 }
 
+/** Which BYOK key does each route kind REQUIRE?
+ *
+ * The ONE canonical copy of a mapping that was previously written out FIVE
+ * times: three ad-hoc `[kind, key][]` tables (chat/completions, its
+ * post-probe half, and count_tokens) plus eleven hand-written
+ * `route.kind === "X" && !byok.Y` checks scattered across the flows.
+ *
+ * The irregular fields are the whole point of centralising it — three of the
+ * eight do NOT match their kind:
+ *
+ *     nvidia -> nv          opencode -> opencodeGo      commandgoat -> cmd
+ *
+ * Every entry is required. A route reaching its upstream without its key goes
+ * out HEADERLESS and the user gets a bare "Upstream 401" instead of a config
+ * error naming the missing provider — which is not hypothetical: that is
+ * exactly the class of bug the comments at the amd/ and og-native guards
+ * record (each was added after a flow forgot its check), and it is why a
+ * forgotten entry is worth a test rather than a code review.
+ *
+ * Keys are named as `extractByokKeys` spells them. */
+export const REQUIRED_KEY_BY_KIND: Record<string, string> = {
+  deepseek: "deepseek",
+  opencode: "opencodeGo",
+  openrouter: "openRouter",
+  qwen: "qwen",
+  nvidia: "nv",
+  gmi: "gmi",
+  commandgoat: "cmd",
+  amd: "amd",
+};
+
+/** Is `routeKind`'s required BYOK key absent from `byok`?
+ *
+ * Pure, and the single place the kind→field mapping lives. An UNKNOWN kind
+ * reports `false` (not missing): a route with no entry in the table above is a
+ * programming error that the routing layer or the upstream will surface, and
+ * inventing a "missing key" for it here would mask that with a config error. */
+export function isKeyMissing(routeKind: string, byok: Record<string, any>): boolean {
+  const field = REQUIRED_KEY_BY_KIND[routeKind];
+  if (!field) return false;
+  return !byok[field];
+}
+
 /** Detect the route kind from method + path. */
 // Exported for direct pins (SOLID Round-27; additive — call sites untouched).
 export function detectRoute(method: string, path: string) {
@@ -399,6 +548,130 @@ export function detectRoute(method: string, path: string) {
   const isChatCompletions = method === "POST" && path.endsWith("/v1/chat/completions");
   const isResponses = method === "POST" && path.endsWith("/v1/responses");
   return { isCount, isMessages, isChatCompletions, isResponses };
+}
+
+/** The `tools` array slice of a raw Anthropic body, bracket-BALANCED.
+ *
+ * Exported for direct pins (SOLID R117). Two recorded incidents live here,
+ * both about where the region STOPS:
+ *   * round-42 Medium: the region was cut at the first `"messages"` anchor,
+ *     so a tool-schema property named `messages` truncated it and a later
+ *     web_search declaration was lost.
+ *   * round-43 Medium: bounding at the NEXT `"messages"` had the same flaw.
+ * The depth-aware scan below is the fix: nested braces/brackets inside tool
+ * schemas are counted, and the region ends at the array's own closing `]`.
+ *
+ * Returns "" when there is no `tools` array at all. */
+export function toolsRegionOf(rawText: string): string {
+  const toolsStart = rawText.indexOf('"tools":[');
+  if (toolsStart < 0) return "";
+  let depth = 0;
+  let end = -1;
+  for (let i = toolsStart + 8; i < rawText.length; i++) {
+    const ch = rawText[i];
+    if (ch === "[" || ch === "{") depth++;
+    else if (ch === "]" || ch === "}") {
+      depth--;
+      // `<= 0`, NOT `< 0`. The loop starts ON the tools array's own `[`, so
+      // that bracket takes depth to 1; the array's closing `]` brings it back
+      // to 0. Stopping only BELOW zero therefore ran one level OUT, to the
+      // enclosing object's `}` — the region swallowed everything after the
+      // tools array, including `messages`.
+      //
+      // That was not academic: a conversation whose HISTORY carries a previous
+      // search (`{"type":"server_tool_use","name":"web_search"}` — Claude Code
+      // keeps those blocks in its transcript) put a literal `"web_search"` in
+      // the region, so needsBodyParse fired and the whole body was parsed
+      // AGAIN on every later turn, with no web_search declaration in the
+      // current request's tools. Parsing a ~2 MB body measures ~2.4 ms —
+      // roughly a quarter of the 10 ms Free-plan budget (Error 1102) this
+      // guard exists to protect — repeated for every turn of the conversation.
+      //
+      // Border cases are unchanged in the safe direction: JSON is balanced, so
+      // the array's `]` is always reached, and a real declaration always sits
+      // INSIDE the array. Verified against all 720 pre-existing tests.
+      if (depth <= 0) {
+        end = i;
+        break;
+      }
+    }
+  }
+  return end > 0 ? rawText.slice(toolsStart, end + 1) : "";
+}
+
+/** Does this raw body need to be parsed into an object graph?
+ *
+ * The CPU guard for the 10ms Free-plan budget (Error 1102): a plain text-only
+ * request skips the parse entirely, because parsing a multi-MB body blows the
+ * budget.
+ *
+ * THREE clauses used to be written out here; only TWO are reachable, and the
+ * pin in the test suite holds the equivalence:
+ *
+ *     /"type":\s*"image"/.test(lastUserMsg)   // lastUserMsg = a SUFFIX of rawText
+ *   || /"type":\s*"image"/.test(rawText)      // ⟸ the first implies this one
+ *   || /"web_search"/.test(toolsRegion)
+ *
+ * A regex that matches a substring also matches the string containing it, so
+ * the suffix clause can never be true while the whole-body clause is false.
+ * The clause was NOT dead weight in the CPU sense — `lastIndexOf` over a 6 MB
+ * body measures 0.005 ms (V8 uses a fast substring search), so removing it is
+ * a CLARITY change, not a performance one. Measured before claiming. */
+export function needsBodyParse(rawText: string, toolsRegion: string): boolean {
+  return /"type"\s*:\s*"image"/.test(rawText) || /"web_search"/.test(toolsRegion);
+}
+
+/** A request whose ONLY tool is the web_search server tool.
+ *
+ * zen/go treats a declared-but-not-forced web_search as optional, so the model
+ * may decline and answer with EMPTY content blocks. Such a request exists
+ * solely to search, so the caller injects the force. The exact-one-tool guard
+ * is what keeps Claude Code's multi-tool ordinary turns untouched. */
+export function isSearchOnlyRequest(body: any): boolean {
+  return (
+    !!body &&
+    !body.tool_choice &&
+    Array.isArray(body.tools) &&
+    body.tools.length === 1 &&
+    body.tools[0]?.type === "web_search_20250305"
+  );
+}
+
+/** Does `tool_choice` FORCE a web_search call?
+ *
+ * round-46 High: Claude Code DECLARES web_search_20250305 in the tools array
+ * of EVERY ordinary turn, so a declaration-only check silently hijacked the
+ * user's chosen model on every request. Only a forced tool_choice is real
+ * search intent — either `{type:"tool",name:"web_search"}` or an
+ * `{type:"any",tools:[…]}` naming it. */
+export function isForcedWebSearch(toolChoice: any): boolean {
+  return !!(
+    toolChoice &&
+    ((toolChoice.type === "tool" && toolChoice.name === "web_search") ||
+      (toolChoice.type === "any" &&
+        Array.isArray(toolChoice.tools) &&
+        toolChoice.tools.some((t: any) => t?.name === "web_search")))
+  );
+}
+
+/** Which model actually serves a forced web-search request, and under which
+ * WIRE name.
+ *
+ * A caller that already names a search-capable Flash-line model KEEPS it. Any
+ * other og/ model is forced to the version-less `deepseek-flash` lane, because
+ * the translate-only models (minimax/mimo/kimi/glm) fabricate a query and
+ * return no `web_search_tool_result` (verified 2026-08-13). Since the
+ * 2026-09-10 V4 retirement that lane slug is also the fallback target. */
+export function searchTargetFor(
+  model: string,
+  upstreamModel: string,
+): { capable: boolean; model: string; wireModel: string } {
+  const capable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
+  return {
+    capable,
+    model: capable ? model : "og/deepseek-v4.1-flash",
+    wireModel: capable ? upstreamModel : "deepseek-flash",
+  };
 }
 
 async function handleGatewayImpl(
@@ -603,42 +876,17 @@ async function handleGatewayImpl(
       // array starts — indexOf('"messages"', toolsStart) so a schema
       // property named "messages" inside the tools array cannot truncate it
       // (round-42 Medium: the first-"messages" anchor cut the region off).
-      const toolsStart = rawText.indexOf('"tools":[');
-      // Bound the region at the tools array's CLOSING bracket — searching for
-      // the next '"messages"' still truncates at a tool schema property named
-      // "messages" (round-43 Medium), cutting off a later web_search
-      // declaration. A naive bracket count is fine: tool schemas may nest
-      // braces, so scan depth-aware from the opening '['.
-      let toolsRegion = "";
-      if (toolsStart >= 0) {
-        let depth = 0;
-        let end = -1;
-        for (let i = toolsStart + 8; i < rawText.length; i++) {
-          const ch = rawText[i];
-          if (ch === "[" || ch === "{") depth++;
-          else if (ch === "]" || ch === "}") {
-            depth--;
-            if (depth < 0) {
-              end = i;
-              break;
-            }
-          }
-        }
-        toolsRegion = end > 0 ? rawText.slice(toolsStart, end + 1) : "";
-      }
-      const lastUserStart = rawText.lastIndexOf('"role":"user"');
-      const lastUserMsg = lastUserStart >= 0 ? rawText.slice(lastUserStart) : rawText;
-      // Parse if the LAST user message has a NEW image (needs describing) OR
-      // any HISTORY image exists (needs the placeholder swap — a text-only
-      // follow-up asking about a turn-1 screenshot must still get the
-      // described context, not the raw base64). Both cases parse ONCE; the
-      // vision call only fires for the last message's image (preprocessImages
-      // swaps history images to placeholders without calling vision).
-      const needsParse =
-        /"type"\s*:\s*"image"/.test(lastUserMsg) ||
-        /"type"\s*:\s*"image"/.test(rawText) ||
-        /"web_search"/.test(toolsRegion);
-      if (!needsParse) {
+      // Bracket-balanced `tools` slice (round-42/43 Medium fixes) — see
+      // toolsRegionOf's header for the two truncation incidents it encodes.
+      const toolsRegion = toolsRegionOf(rawText);
+      // Parse if the body carries an image (needs describing, or a history
+      // image needs the placeholder swap — a text-only follow-up asking about
+      // a turn-1 screenshot must still get the described context, not the raw
+      // base64) OR declares web_search. Both parse ONCE; the vision call only
+      // fires for the last message's image (preprocessImages swaps history
+      // images to placeholders without calling vision). The redundant
+      // third clause is documented and pinned in needsBodyParse.
+      if (!needsBodyParse(rawText, toolsRegion)) {
         body = null;
       } else {
         body = JSON.parse(rawText);
@@ -675,22 +923,10 @@ async function handleGatewayImpl(
     // swap machinery (native /v1/messages route incl. the US_PROXY via()
     // branch) takes over unchanged. The exact-one-tool guard keeps Claude
     // Code's multi-tool ordinary turns untouched.
-    if (
-      body &&
-      route.kind === "opencode" &&
-      !body.tool_choice &&
-      Array.isArray(body.tools) &&
-      body.tools.length === 1 &&
-      body.tools[0]?.type === "web_search_20250305"
-    ) {
+    if (route.kind === "opencode" && isSearchOnlyRequest(body)) {
       body.tool_choice = { type: "tool", name: "web_search" };
     }
-    const webSearchToolChoice =
-      body?.tool_choice &&
-      ((body.tool_choice.type === "tool" && body.tool_choice.name === "web_search") ||
-        (body.tool_choice.type === "any" &&
-          Array.isArray(body.tool_choice.tools) &&
-          body.tool_choice.tools.some((t: any) => t?.name === "web_search")));
+    const webSearchToolChoice = isForcedWebSearch(body?.tool_choice);
     if (webSearchToolChoice && body && route.kind !== "commandgoat") {
       // A caller that already names a search-capable Flash-line model KEEPS it
       // (2026-09-10): zen/go runs web_search natively on the version-less lane
@@ -701,9 +937,10 @@ async function handleGatewayImpl(
       // slug is ALSO the fallback target: every other og/ model is forced to it,
       // because the translate-only models (minimax/mimo/kimi/glm) fabricate a
       // query and return no web_search_tool_result (verified 2026-08-13).
-      const searchCapable = SEARCH_CAPABLE_WIRE_MODELS.has(upstreamModel);
-      const searchModel = searchCapable ? model : "og/deepseek-v4.1-flash";
-      const searchWireModel = searchCapable ? upstreamModel : "deepseek-flash";
+      const { model: searchModel, wireModel: searchWireModel } = searchTargetFor(
+        model,
+        upstreamModel,
+      );
       // Swap when the route is NOT already the native search-capable
       // passthrough (covers the translate path AND US_PROXY=1 where the
       // flagship model would otherwise ride the broken chat/completions
@@ -753,12 +990,12 @@ async function handleGatewayImpl(
 
   // or/ uses "this user's" OpenRouter key (BYOK); upstream is direct
   // openrouter.ai or the US exit per the proxy switch (see pickRoute).
-  if (route.kind === "openrouter" && !byok.openRouter) {
+  if (route.kind === "openrouter" && isKeyMissing("openrouter", byok)) {
     return keyMissingError("openrouter") as Response;
   }
   // cm/ is pure BYOK like or/ — both the messages and chat/completions flows
   // need the user's own Command Code key.
-  if (route.kind === "commandgoat" && !byok.cmd) {
+  if (route.kind === "commandgoat" && isKeyMissing("commandgoat", byok)) {
     return keyMissingError("commandgoat") as Response;
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
@@ -788,14 +1025,8 @@ async function handleGatewayImpl(
     // Key-existence guards for the chat/completions flow — one per provider
     // kind the endpoint serves. Table-driven: identical shape, order matters
     // only relative to the degraded-channel probe below.
-    const chatKeys: [string, string | null][] = [
-      ["nvidia", byok.nv],
-      ["gmi", byok.gmi],
-      ["amd", byok.amd],
-      ["opencode", byok.opencodeGo],
-    ];
-    for (const [kind, key] of chatKeys) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["nvidia", "gmi", "amd", "opencode"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -803,13 +1034,8 @@ async function handleGatewayImpl(
       const dg = await channelDegradedError(env, route.kind);
       if (dg) return dg;
     }
-    const chatKeysAfterProbe: [string, string | null][] = [
-      ["deepseek", byok.deepseek],
-      ["openrouter", byok.openRouter],
-      ["qwen", byok.qwen],
-    ];
-    for (const [kind, key] of chatKeysAfterProbe) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["deepseek", "openrouter", "qwen"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -872,6 +1098,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -888,7 +1115,7 @@ async function handleGatewayImpl(
     // unregistered muse-spark versions must not reach the upstream).
     if (
       !MODELS.some((m) => m.id === model) ||
-      !upstreamModel.startsWith("muse-spark-") ||
+      !isResponsesOnlyModel(upstreamModel) ||
       prefix2 !== "og"
     ) {
       return jsonError(
@@ -904,7 +1131,7 @@ async function handleGatewayImpl(
         "invalid_request",
       );
     }
-    if (route.kind === "opencode" && !byok.opencodeGo) {
+    if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
       return keyMissingError("opencode") as Response;
     }
     {
@@ -955,6 +1182,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -964,13 +1192,8 @@ async function handleGatewayImpl(
   // own ±20% accuracy stance and cuts that latency entirely. Missing-key checks
   // are still real config errors and stay.
   if (isCount) {
-    const countKeys: [string, string | null][] = [
-      ["deepseek", byok.deepseek],
-      ["qwen", byok.qwen],
-      ["amd", byok.amd],
-    ];
-    for (const [kind, key] of countKeys) {
-      if (route.kind === kind && !key) {
+    for (const kind of ["deepseek", "qwen", "amd"]) {
+      if (route.kind === kind && isKeyMissing(kind, byok)) {
         return keyMissingError(kind) as Response;
       }
     }
@@ -984,10 +1207,10 @@ async function handleGatewayImpl(
   // Code) can ride these channels via /v1/messages. OpenAI-native clients
   // keep using the /v1/chat/completions direct passthrough above.
   if (route.kind === "nvidia" || route.kind === "gmi") {
-    if (route.kind === "nvidia" && !byok.nv) {
+    if (route.kind === "nvidia" && isKeyMissing("nvidia", byok)) {
       return keyMissingError("nvidia") as Response;
     }
-    if (route.kind === "gmi" && !byok.gmi) {
+    if (route.kind === "gmi" && isKeyMissing("gmi", byok)) {
       return keyMissingError("gmi") as Response;
     }
     const openaiReq = toOpenAIRequest(body, upstreamModel);
@@ -1007,28 +1230,25 @@ async function handleGatewayImpl(
       // plain budget (3 attempts, no retry502). Round-77 review catch.
       { timeoutMs: ogTimeoutMs(env), attempts: 4, retry502: true },
     );
-    if (!upstream || !upstream.ok) {
-      const upStatus = upstream?.status || 502;
-      let message = `${route.kind}: ${detail || `upstream ${upStatus}`}`;
-      const extra: Record<string, string> = {};
-      try {
-        if (upstream && !upstream.ok) {
-          const err: any = await upstream.json();
-          const m = err.error?.message || err.message;
-          if (m) message = m;
-          // Carry Retry-After so the client paces against the upstream limit.
-          const ra = upstream.headers?.get?.("retry-after");
-          if (ra) extra["retry-after"] = ra;
-        }
-      } catch {
-        /* non-JSON error body */
-      }
-      return jsonError(
-        upStatus,
-        message,
-        upStatus === 429 ? "rate_limit_error" : "api_error",
-        extra,
-      );
+    if (!upstream) {
+      // No response AT ALL (network error / timeout before headers): there is
+      // no body to normalize, so the retry detail is all we have. 502 is the
+      // "upstream unreachable" default this arm has always used here.
+      return jsonError(502, `${route.kind}: ${detail || "upstream 502"}`, errorTypeForStatus(502));
+    }
+    if (!upstream.ok) {
+      // SOLID R129: this arm used to hand-roll the envelope and copy the
+      // upstream's message into the CLIENT-VISIBLE text with NO scrubKeys, so
+      // a provider echoing the submitted credential ("Invalid API key
+      // provided: sk-live-…") sent that credential straight back to the
+      // caller. It now uses the shared normalizer, which scrubs, unwraps
+      // {"detail":…}, preserves a known Anthropic error.type and carries
+      // Retry-After — all of which this arm had been reimplementing partially.
+      // `byok.nv`/`byok.gmi` is the credential THIS request sent, so it is the
+      // one a provider would echo — passed for exact redaction.
+      return upstreamBodyErrorResponse(upstream, route.kind, [
+        route.kind === "nvidia" ? byok.nv : byok.gmi,
+      ]);
     }
     return openAIUpstreamToAnthropicResponse(upstream, body, body.model, upstreamModel);
   }
@@ -1036,21 +1256,21 @@ async function handleGatewayImpl(
   // Passthrough routes (or/ds/qw/amd): the upstream already speaks the Anthropic
   // protocol, forward the body unchanged + stream the response.
   if (route.type === "passthrough") {
-    if (route.kind === "deepseek" && !byok.deepseek) {
+    if (route.kind === "deepseek" && isKeyMissing("deepseek", byok)) {
       return keyMissingError("deepseek") as Response;
     }
-    if (route.kind === "qwen" && !byok.qwen) {
+    if (route.kind === "qwen" && isKeyMissing("qwen", byok)) {
       return keyMissingError("qwen") as Response;
     }
     // amd/ (AMD Radeon Cloud) is pure BYOK too — without the user's rc-… key
     // the request would go out headerless and 401 at the upstream.
-    if (route.kind === "amd" && !byok.amd) {
+    if (route.kind === "amd" && isKeyMissing("amd", byok)) {
       return keyMissingError("amd") as Response;
     }
     // og/ models need the OpenCode Go key too — without it the request would
     // go out headerless and return a bare
     // "Upstream 401" instead of a clear config error (translate path checks).
-    if (route.kind === "opencode" && !byok.opencodeGo) {
+    if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
       return keyMissingError("opencode") as Response;
     }
     // The og-native passthrough previously BYPASSED the circuit breaker — a
@@ -1119,6 +1339,7 @@ async function handleGatewayImpl(
       inspectFailure,
       ctx,
       true,
+      [bearerKey],
     );
   }
 
@@ -1130,13 +1351,13 @@ async function handleGatewayImpl(
   // round-504: shadowed by the pre-branch commandgoat guard (same !byok.cmd,
   // same message) — unreachable, kept as defense-in-depth like the chat-path
   // openrouter arm. Not pinned: keyless-cm tests land on the live guard.
-  if (route.kind === "commandgoat" && !byok.cmd) {
+  if (route.kind === "commandgoat" && isKeyMissing("commandgoat", byok)) {
     return keyMissingError("commandgoat") as Response;
   }
   // round-500: this guard was unscoped — a cm/ request (Bearer byok.cmd,
   // cm upstream; byok.opencodeGo unused below) was 502'd for lacking an
   // unrelated og key. Scope to the opencode kind it actually protects.
-  if (route.kind === "opencode" && !byok.opencodeGo) {
+  if (route.kind === "opencode" && isKeyMissing("opencode", byok)) {
     return keyMissingError("opencode") as Response;
   }
   // Circuit open: repeated hard failures — fail fast instead of waiting on
@@ -1150,7 +1371,7 @@ async function handleGatewayImpl(
   // reasoning param — mirror the or/ rule on this translate path: respect a
   // client-sent reasoning, else default effort=max (2026-08-22). Claude Code's
   // Anthropic `thinking` param is not mapped; the default covers it.
-  if (upstreamModel === "ox-alpha-free" && openaiReq.reasoning === undefined) {
+  if (reasoningMaxParsedFor(upstreamModel) && openaiReq.reasoning === undefined) {
     openaiReq.reasoning = { effort: "max" };
   }
   const translateKey = route.kind === "commandgoat" ? byok.cmd : byok.opencodeGo;
@@ -1186,12 +1407,19 @@ async function handleGatewayImpl(
     // EVERY failure to a non-retryable 502 api_error, dropping zen's 429
     // (client should back off, not fail) and its Retry-After. The passthrough
     // branch keeps the status; the translate branch must too.
-    const upStatus = upstream?.status || 502;
-    return jsonError(
-      upStatus,
-      `${translateLabel}: ${detail || `upstream ${upStatus}`}`,
-      upStatus === 429 ? "rate_limit_error" : "api_error",
-    );
+    if (!upstream) {
+      return jsonError(
+        502,
+        `${translateLabel}: ${detail || "upstream 502"}`,
+        errorTypeForStatus(502),
+      );
+    }
+    // SOLID R129: round-116 fixed the STATUS half of this arm and left the
+    // BODY half undone — the arm answered `${label}: ${detail}` and never read
+    // the upstream body, so zen's own error text and its Retry-After were both
+    // discarded. A 429 here could not be paced by the client even though every
+    // sibling branch carries the header. Now normalized like the others.
+    return upstreamBodyErrorResponse(upstream, translateLabel, [translateKey]);
   }
   // A real response (even a retried 5xx→2xx) resets the consecutive-failure
   // count — otherwise yesterday's blips would combine with today's to trip.
