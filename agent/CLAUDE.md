@@ -163,8 +163,13 @@ and verify via `/api/status` → `version`.
 `vale rollback <x.y.z>` (bin/vale.js): HEAD-checks the pinned tgz on the CDN
 (last-5-per-minor keeps the recent line), `npm install -g --prefix
 <components\npm-global> <tgz>`, then runs the TARGET build's own `vale update`
-so the staged exe IS the rollback build; finally writes `etc\.rollback-pin` +
-syncs `etc\.vale-release` (healing a pre-v2 split-brain marker). `agent_update`
+so the staged exe IS the rollback build. It then **reads `etc\.vale-release`
+back and requires it to show the target version** (bounded 90 s) before writing
+`etc\.rollback-pin` and deleting a pre-v2 root-level marker — `vale update`
+returns 0 when the WMI HANDOFF is accepted, not when the swap succeeds, so the
+exit code alone cannot prove a rollback took. An unproven swap writes NO pin and
+NO marker and exits non-zero naming the version the device is actually on.
+`agent_update`
 (Rust) returns `{"status":"pinned"}` for any remote version other than the pin
 while the pin exists; `force:true` on agent_update or `vale rollback --clear`
 removes it. `vale update` does NOT clear the pin (it swaps what npm-global
@@ -348,7 +353,8 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
 - **memory plugin** (`src/plugins/memory/`): device-local knowledge base shared
   across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/
   export`). JSONL + in-memory index at `<install>/memory/memory.jsonl`, soft
-  delete, LRU capacity from config `memory: { max_entries, max_bytes,
+  delete, capacity capped OLDEST-WRITTEN-FIRST (not LRU — reads never move
+  `updated_at`) from config `memory: { max_entries, max_bytes,
   retention_days }`, credential sanitizer (`sanitize.rs`). Lives at
   `data_dir()/memory` (registry-first `DataDir`), NOT under InstallDir.
 - **stdio transport (no port)**: `mcp_client_connect` defaults to

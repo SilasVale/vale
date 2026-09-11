@@ -3,7 +3,11 @@
 //! Patterned after SessionLogger (append-only JSONL, best-effort writes) but
 //! with a queryable in-memory index: records are loaded once at startup,
 //! appended on save/update, soft-deleted (never physically removed until
-//! compaction), and LRU-evicted when configured capacity is exceeded.
+//! compaction), and evicted OLDEST-WRITTEN FIRST when configured capacity is
+//! exceeded. Not "LRU": reads never touch `updated_at`, so a record that is
+//! read constantly but never edited is evicted on the same schedule as one
+//! nobody has touched. The name was wrong for as long as the mechanism has
+//! existed; the mechanism is fine, the label was not.
 //!
 //! File: `<data>/memory/memory.jsonl` (data_dir(); version header + one
 //! per line). Thread-safe via a single std Mutex (recover_guard poison
@@ -349,7 +353,7 @@ impl MemoryStore {
             .collect();
         for id in &removed {
             if let Some(rec) = guard.by_id.remove(id) {
-                guard.total_bytes = guard.total_bytes.saturating_sub(rec.content.len());
+                Self::ledger_adjust(&mut guard, Some(&rec), None);
                 for tag in &rec.tags {
                     let key = tag.to_lowercase();
                     if let Some(set) = guard.tag_index.get_mut(&key) {
@@ -431,12 +435,9 @@ impl MemoryStore {
             // (lost at next restart).
             self.append_line(&line);
             if let Some(prev) = guard.by_id.insert(id.clone(), rec.clone()) {
-                if !prev.deleted {
-                    guard.total_bytes = guard.total_bytes.saturating_sub(prev.content.len());
-                }
-            }
-            if !rec.deleted {
-                guard.total_bytes += rec.content.len();
+                Self::ledger_adjust(&mut guard, Some(&prev), Some(&rec));
+            } else {
+                Self::ledger_adjust(&mut guard, None, Some(&rec));
             }
             for tag in &rec.tags {
                 guard
@@ -497,7 +498,9 @@ impl MemoryStore {
         rec.updated_at = now;
         {
             let mut guard = recover_guard(&self.inner);
-            guard.by_id.insert(id.to_string(), rec.clone());
+            let prev = guard.by_id.insert(id.to_string(), rec.clone());
+            // The ledger moves with the record, through its one owner.
+            Self::ledger_adjust(&mut guard, prev.as_ref(), Some(&rec));
             // Rebuild the tag index for this record.
             for set in guard.tag_index.values_mut() {
                 set.remove(id);
@@ -651,6 +654,25 @@ impl MemoryStore {
         self.len() == 0
     }
 
+    /// THE `total_bytes` INVARIANT, in one place: the ledger equals the sum of
+    /// `content.len()` over records where `!deleted`.
+    ///
+    /// Every mutation that replaces one record with another (or removes one)
+    /// goes through here, so no write path can forget. `insert` and `compact`
+    /// used to subtract-and-add by hand and `update` did neither — which is the
+    /// whole defect: an edit that grew content UNDERCOUNTED (the byte cap
+    /// silently stopped being enforced), while a soft-delete kept counting the
+    /// removed content so the ledger OVERCOUNTED and `enforce_limits` evicted
+    /// LIVE records to make room for a phantom.
+    ///
+    /// `update()` is not a side path: every edit goes through it, and so does
+    /// every soft-delete (`delete()` simply delegates to it).
+    fn ledger_adjust(guard: &mut Inner, prev: Option<&MemoryRecord>, next: Option<&MemoryRecord>) {
+        let before = prev.filter(|r| !r.deleted).map_or(0, |r| r.content.len());
+        let after = next.filter(|r| !r.deleted).map_or(0, |r| r.content.len());
+        guard.total_bytes = guard.total_bytes.saturating_sub(before) + after;
+    }
+
     /// Recompute total_bytes from LIVE records only (the old per-line sum
     /// counted every update revision, inflating the byte cap into premature
     /// evictions). Shared by load, the entry-cap eviction loop and the
@@ -694,7 +716,8 @@ impl MemoryStore {
         Some(content_len)
     }
 
-    /// Enforce capacity limits: LRU evict (soft-delete) oldest-updated first
+    /// Enforce capacity limits: soft-delete the OLDEST-WRITTEN first
+    /// (`updated_at`; reads do not move it, so this is not LRU)
     /// until under max_entries / max_bytes.
     fn enforce_limits(&self) {
         self.rebuild_order();
@@ -863,6 +886,129 @@ mod tests {
         assert!(
             !titles.contains(&"oldest".to_string()),
             "eviction must survive restart, got {titles:?}"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The byte ledger must be right IN PROCESS, not only after a reload.
+    ///
+    /// `total_bytes` is what `enforce_limits` reads for `max_bytes` eviction.
+    /// `insert()` maintains it, `load()` recomputes it — but `update()` did
+    /// neither, and `update()` is the path every EDIT and every SOFT-DELETE
+    /// takes. Two consequences, in opposite directions:
+    ///
+    ///   * an edit that grows content UNDERCOUNTS, so the byte cap silently
+    ///     stops being enforced (the device exceeds the limit the operator set);
+    ///   * a soft-delete keeps counting the removed content, so the ledger
+    ///     OVERCOUNTS and enforce evicts LIVE records to make room for a
+    ///     figure that is too high.
+    ///
+    /// The pre-existing `total_bytes_counts_deduped_live_only` cannot see
+    /// either: it DROPS AND REOPENS the store before asserting, and the reopen
+    /// runs `recount_total_bytes` — its own comment says "total recomputed on
+    /// load". So the in-process ledger was asserted nowhere, and no production
+    /// reader existed to notice (`total_bytes_live` had one caller: that test).
+    #[test]
+    fn update_keeps_the_byte_ledger_honest_without_a_reload() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-ledger-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let id = store.insert(rec("doc", "abc"));
+        assert_eq!(store.total_bytes_live(), 3, "insert maintains it");
+
+        // An edit that GROWS the content must raise the ledger with it.
+        store.update(&id, None, Some("abcdefghij".into()), None, None, None);
+        assert_eq!(
+            store.total_bytes_live(),
+            10,
+            "an edit must move the ledger — otherwise the byte cap is measured \
+             against a figure that is too LOW and stops being enforced"
+        );
+
+        // An edit that SHRINKS it must lower the ledger.
+        store.update(&id, None, Some("ab".into()), None, None, None);
+        assert_eq!(
+            store.total_bytes_live(),
+            2,
+            "shrinking an edit lowers it too"
+        );
+
+        // A SOFT-DELETE removes the content from the live total. Leaving it in
+        // is what makes enforce evict live records for a phantom.
+        store.update(&id, None, None, None, None, Some(true));
+        assert_eq!(
+            store.total_bytes_live(),
+            0,
+            "a soft-deleted record's bytes must leave the live ledger"
+        );
+
+        // Editing a record that is ALREADY deleted must not move the ledger.
+        // Its bytes left the live total when it was tombstoned, so they must
+        // not be subtracted AGAIN. Reachable from the wire: `memory_update`
+        // passes its id straight to `update()`, which looks the record up
+        // whether or not it is deleted.
+        //
+        // A SECOND LIVE record is load-bearing here. With the ledger at 0 the
+        // stale subtraction is absorbed by `saturating_sub` and the mistake is
+        // invisible — mutation testing proved it: counting the `prev` term
+        // regardless of its deleted flag left the suite GREEN until a live
+        // record made the over-subtraction observable.
+        let bystander = store.insert(rec("bystander", "0123456789")); // 10 live bytes
+        store.update(&id, None, None, None, None, Some(false)); // restore: +2
+        assert_eq!(store.total_bytes_live(), 12, "2 restored + 10 bystander");
+
+        store.update(&id, None, None, None, None, Some(true)); // tombstone: -2
+        assert_eq!(store.total_bytes_live(), 10, "only the bystander is live");
+
+        store.update(
+            &id,
+            None,
+            Some("edited while deleted".into()),
+            None,
+            None,
+            None,
+        );
+        assert_eq!(
+            store.total_bytes_live(),
+            10,
+            "editing a TOMBSTONE must not move the live ledger — subtracting its \
+             bytes a second time steals them from the live record"
+        );
+
+        // And the bystander is genuinely still there, not just still counted.
+        assert!(
+            store.get(&bystander, false).is_some(),
+            "the bystander survives"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// The same defect, seen the way an operator would: a LIVE record
+    /// disappears because a DELETED one is still being counted.
+    #[test]
+    fn a_soft_delete_does_not_get_live_records_evicted() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-evict-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let limits = MemoryLimits {
+            max_entries: 100,
+            max_bytes: 20,
+            retention_days: None,
+        };
+        let store = MemoryStore::new(dir.clone(), limits);
+        let a = store.insert(rec("keeper", "12345678")); // 8 bytes
+        let b = store.insert(rec("doomed", "12345678")); // 16 total
+        assert_eq!(store.total_bytes_live(), 16);
+
+        // B is soft-deleted. Real live usage is now 8, well under the cap.
+        store.update(&b, None, None, None, None, Some(true));
+
+        // Room for one more 8-byte record with 4 bytes to spare.
+        store.insert(rec("later", "12345678"));
+
+        assert!(
+            store.get(&a, false).is_some(),
+            "the keeper must survive: real live usage is 16 of 20.              It was evicted because the DELETED record was still counted,              making the ledger read 24 and pushing enforce over the cap."
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
@@ -1150,18 +1296,44 @@ mod tests {
         let _ = std::fs::remove_dir_all(&dir);
     }
 
+    /// The restore guarantee holds BELOW the eager-compaction threshold — and
+    /// only there. This test used to claim "<10 records", which the code has
+    /// never done: `compact_if_tombstone_heavy` returns early only below 4, so
+    /// for 4-9 records a tombstone majority physically destroys them. The old
+    /// name and comment described a guarantee four times wider than the real
+    /// one, and the test used ONE record, so it could never tell the
+    /// difference. Both halves are pinned now: restorable below the threshold,
+    /// and — the part nobody wrote down — NOT restorable above it.
     #[test]
-    fn small_store_never_auto_compacts() {
-        // <10 records: a single soft-delete must stay restorable (the eager
-        // threshold guard protects the soft-delete/restore contract).
-        let (s, dir) = tmp_store("small_store_never_auto_compacts");
-        let id = s.insert(rec("only", "x"));
-        s.delete(&id);
+    fn tombstones_are_restorable_only_below_the_compaction_threshold() {
+        let (s, dir) = tmp_store("tombstone_restore_threshold");
+        // 3 records (below the threshold of 4): a delete stays restorable.
+        let ids: Vec<String> = (0..3)
+            .map(|i| s.insert(rec(&format!("small{i}"), "x")))
+            .collect();
+        s.delete(&ids[0]);
         assert!(
-            s.get(&id, true).is_some(),
-            "small store keeps tombstones restorable"
+            s.get(&ids[0], true).is_some(),
+            "below the threshold a tombstone must stay restorable"
         );
         let _ = std::fs::remove_dir_all(&dir);
+
+        // 4 records, then a tombstone MAJORITY: compaction fires and the
+        // record is GONE — not merely hidden. This is the behaviour the
+        // removed "<10 records" claim denied, and `memory_delete`'s promise of
+        // "recoverable ... until compaction" is true only in this sense.
+        let (s2, dir2) = tmp_store("tombstone_compacts_at_four");
+        let ids2: Vec<String> = (0..4)
+            .map(|i| s2.insert(rec(&format!("big{i}"), "x")))
+            .collect();
+        s2.delete(&ids2[0]);
+        s2.delete(&ids2[1]); // 2 of 4 deleted => majority
+        assert!(
+            s2.get(&ids2[0], true).is_none(),
+            "at or above the threshold a tombstone majority compacts — the \
+             record is physically gone, so `include_deleted` cannot return it"
+        );
+        let _ = std::fs::remove_dir_all(&dir2);
     }
 
     #[test]

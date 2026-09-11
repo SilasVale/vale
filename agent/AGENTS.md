@@ -435,7 +435,8 @@ vale-command-core/      Plugin/ToolDef/ToolHandler/NavItem, Config (+ensure_toke
 - **memory plugin** (`src/plugins/memory/`): device-local knowledge base shared
   across AI clients — 6 MCP tools (`memory_save/search/list/update/delete/
   export`). JSONL + in-memory index at `<install>/memory/memory.jsonl`, soft
-  delete, LRU capacity from config `memory: { max_entries, max_bytes,
+  delete, capacity capped OLDEST-WRITTEN-FIRST (not LRU — reads never move
+  `updated_at`) from config `memory: { max_entries, max_bytes,
   retention_days }`, credential sanitizer (`sanitize.rs`). Lives at
   `data_dir()/memory` (registry-first `DataDir`), NOT under InstallDir.
 - **stdio transport (no port)**: `mcp_client_connect` defaults to

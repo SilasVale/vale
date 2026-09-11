@@ -4,7 +4,9 @@
 //! knowledge entries through 6 MCP tools (memory_save / search / list /
 //! update / delete / export). Entries live in `<install>/memory/memory.jsonl`
 //! (append-only JSONL + in-memory index), are device-wide (namespace-optional
-//! scoping), soft-deleted, and LRU-capped by config `memory:` limits.
+//! scoping), soft-deleted, and capacity-capped (oldest-written first — see
+//! store.rs; this is NOT LRU, because reads do not move `updated_at`) by the
+//! config `memory:` limits.
 //!
 //! Patterned after the terminal plugin: the plugin holds an `Arc<MemoryStore>`
 //! so web.rs routes and the registry share one state machine.
