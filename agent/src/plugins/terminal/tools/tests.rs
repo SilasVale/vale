@@ -251,6 +251,58 @@ async fn a_live_session_with_no_output_yet_is_not_reported_as_evicted() {
 }
 // ── terminal_read: absolute offsets + start/end + history ────
 
+/// A SINGLE READ IS CAPPED AT 1 MiB, AND SAYS WHERE IT ACTUALLY BEGAN.
+///
+/// `read_spill` caps one read at 1 MiB — deliberately, and the reason is
+/// recorded: round 110 read the whole spill file into RAM and a log-streaming
+/// session OOM'd the agent. When the requested window is larger than the cap it
+/// returns the window's TAIL, and `start` reports the true first byte returned.
+///
+/// The tool description used to claim "`offset: 0` re-reads from the
+/// beginning", which is FALSE once the spill exceeds the cap: the head is not
+/// returned, and no sequence of calls can retrieve it. Every spill test used
+/// <=100 bytes, so the covered behaviour was not the production one.
+///
+/// This pins what is actually guaranteed: the cap holds, `start` tells the
+/// truth, and a caller can TELL it did not get the head.
+#[tokio::test]
+async fn a_read_larger_than_the_cap_returns_the_tail_and_reports_where_it_began() {
+    let (tools, buf) = seeded_tools();
+    // 1.5 MiB spilled: past the 1 MiB per-read cap, so the read must be cut.
+    const SPILLED: usize = 1_572_864; // 1.5 MiB
+    let sid = "cap-s1";
+    let p = spill_path(sid).expect("valid test sid");
+    if let Some(parent) = p.parent() {
+        let _ = std::fs::create_dir_all(parent);
+    }
+    let body = vec![b'z'; SPILLED];
+    std::fs::write(&p, &body).expect("write the spill file the way the drainer does");
+
+    // Live entry with everything already dropped into the spill.
+    seed(&buf, sid, b"", SPILLED as u64);
+
+    let out = call(
+        find(&tools, "terminal_read"),
+        json!({"session_id": sid, "offset": 0}),
+    )
+    .await;
+
+    let start = out["start"].as_u64().unwrap_or(0);
+    let end = out["end"].as_u64().unwrap_or(0);
+    assert_eq!(end, SPILLED as u64, "end is the absolute stream end: {out}");
+    assert!(
+        start > 0,
+        "asking from offset 0 past the cap must NOT claim to have begun at 0 — \
+         `start` is the only signal a caller has that the head was not returned: {out}"
+    );
+    assert!(
+        end - start <= 1_048_576,
+        "one read is capped at 1 MiB; returning more is the round-110 OOM: {out}"
+    );
+
+    let _ = std::fs::remove_file(&p);
+}
+
 #[tokio::test]
 async fn read_reports_start_end_spans() {
     let (tools, buf) = seeded_tools();

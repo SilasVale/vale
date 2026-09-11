@@ -118,7 +118,7 @@ pub(super) fn tool_read(output_buf: &OutputBuf, mgr: &Arc<TerminalManager>) -> T
     let mgr = mgr.clone();
     ToolDef::new(
         "terminal_read",
-        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream (see `start`/`end` in the response); `offset: 0` re-reads from the beginning. Reads work on closed sessions (retained history). ANSI escapes are stripped and line endings normalized by default (AI-readable); pass `clean: false` for raw bytes.",
+        "Read buffered output from a terminal session. Non-destructive: uses a cursor so repeating the call without `offset` returns only new output since last read. `offset` is an ABSOLUTE byte offset into the session's byte stream; the response's `start`/`end` are the absolute span actually returned. A single read returns AT MOST 1 MiB: for a session that has produced more, the oldest bytes in the requested window are not returned, and `start` will be GREATER than the `offset` you asked for — that gap is the only signal, and it cannot be retrieved by any offset, so treat a `start` above your `offset` as the head being unavailable. Reads work on closed sessions (retained history). ANSI escapes are stripped and line endings normalized by default (AI-readable); pass `clean: false` for raw bytes.",
         json!({"type":"object","properties":{"session_id":{"type":"string"},"offset":{"type":"integer","description":"ABSOLUTE byte offset to start reading from. 0 = beginning. Default = last cursor position."},"clean":{"type":"boolean","description":"Strip ANSI escapes and normalize \\r\\n → \\n. Default true (round-54: the MCP text path must be printable text; the panel uses its own raw SSE stream)."}},"required":["session_id"]}),
         move |params: Value| {
             let buf = buf.clone();
@@ -139,18 +139,28 @@ pub(super) fn tool_read(output_buf: &OutputBuf, mgr: &Arc<TerminalManager>) -> T
                     let explicit_offset = params.get("offset").is_some();
                     let offset = params.get("offset").and_then(|v| v.as_u64()).map(|o| o as usize);
                     let clean = params.get("clean").and_then(|v| v.as_bool()).unwrap_or(true);
-                    // Merge spill + memory so the stream reads continuously
-                    // from any absolute offset (round-54): bytes before the
+                    // Merge spill + memory (round-54): bytes before the
                     // eviction window live in the spill file.
+                    //
+                    // NOT "continuously from any absolute offset" — that was the
+                    // claim here, and it is untrue for a session big enough to
+                    // matter. A single read is capped at 1 MiB (round 110's OOM
+                    // fix: the whole spill file used to be read into RAM), and
+                    // past that the window's TAIL is returned. `actual_start`
+                    // reports where the returned bytes really begin, so a caller
+                    // can SEE the gap — but the head is not retrievable by any
+                    // offset. The tool description states this; the comment used
+                    // to contradict it.
                     let merged = |entry: &SessionBuf, offset: usize| {
                         let in_mem_start = entry.dropped as usize;
                         let spilled = offset < in_mem_start;
                         // round-111: read_spill returns the ACTUAL start —
                         // when the window is capped, bytes begin later than
-                        // `offset`; report that as `start` (the R110 cap
-                        // silently mislabeled the tail as [offset, end),
-                        // making the head unreachable and duplicating on
-                        // incremental reads).
+                        // `offset`; report that as `start`. Before that fix the
+                        // response mislabeled the tail as [offset, end), which
+                        // made a capped read look complete and duplicated bytes
+                        // on incremental reads. Reporting the true start makes
+                        // the gap VISIBLE; it does not make the head reachable.
                         let (spill_bytes, actual_start) = if spilled {
                             read_spill(&session_id, offset, in_mem_start, entry.spill_base)
                         } else {
