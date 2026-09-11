@@ -1538,6 +1538,29 @@ async fn api_status(state: &AppState) -> serde_json::Value {
     // (leaked sessions show up here without needing terminal_history).
     let uptime_secs = state.started_at.elapsed().as_secs();
     let live_sessions = state.terminal_mgr.term_list().await.len();
+    // How many commands are WAITING on a human decision, device-wide.
+    //
+    // Round 14 made the approval gate answerable: a question now outlives the
+    // execute that asked it, so an operator who was not watching can still
+    // answer inside its TTL. But the push that announces a question
+    // (`sessions-changed`) terminates in an OPEN panel's renderer — so every
+    // other surface that already polls THIS endpoint (the Electron tray on its
+    // 30 s health poll, the console's fleet card) could not say "a decision is
+    // waiting", which is the one fact that rework exists to deliver. One count
+    // here turns every existing consumer into a notification surface, with no
+    // new route and no change to any other endpoint.
+    //
+    // Deliberately a COUNT and not the requests: the detail already rides
+    // `terminal_list`, and repeating it would make this endpoint a second
+    // source of truth for governance state. `term_list` is cheap (it projects
+    // in-memory rows) and this endpoint is already called on a 30 s cadence.
+    let pending_approvals = state
+        .terminal_mgr
+        .term_list()
+        .await
+        .iter()
+        .filter(|s| s.pending_approval.is_some())
+        .count();
     // stage-n: device vitals (Windows: CPU delta + memory; other hosts
     // return None → fields are omitted, endpoint shape stays additive).
     let vitals = crate::metrics::sample();
@@ -1549,6 +1572,16 @@ async fn api_status(state: &AppState) -> serde_json::Value {
         "live_sessions": live_sessions,
         "serial_ports": serial,
     });
+    // Inserted AFTER construction when non-zero, never built as an `Option`
+    // inside the `json!` — `json!` renders `None` as `"pending_approvals":
+    // null`, not as an omitted key, so the field would be PRESENT on every
+    // response and a consumer could not tell "nothing waiting" from "an older
+    // agent that never sends this". Exactly the trap round 13 recorded for
+    // `runs::clean`, caught here by this change's own test. The `release` field
+    // below already used the insert-after shape for the same reason.
+    if pending_approvals > 0 {
+        out["pending_approvals"] = serde_json::json!(pending_approvals);
+    }
     // round-304: report the npm RELEASE version (written by the swap
     // scripts, agent_update + vale.js) alongside the Cargo protocol
     // version — /api/status consumers otherwise see 1.0.145 forever
@@ -2246,6 +2279,129 @@ mod tests {
         assert_eq!(resp.status(), StatusCode::OK);
         let v = json_body(resp).await;
         assert_eq!(v["version"], env!("CARGO_PKG_VERSION"));
+    }
+
+    /// `/api/status` reports a WAITING DECISION, because the push cannot reach
+    /// every surface that asks.
+    ///
+    /// The approval rework made a question outlive the execute that asked it, so
+    /// an operator who was away can still answer inside the TTL. The push that
+    /// announces one (`sessions-changed`) only reaches an OPEN panel; the tray
+    /// and the console fleet card poll `/api/status` instead, and could not say
+    /// "a decision is waiting" — the one fact the rework exists to deliver.
+    ///
+    /// Two properties, and the second is the one a careless implementation gets
+    /// wrong: the count APPEARS when a question is open, and it is ABSENT (not
+    /// zero) when none is, so a consumer can render a badge without having to
+    /// tell "nothing waiting" from "older agent that never sends this field".
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn status_reports_a_waiting_decision_and_omits_it_when_there_is_none() {
+        let (st, cfg_path) = state_with_cfg("status-pending", CFG_YAML_TOKEN_ONLY);
+
+        // Idle: the field is ABSENT, not zero.
+        let v = json_body(handle_request(req("GET", "/api/status"), st.clone()).await).await;
+        assert!(
+            v.get("pending_approvals").is_none(),
+            "with nothing waiting the field must be OMITTED, so a consumer can \
+             tell 'nothing waiting' from 'an older agent that never sends it' — \
+             got {v}"
+        );
+
+        // Arm a session and start a gated execute; it registers a question.
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        let exec = {
+            let (st2, sid2) = (st.clone(), sid.clone());
+            tokio::spawn(async move {
+                handle_request(
+                    req_with_json(
+                        "POST",
+                        "/api/tools/terminal_execute",
+                        &format!(r#"{{"session_id":"{sid2}","command":"echo status-probe"}}"#),
+                    ),
+                    st2,
+                )
+                .await
+            })
+        };
+        // Bounded wait for the registration, not a bare check: the execute runs
+        // on a spawned task and asserting immediately is a race.
+        tokio::time::timeout(std::time::Duration::from_secs(5), async {
+            loop {
+                if st
+                    .terminal_mgr
+                    .term_pending_approval(&sid)
+                    .await
+                    .unwrap()
+                    .is_some()
+                {
+                    break;
+                }
+                tokio::time::sleep(std::time::Duration::from_millis(20)).await;
+            }
+        })
+        .await
+        .expect("the gate must register a question");
+
+        let v = json_body(handle_request(req("GET", "/api/status"), st.clone()).await).await;
+        assert_eq!(
+            v["pending_approvals"].as_u64(),
+            Some(1),
+            "a waiting decision must be visible to every surface that polls \
+             /api/status — the tray and the console fleet card cannot see the \
+             panel's push: {v}"
+        );
+
+        // Answer it, so the spawned execute completes and nothing is left
+        // registered for the next test in this process.
+        let id = st
+            .terminal_mgr
+            .term_pending_approval(&sid)
+            .await
+            .unwrap()
+            .unwrap()
+            .id;
+        st.terminal_mgr
+            .term_decide_approval(&sid, &id, false, false)
+            .await
+            .unwrap();
+        let _ = exec.await;
+
+        // And it goes back to ABSENT once nothing is waiting.
+        let v = json_body(handle_request(req("GET", "/api/status"), st.clone()).await).await;
+        assert!(
+            v.get("pending_approvals").is_none(),
+            "an answered question must clear the count: {v}"
+        );
+
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
     }
 
     #[tokio::test]

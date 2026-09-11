@@ -721,8 +721,14 @@ async function sectionGovernance() {
   const sess = await (await fetch(BASE + '/api/sessions/' + encodeURIComponent(sid), { headers: H })).json();
   const evs = (sess && sess.events) || [];
   const posture = evs.filter((e) => e.kind === 'approval').map((e) => e.status + ':' + (e.text || ''));
+  // The `asked` event sits between arming and the decision, and that ORDER is
+  // the point: it records that a question was PUT to a person before anything
+  // answered it. Added in round 14 (the gate became answerable) and not
+  // reflected here until now — this assertion had been failing ever since,
+  // silently, because the e2e suite is not wired into CI. Found by running the
+  // suite rather than by reading it.
   check('gov: the trail records the whole approval posture',
-    posture.join(',') === 'armed:,approved:echo governed,granted:echo,revoked:,disarmed:',
+    posture.join(',') === 'armed:,asked:echo governed,approved:echo governed,granted:echo,revoked:,disarmed:',
     posture.join(','));
   const armedCount = posture.filter((p) => p === 'armed:').length;
   check('gov: a repeated arm request is not recorded twice', armedCount === 1, 'armed x' + armedCount);
@@ -742,6 +748,87 @@ async function sectionGovernance() {
   await tool('terminal_close', { session_id: sid });
 }
 
+// ── 8. runs: one AI execution gets a name, and the work wears it --------
+//
+// Run identity (round 13) shipped with unit and integration tests and NO
+// coverage in the one suite that drives the REAL binary end to end — and an
+// absent end-to-end check is precisely what let the round-14 parked-question
+// bug reach a device with every gate green. The property here is a JOIN
+// ACROSS LAYERS: a tool mints the id, a producer stamps it, and
+// /api/operation returns the boundary and the stamped event on one axis. Each
+// layer can be green alone while the id is minted and forgotten, which is
+// exactly what happened before the feature was wired.
+//
+// Platform-neutral: terminal + HTTP only, no Electron, no screenshots.
+async function sectionRuns() {
+  const sid = await tool('terminal_open', { kind: 'pty', rows: 24, cols: 80 });
+  check('runs: session opens', typeof sid === 'string' && sid.length > 0, 'sid=' + sid);
+
+  // A UNIQUE label, so the assertions cannot match an earlier run still inside
+  // the retention window on a device that has been used before.
+  const marker = 'e2e-run-' + Date.now();
+  const begun = await tool('run_begin', { label: marker, goal: 'prove run identity end to end' });
+  const runId = begun && begun.run_id;
+  check('runs: run_begin mints an id', typeof runId === 'string' && runId.startsWith('run-'),
+    'id=' + runId);
+
+  // Work INSIDE the run, carrying the id.
+  await tool('terminal_execute', {
+    session_id: sid,
+    command: 'echo inside-the-run',
+    intent: 'the work the run names',
+    run_id: runId,
+  });
+  // ...and work OUTSIDE it, which must stay unattributed rather than being
+  // absorbed into whatever run happens to precede it.
+  await tool('terminal_execute', { session_id: sid, command: 'echo loose-work' });
+
+  const snap = async () => (await (await fetch(BASE + '/api/operation', { headers: H })).json());
+
+  let op = await snap();
+  const begin = (op.runs || []).find((r) => r.kind === 'run/begin' && r.run_id === runId);
+  check('runs: the boundary is on the timeline', !!begin && begin.label === marker,
+    begin ? 'label=' + begin.label : 'no run/begin for ' + runId);
+  check('runs: the run carries the goal it was given',
+    !!begin && begin.goal === 'prove run identity end to end',
+    begin ? 'goal=' + begin.goal : 'missing');
+
+  const mine = (op.events || []).find((e) => e.command === 'echo inside-the-run');
+  check('runs: the command wears the id run_begin minted',
+    !!mine && mine.run_id === runId,
+    mine ? 'run_id=' + mine.run_id : 'command not on the timeline');
+
+  const loose = (op.events || []).find((e) => e.command === 'echo loose-work');
+  check('runs: work sent without a run is NOT absorbed into one',
+    !!loose && loose.run_id === null,
+    loose ? 'run_id=' + JSON.stringify(loose.run_id) : 'command not on the timeline');
+
+  // The boundary precedes the work it brackets (ordering is by ts_ms).
+  if (begin && mine) {
+    check('runs: the boundary precedes the work it names', begin.ts_ms <= mine.ts_ms,
+      'begin=' + begin.ts_ms + ' event=' + mine.ts_ms);
+  } else {
+    check('runs: the boundary precedes the work it names', false, 'prerequisites missing');
+  }
+
+  // Close it, and the closure is visible.
+  await tool('run_end', { run_id: runId, outcome: 'done' });
+  op = await snap();
+  const end = (op.runs || []).find((r) => r.kind === 'run/end' && r.run_id === runId);
+  check('runs: run_end closes the run with its outcome',
+    !!end && end.outcome === 'done', end ? 'outcome=' + end.outcome : 'no run/end');
+
+  // A LABEL, NEVER A CREDENTIAL: an id that was never minted is ACCEPTED and
+  // reported as `known:false` rather than refused — the runs log is
+  // best-effort, so a client that lost its begin record must still be able to
+  // close. The auth half of the rule is covered by the harness's 401 checks.
+  const unknown = await tool('run_end', { run_id: 'run-does-not-exist', outcome: 'done' });
+  check('runs: an unregistered id is accepted and reported as unknown',
+    !!unknown && unknown.known === false, JSON.stringify(unknown));
+
+  await tool('terminal_close', { session_id: sid });
+}
+
 (async () => {
   if (!TOKEN) { console.error('missing token: pass --token or VALE_AGENT_TOKEN'); process.exit(1); }
   const want = (s) => !ONLY || ONLY.includes(s);
@@ -754,6 +841,7 @@ async function sectionGovernance() {
     if (want('evidence') && !NO_BROWSER) await sectionEvidence();
     if (want('browser') && !NO_BROWSER) await sectionBrowser();
     if (want('governance')) await sectionGovernance();
+    if (want('runs')) await sectionRuns();
   } catch (e) {
     console.error('SECTION ERROR: ' + e.message);
     results.push({ name: 'suite', pass: false, detail: e.message });

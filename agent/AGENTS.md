@@ -573,8 +573,10 @@ Previous round: 2026-09-11 run-identity round 13 (a RED TREE, a broken C
   actions could not be attributed to one execution. `run_begin`/`run_end` are
   new MCP tools in a new `plugins/runs/` (a separate plugin because a run
   explicitly CROSSES the terminal/browser boundary); the id is minted
-  device-side and stamped by all four producers (terminal_execute,
-  terminal_plan, browser_run_script, mcp_client_call); `/api/operation`
+  device-side and stamped by all five producers (terminal_execute,
+  terminal_plan, browser_run_script, mcp_client_call, memory_save — the last
+  one joined in round 16, having been CLAIMED since round 13 while stamping
+  nothing); `/api/operation`
   returns the boundaries beside the events. The rule is stated in
   `runs.rs` and pinned by `no_caller_derives_authority_from_a_run_id`, a
   repo-wide scan for a `run_id` line naming an authorization verb — the first
