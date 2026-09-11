@@ -1186,16 +1186,56 @@ async fn api_session_control(
     }))
 }
 
-/// GET /api/logs — read the tray's vale-update.log (promised by the tray's
-/// doc comment but never implemented) — lets a remote client see auto-update
-/// failures instead of asking the user to open files.
+/// GET /api/logs — the device's own logs, so a remote client can see WHY the
+/// agent behaved oddly without asking someone to open files (or guessing a path
+/// and `cat`-ing it over a PTY).
+///
+/// THE PATH IS THE BUG THIS FIXES. The handler used to read
+/// `exe_dir()/vale-update.log`, but layout v2 MOVES that file — along with
+/// `agent.log`, `installer.log`, `install-result.txt` and `startup.log` — into
+/// `DataDir\logs` (`paths.rs`'s migration list owns that move, and its test
+/// pins it). So the route read a path the migration had just emptied and could
+/// only ever answer `""` on a v2 device. Every writer had already followed the
+/// move: the update swap script writes `{logs}\vale-update.log`, `filelog.rs`
+/// rotates `agent.log` there, and `mcp_client` caps `mcp_diag.log` there.
+///
+/// `logs_dir()` is the single resolution point, so this reads where the writers
+/// write and a future move touches one place again.
+///
+/// The reply carries the TAIL of each file: an operator wants the newest lines,
+/// and `agent.log` is size-rotating so it is bounded but not small. `tail` cuts
+/// on a char boundary with a hard byte budget (the naive `&s[len - n..]` panics
+/// mid-character, which this crate has paid for three times).
 fn api_logs() -> serde_json::Value {
-    // Zero current_exe() guessing outside paths.rs — exe_dir() is the
-    // same resolution, centralized.
-    let dir = crate::paths::exe_dir();
-    let log = dir.join("vale-update.log");
-    let text = std::fs::read_to_string(&log).unwrap_or_else(|_| String::new());
-    serde_json::json!({"ok": true, "log": text.chars().rev().take(64 * 1024).collect::<String>().chars().rev().collect::<String>()})
+    let dir = crate::paths::logs_dir();
+    // The update log is the one this route was invented for; the other two are
+    // the agent's own narration (55 `tracing::` sites land in agent.log and
+    // nothing read it before) and the MCP bridge's diagnostics. Names, not
+    // paths: adding a fourth is one entry here.
+    let read = |name: &str| -> serde_json::Value {
+        match std::fs::read_to_string(dir.join(name)) {
+            Ok(text) => serde_json::json!({
+                "name": name,
+                "present": true,
+                // 64 KiB per file: three files fit comfortably in one reply
+                // while staying far below the clip budget the panel renders.
+                "log": crate::text::tail(&text, 64 * 1024),
+            }),
+            // ABSENT, not empty: "the agent never wrote this" and "it wrote
+            // nothing" are different facts and a reader must be able to tell
+            // them apart — the same discipline the evidence feed follows.
+            Err(_) => serde_json::json!({ "name": name, "present": false, "log": "" }),
+        }
+    };
+    serde_json::json!({
+        "ok": true,
+        "dir": dir.to_string_lossy(),
+        "logs": [
+            read("agent.log"),
+            read("vale-update.log"),
+            read("mcp_diag.log"),
+        ],
+    })
 }
 
 /// GET /api/settings — read the runtime-configurable values (round-69).
@@ -4090,6 +4130,78 @@ mod tests {
         let _ = id;
         st.terminal_mgr.term_close(&sid).await.ok();
         let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// `/api/logs` reads WHERE THE WRITERS WRITE.
+    ///
+    /// The regression this pins is a WIRE-UP bug, not a logic one: the handler
+    /// read `exe_dir()/vale-update.log` while layout v2 had already moved that
+    /// file — and `agent.log`, `installer.log`, `install-result.txt`,
+    /// `startup.log` with it — into `DataDir\logs`. The route therefore read a
+    /// path the migration had emptied and could only ever answer `""`, on every
+    /// v2 device, while every writer had followed the move. Nothing failed: the
+    /// reply was well-formed and empty.
+    ///
+    /// So the test plants a marker where the writers ACTUALLY write and asserts
+    /// the route returns it — and plants a different one where the buggy code
+    /// looked, asserting the route does NOT return that. Asserting only the
+    /// first half would pass against a handler that read both.
+    #[tokio::test]
+    async fn api_logs_reads_the_dir_the_writers_use() {
+        let logs = crate::paths::logs_dir();
+        std::fs::create_dir_all(&logs).unwrap();
+        let real = logs.join("agent.log");
+        let marker = format!("REAL-LOG-MARKER-{}", std::process::id());
+        let had_real = std::fs::read_to_string(&real).ok();
+        std::fs::write(&real, format!("{marker}\n")).unwrap();
+
+        // The path the buggy code resolved. On a v2 device this file does not
+        // exist at all, which is exactly why the route looked empty; the test
+        // creates it so the assertion is about WHICH path is read rather than
+        // about which file happens to exist.
+        let exe = crate::paths::exe_dir();
+        let decoy = exe.join("vale-update.log");
+        let had_decoy = std::fs::read_to_string(&decoy).ok();
+        let decoy_marker = format!("DECOY-MARKER-{}", std::process::id());
+        if std::fs::create_dir_all(&exe).is_ok() {
+            let _ = std::fs::write(&decoy, format!("{decoy_marker}\n"));
+        }
+
+        let resp = handle_request(req("GET", "/api/logs"), state()).await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        let v = json_body(resp).await;
+        let body = v.to_string();
+        // The body is CLIPPED in the failure messages: a real agent.log plus
+        // mcp_diag.log is megabytes, and an assertion that dumps them makes a
+        // failing test unreadable exactly when it is needed most.
+        assert!(
+            body.contains(&marker),
+            "the route must read `logs_dir()` — where the update script, \
+             filelog.rs and the mcp-client diag writer all put their logs. \
+             Reply head: {}",
+            crate::text::clip(&body, 400)
+        );
+        assert!(
+            !body.contains(&decoy_marker),
+            "the route must NOT read `exe_dir()` — layout v2 MOVES the logs out \
+             of there, so that path is empty on every real device and the route \
+             silently answered '' forever. Reply head: {}",
+            crate::text::clip(&body, 400)
+        );
+
+        // Restore whatever was there, so a test run does not leave a fake log.
+        match had_real {
+            Some(prev) => std::fs::write(&real, prev).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&real);
+            }
+        }
+        match had_decoy {
+            Some(prev) => std::fs::write(&decoy, prev).unwrap(),
+            None => {
+                let _ = std::fs::remove_file(&decoy);
+            }
+        }
     }
 
     /// THE ROUTE-COVERAGE SECURITY PIN (SOLID R102).

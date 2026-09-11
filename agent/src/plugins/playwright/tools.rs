@@ -233,7 +233,11 @@ fn tool_browser_run_script() -> ToolDef {
                 let duration_ms = crate::now_millis().saturating_sub(ts);
                 let stdout_full = trunc(stdout);
                 let stderr_full = trunc(stderr);
-                let tail = |s: &str| s.chars().rev().take(300).collect::<String>().chars().rev().collect::<String>();
+                // The last 300 bytes, on a char boundary — the crate's `tail`
+                // rather than a double reversal, which allocated the string
+                // twice and stated its budget in CHARACTERS while every other
+                // budget here is bytes.
+                let tail = |s: &str| crate::text::tail(s, 300).to_string();
                 crate::evidence::append_action_line(&out_dir, ts, &serde_json::json!({
                     "duration_ms": duration_ms,
                     "exit_code": exit_code,
