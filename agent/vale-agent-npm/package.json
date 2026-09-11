@@ -1,8 +1,8 @@
 {
   "name": "vale-agent",
-  "version": "1.2.319",
-  "description": "Vale Agent — Windows device MCP server (terminal/SSH/serial) + panel. Self-hosted npm distribution.",
-  "//build": "唯一构建路径：在本目录执行 npm run build。它是自包含的：经 npm exec 按需拉取 typescript@5，无需预装任何 node_modules（干净检出可跑；旧脚本引用 ../vale-desktop-electron/node_modules/.bin/tsc，干净检出必 ENOENT）。必须用 npm exec --package … -- tsc 的形式：npx 会吃掉传给 tsc 的 -p/--outDir 等参数（round-435：npx 写法从未真正跑通过）。先编 electron TS（--noCheck 纯 emit，与 release.yml 一致）同步两处 src/*.js，再编 src/vale.ts 到 bin/vale.js 并校验 round-298 标记（弱 oracle，只证某次构建发生，新鲜性由 publish-release.sh 的 tsc 重编 + cmp 门保证）。",
+  "version": "1.2.320",
+  "description": "Vale Agent \u2014 Windows device MCP server (terminal/SSH/serial) + panel. Self-hosted npm distribution.",
+  "//build": "\u552f\u4e00\u6784\u5efa\u8def\u5f84\uff1a\u5728\u672c\u76ee\u5f55\u6267\u884c npm run build\u3002\u5b83\u662f\u81ea\u5305\u542b\u7684\uff1a\u7ecf npm exec \u6309\u9700\u62c9\u53d6 typescript@5\uff0c\u65e0\u9700\u9884\u88c5\u4efb\u4f55 node_modules\uff08\u5e72\u51c0\u68c0\u51fa\u53ef\u8dd1\uff1b\u65e7\u811a\u672c\u5f15\u7528 ../vale-desktop-electron/node_modules/.bin/tsc\uff0c\u5e72\u51c0\u68c0\u51fa\u5fc5 ENOENT\uff09\u3002\u5fc5\u987b\u7528 npm exec --package \u2026 -- tsc \u7684\u5f62\u5f0f\uff1anpx \u4f1a\u5403\u6389\u4f20\u7ed9 tsc \u7684 -p/--outDir \u7b49\u53c2\u6570\uff08round-435\uff1anpx \u5199\u6cd5\u4ece\u672a\u771f\u6b63\u8dd1\u901a\u8fc7\uff09\u3002\u5148\u7f16 electron TS\uff08--noCheck \u7eaf emit\uff0c\u4e0e release.yml \u4e00\u81f4\uff09\u540c\u6b65\u4e24\u5904 src/*.js\uff0c\u518d\u7f16 src/vale.ts \u5230 bin/vale.js \u5e76\u6821\u9a8c round-298 \u6807\u8bb0\uff08\u5f31 oracle\uff0c\u53ea\u8bc1\u67d0\u6b21\u6784\u5efa\u53d1\u751f\uff0c\u65b0\u9c9c\u6027\u7531 publish-release.sh \u7684 tsc \u91cd\u7f16 + cmp \u95e8\u4fdd\u8bc1\uff09\u3002",
   "bin": {
     "vale": "bin/vale.js"
   },
