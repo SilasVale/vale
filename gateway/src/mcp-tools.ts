@@ -178,6 +178,11 @@ const TERMINAL_TOOLS: McpTool[] = [
           description:
             "Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim.",
         },
+        approval_id: {
+          type: "string",
+          description:
+            "Optional: the approval id from a result whose state was `awaiting_approval`. If the operator has since approved, the command runs without asking again; the permit covers exactly this command text, once. Omit it for a normal execute.",
+        },
       },
       required: ["session_id", "input"],
     },

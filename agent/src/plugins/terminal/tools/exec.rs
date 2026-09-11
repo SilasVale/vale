@@ -696,7 +696,7 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
     ToolDef::new(
         "terminal_execute",
         "Run a command. If `session_id` is given, writes the command to that session and waits for output (prompt-marker detection on PTY shells, quiet-period fallback otherwise). Otherwise spawns a local shell with enforced timeout. Session mode returns {kind, state, text, read_from, wait_reason, exit_code, truncated, still_running}: state=done means text is COMPLETE; partial/timeout means text is a PREFIX and `still_running=true` — the command is STILL RUNNING, continue with terminal_read(offset=read_from) until you see the prompt/exit. NEVER re-run a command or open a new session just because a partial was returned: the output arrives in the SAME session's buffer; opening new sessions (terminal_open) while old commands run is what causes output to look interleaved/queued. Long silent SSH commands: prefer run_in_background:true or bigger timeout_secs (idle window scales: ssh 3s, serial 4s, pty 1s). Local mode returns {kind, text, truncated}. `run_in_background: true` (session mode) writes the command and returns immediately with a read_from cursor — collect output via terminal_read; do NOT busy-poll, the wait loop is the foreground path. Note: a quiet timeout or truncation does not prove the foreground command exited.",
-        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."},"intent":{"type":"string","description":"Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself."},"considered":{"type":"array","items":{"type":"string"},"description":"Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something."},"plan_step":{"type":"integer","description":"Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step."},"run_id":{"type":"string","description":"Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim."}},"required":["command"]}),
+        json!({"type":"object","properties":{"command":{"type":"string"},"session_id":{"type":"string","description":"Optional: execute in an existing terminal session."},"timeout_secs":{"type":"integer","description":"Max wait time in seconds. Default 30."},"quiet_ms":{"type":"integer","description":"(Session mode) Quiet period in ms before considering output complete. Default 200."},"run_in_background":{"type":"boolean","description":"(Session mode) Write the command and return immediately with a read_from cursor; collect via terminal_read. Default false."},"intent":{"type":"string","description":"Optional: WHY you are running this, in one sentence. Recorded with the command and shown to the operator on the session's path — it is what turns a list of commands into a readable account of what you were doing and why. Send it whenever the reason is not obvious from the command itself."},"considered":{"type":"array","items":{"type":"string"},"description":"Optional: the alternatives you passed over for this step (short labels, max 8). Recorded and shown as the branches NOT taken, which is the part a command log can never reconstruct. Send it when you made a real choice — not for the only way to do something."},"plan_step":{"type":"integer","description":"Optional: which step of your declared terminal_plan this command advances (1-based). Lets the operator see the plan being followed — or quietly abandoned — instead of having to guess which command served which step."},"run_id":{"type":"string","description":"Optional: the id returned by run_begin, naming the execution this command belongs to. One run spans many commands AND browser actions, so this is what lets an operator see a coherent piece of work instead of the day's traffic. Pass back the id verbatim."},"approval_id":{"type":"string","description":"Optional: the approval id from a result whose state was `awaiting_approval`. If the operator has since approved, the command runs without asking again; the permit covers exactly this command text, once. Omit it for a normal execute."}},"required":["command"]}),
         move |params: Value| {
             let terminal_mgr = terminal_mgr.clone();
             let buf = buf.clone();
@@ -775,6 +775,17 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                         .get("run_id")
                         .and_then(|v| v.as_str())
                         .map(|s| s.to_string());
+                    // The approval request this command is picking up. Sent when
+                    // re-issuing a command whose gate PARKED: the operator has
+                    // since answered, so the decision is waiting as a one-shot
+                    // permit and this id is how the command claims it. A wrong or
+                    // stale id simply asks again — it can never widen anything,
+                    // because the permit is bound to the exact command string
+                    // the operator read.
+                    let approval_id: Option<String> = params
+                        .get("approval_id")
+                        .and_then(|v| v.as_str())
+                        .map(|s| s.to_string());
                     // Absolute position of the first post-command byte.
                     // All tracking is byte-exact against the raw buffer, so
                     // UTF-8 lossy conversion and 1MB eviction can never
@@ -846,25 +857,84 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                         .await
                         .unwrap_or(false)
                     {
-                        // RELEASE ON REFUSAL. This gate sits between the acquire
-                        // above and every normal release below, so returning
-                        // through `?` leaves `busy` set forever: the session
-                        // looks alive to the panel and answers every later
-                        // execute with `session_busy` after burning the full
-                        // 30 s acquire budget. Found by an adversarial review
-                        // pass, reproduced by
-                        // `a_refused_command_leaves_the_session_usable`.
-                        //
-                        // The refusal and the timeout are the SAME case here —
-                        // both are `Err` — and the timeout is the one an
-                        // unattended device hits, so this is the normal path
-                        // whenever nobody is watching, not an edge case.
-                        if let Err(e) = terminal_mgr
-                            .term_await_approval(&sid, &command, APPROVAL_WAIT_MS)
-                            .await
-                        {
-                            terminal_mgr.term_release_execute(&sid).await;
-                            return Err(e);
+                        // A LATE YES runs the command unasked. Checked BEFORE the
+                        // gate: if the operator answered after the previous
+                        // execute parked, their decision became a one-shot permit,
+                        // and re-asking would throw away the answer they already
+                        // gave. Consumed on match, so the permit authorises ONE
+                        // run of ONE command.
+                        let permitted = match approval_id.as_deref() {
+                            Some(gid) => terminal_mgr
+                                .term_consume_permit(&sid, gid, &command)
+                                .await
+                                .unwrap_or(false),
+                            None => false,
+                        };
+                        if !permitted {
+                            // PUSH, so an operator who is not staring at this
+                            // pane learns a decision is waiting. Emitted BEFORE
+                            // the await because the prompt has to exist for them
+                            // to act on: registration is the first thing
+                            // `term_await_approval` does, synchronously, while the
+                            // panel still has a network round trip to make before
+                            // it reads `terminal_list`. (The panel also keeps a
+                            // slow poll as a backstop, which is what covers the
+                            // case where that ordering ever stops holding.)
+                            //
+                            // The frame is the EXISTING control frame, not a new
+                            // event type: the panel's SSE layer forwards any `ev`
+                            // frame as a window event and `useSessions` already
+                            // refreshes `terminal_list` on this one.
+                            bus.emit_term_output(
+                                serde_json::json!({ "ev": "sessions-changed" }),
+                            );
+                            match terminal_mgr
+                                .term_await_approval(&sid, &command, APPROVAL_WAIT_MS)
+                                .await
+                            {
+                                Ok(crate::tools::terminal::ApprovalOutcome::Granted) => {}
+                                // NOBODY ANSWERED. The command still does not run
+                                // — fail-closed is unchanged — but the session is
+                                // handed back and the question stays answerable,
+                                // so an operator who was not watching can still
+                                // say yes and the AI can pick it up with
+                                // `approval_id`.
+                                Ok(crate::tools::terminal::ApprovalOutcome::Parked {
+                                    id,
+                                    expires_in_ms,
+                                }) => {
+                                    terminal_mgr.term_release_execute(&sid).await;
+                                    return Ok(json!({
+                                        "kind": "session",
+                                        "session_id": sid,
+                                        // A STATE, not an error: the existing
+                                        // vocabulary is done/partial/timeout, and
+                                        // an error would tell the model the same
+                                        // thing a refusal does. The two must stay
+                                        // distinguishable — one means stop, the
+                                        // other means the question is still open.
+                                        "state": "awaiting_approval",
+                                        // Unambiguous for a model that skims.
+                                        "ran": false,
+                                        "text": "",
+                                        "approval": { "id": id, "expires_in_ms": expires_in_ms },
+                                        "note": "The approval gate is armed and nobody has \
+                                                 answered yet. The command did NOT run. Ask the \
+                                                 operator to decide, then re-issue the SAME \
+                                                 command with approval_id set to this id.",
+                                    }));
+                                }
+                                // A refusal, or a device error. Both release the
+                                // lock: this gate sits between the acquire above
+                                // and every normal release below, so returning
+                                // through `?` would leave `busy` set forever and
+                                // the session would look alive while refusing
+                                // every later command.
+                                Err(e) => {
+                                    terminal_mgr.term_release_execute(&sid).await;
+                                    return Err(e);
+                                }
+                            }
                         }
                     }
                     // First-prompt gate (stage-l rework): the old gate waited

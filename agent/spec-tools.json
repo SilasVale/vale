@@ -278,6 +278,7 @@
   {
     "name": "terminal_execute",
     "params": [
+      "approval_id",
       "command",
       "considered",
       "intent",

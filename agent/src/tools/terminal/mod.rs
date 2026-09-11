@@ -117,6 +117,31 @@ pub struct PendingApprovalInfo {
     pub expires_in_ms: u64,
 }
 
+/// How an execute's wait at the approval gate ended, for the endings that are
+/// NOT errors.
+///
+/// A REFUSAL is deliberately absent: `ApprovalDenied` stays a typed
+/// [`DeviceError`], because that is what the gateway dispatches on and what a
+/// client routes with (`approval_denied` is a client-visible code). Turning it
+/// into an in-band state here would be a silent change to a published contract
+/// for no gain — so this enum covers the two outcomes that are neither "carry
+/// on" nor "failed": the command may run, or the question is still open.
+///
+/// That third case is why this type exists at all. The old `Result<bool>` had
+/// only two shapes, so "nobody has answered YET" had to be reported as an error
+/// — which is exactly what made an unattended gate indistinguishable from a
+/// refusal, to the AI and to the operator both.
+#[derive(Debug, Clone, PartialEq, Eq)]
+pub enum ApprovalOutcome {
+    /// The operator approved, or a standing grant already covered this command.
+    /// The command may proceed.
+    Granted,
+    /// Nobody answered within the block. The command did NOT run, the lock is
+    /// released, and the question stays answerable for the rest of its TTL — the
+    /// AI can re-issue the same command with this `id` to pick up a late yes.
+    Parked { id: String, expires_in_ms: u64 },
+}
+
 /// Infer the session's shell kind for the command wrapper (stage-l):
 /// "powershell" | "cmd" | "bash" | "fish" | "unknown".
 /// - PTY: from the target's file name (blank target = the platform default
@@ -397,6 +422,16 @@ mod desktop_impl {
         /// operator actually read and approved. In-memory, like the hold: a
         /// restart must not carry forward a permission nobody re-confirmed.
         approval_grants: Vec<String>,
+        /// One-shot permits for requests the operator answered AFTER the execute
+        /// had already parked.
+        ///
+        /// A parked execute has returned to the AI by then, so there is nobody
+        /// left to hand the decision to. Without a permit the operator's late
+        /// "yes" would decide a request no one is waiting on, and the command
+        /// would never run — the answer would look recorded and do nothing.
+        /// In-memory and single-use, like the grants: a permit is a live
+        /// coordination fact, so it dies with the session (and with the process).
+        approval_permits: Vec<ApprovalPermit>,
         /// What the operator asked for. In-memory with the session (a goal
         /// without a session is meaningless), while the STATEMENT of it is
         /// recorded in the audit trail — the same live/durable split as the
@@ -427,13 +462,20 @@ mod desktop_impl {
     /// already decided or past its deadline. ONE definition: `term_list` and
     /// `term_info` answering differently would make the panel's prompt flicker
     /// depending on which call it happened to make.
+    ///
+    /// The deadline is the QUESTION's TTL, not the execute's block. Using the
+    /// block here hid every prompt the moment the execute stopped waiting —
+    /// which is precisely the case this rework exists for. The suite missed it
+    /// because the unit tests read `term_pending_approval` while the PANEL reads
+    /// THIS one: two implementations of a single read, and only one covered.
+    /// Caught by driving the real binary — the parked result came back correct
+    /// while `terminal_list` reported no pending request at all.
     fn live_pending(s: &Session) -> Option<PendingApprovalInfo> {
         let p = s.pending_approval.as_ref()?;
         if p.decided.is_some() {
             return None;
         }
-        let elapsed = p.requested_at.elapsed().as_millis() as u64;
-        let left = APPROVAL_WAIT_MS.saturating_sub(elapsed);
+        let left = p.ttl_left_ms();
         (left > 0).then(|| PendingApprovalInfo {
             id: p.id.clone(),
             command: p.command.clone(),
@@ -455,6 +497,49 @@ mod desktop_impl {
         requested_at: std::time::Instant,
         /// `None` while pending; `Some(approve)` once decided.
         decided: Option<bool>,
+        /// Whether the execute that registered this has already STOPPED waiting.
+        ///
+        /// Set by the WAITER when its own budget runs out, rather than derived
+        /// from `requested_at` against the production constant. The block is the
+        /// CALLER's budget (`term_await_approval`'s `max_wait_ms`) and a caller
+        /// may wait less than `APPROVAL_WAIT_MS` — the tests do, and any future
+        /// caller trading patience for latency would. A derivation would then be
+        /// wrong in the one direction that matters: it would say "nobody is
+        /// waiting" while an execute still was, and a late answer would mint a
+        /// permit for a command that is about to run anyway — running it twice.
+        parked: bool,
+    }
+
+    impl PendingApproval {
+        fn elapsed_ms(&self) -> u64 {
+            self.requested_at.elapsed().as_millis() as u64
+        }
+        /// How long the question itself remains answerable.
+        fn ttl_left_ms(&self) -> u64 {
+            APPROVAL_TTL_MS.saturating_sub(self.elapsed_ms())
+        }
+        /// Whether a decision now would still be able to DO anything.
+        fn is_inside_ttl(&self) -> bool {
+            self.ttl_left_ms() > 0
+        }
+    }
+
+    /// A late yes, held until the AI asks for it again.
+    ///
+    /// Bound to the EXACT command string the operator was shown, not to a
+    /// prefix and not to the session alone. That is the whole safety property:
+    /// an operator who approved `systemctl restart nginx` has approved THAT
+    /// command, and a permit that matched by prefix or by session would let the
+    /// next thing the AI thought of run unasked under a decision a person made
+    /// about something else. `approval::grant_for` deliberately does the opposite
+    /// (it derives a first-word prefix) because a grant is a standing decision
+    /// the operator explicitly chose with "remember this"; a permit is not.
+    struct ApprovalPermit {
+        /// The gate id that was approved — so a permit is presented by the
+        /// request it belongs to, never guessed.
+        id: String,
+        /// The command the operator read, byte for byte.
+        command: String,
     }
 
     /// How long an execute waits for a decision before giving up.
@@ -464,7 +549,23 @@ mod desktop_impl {
     /// read the command, short enough that it fits inside the MCP client
     /// timeouts the existing 30 s acquire wait already lives within. An operator
     /// who needs longer should take the keyboard, which is unbounded.
-    const APPROVAL_WAIT_MS: u64 = 60_000;
+    pub(super) const APPROVAL_WAIT_MS: u64 = 60_000;
+
+    /// How long the QUESTION stands, as opposed to how long one call waits.
+    ///
+    /// TWO CLOCKS, because they answer two different questions: how long may a
+    /// single tool call hang (the block above), and how long may an unanswered
+    /// question remain answerable (this). Collapsing them is what made the gate
+    /// unusable in practice — an operator who was not watching the right pane at
+    /// the right second could not answer at all, the execute failed closed, and
+    /// the work stopped for a reason nobody saw.
+    ///
+    /// On the block deadline the execute PARKS (releases the lock, keeps the
+    /// request registered); only when THIS expires does the request retire. The
+    /// request itself is in-memory and dies with the process, deliberately: a
+    /// session is a per-boot entity, so a restored prompt would name a session
+    /// that cannot run the command.
+    pub(super) const APPROVAL_TTL_MS: u64 = 15 * 60_000;
     /// Longest goal we keep, in bytes.
     ///
     /// Sized to hold a real sentence or two ("get the ONU at 0/1 provisioned on
@@ -483,6 +584,22 @@ mod desktop_impl {
 
     /// Poll cadence while waiting for a decision.
     const APPROVAL_POLL_MS: u64 = 200;
+
+    /// Record an approval-posture event in the session's audit trail.
+    ///
+    /// The manager owns this rather than the callers because the event being
+    /// recorded IS the manager's own state change: `asked` happens at
+    /// registration, which is inside the gate and before any decision can be
+    /// observed. A caller could only log it afterwards, which would put `asked`
+    /// AFTER the `approved` the route already wrote — an audit that reads
+    /// backwards is worse than one with a missing line.
+    ///
+    /// Best-effort, like every audit write: an unwritable trail must never fail
+    /// the command it describes.
+    fn audit_approval(sid: &str, action: &str, subject: &str) {
+        crate::session_log::SessionLogger::new(crate::paths::sessions_dir())
+            .log_approval(sid, action, subject);
+    }
 
     /// Sessions idle this long (no output) are force-closed. Guards against a
     /// client disconnect leaking SSH/PTY/serial sessions forever: nothing tied
@@ -722,6 +839,7 @@ mod desktop_impl {
                     approval_required: false,
                     pending_approval: None,
                     approval_grants: Vec::new(),
+                    approval_permits: Vec::new(),
                     goal: None,
                     plan: Vec::new(),
                 });
@@ -1119,8 +1237,11 @@ mod desktop_impl {
                     if p.decided.is_some() {
                         return None;
                     }
-                    let elapsed = p.requested_at.elapsed().as_millis() as u64;
-                    let left = APPROVAL_WAIT_MS.saturating_sub(elapsed);
+                    // The QUESTION's clock, not the block's: a parked request is
+                    // still answerable, and reporting the block here would hide
+                    // every prompt the moment the execute stopped waiting —
+                    // which is precisely the case this rework exists to fix.
+                    let left = p.ttl_left_ms();
                     (left > 0).then(|| PendingApprovalInfo {
                         id: p.id.clone(),
                         command: p.command.clone(),
@@ -1149,16 +1270,49 @@ mod desktop_impl {
             let mut inner = self.inner.lock().await;
             match inner.sessions.iter_mut().find(|s| s.id == sid) {
                 Some(s) => {
+                    // An EXPIRED question is not decidable. Accepting a yes now
+                    // would record a decision that cannot reach anything: the
+                    // execute gave up long ago and the registration is about to
+                    // be swept. Reporting "no such request" is the honest answer,
+                    // and the panel's `decided:false` already means exactly that.
+                    let decidable = s
+                        .pending_approval
+                        .as_ref()
+                        .is_some_and(|p| p.id == id && p.decided.is_none() && p.is_inside_ttl());
+                    if !decidable {
+                        // A decision that arrived AFTER the question ran out of
+                        // time. Recording it is the point of having a TTL at all:
+                        // otherwise the operator's click vanishes with no trace,
+                        // and the trail shows a question that was never answered
+                        // even though somebody tried to.
+                        let too_late = s
+                            .pending_approval
+                            .as_ref()
+                            .filter(|p| p.id == id && p.decided.is_none() && !p.is_inside_ttl())
+                            .map(|p| p.command.clone());
+                        if let Some(cmd) = too_late {
+                            s.pending_approval = None;
+                            drop(inner);
+                            audit_approval(sid, "expired", &cmd);
+                        }
+                        return Ok(false);
+                    }
+                    // Was anyone still waiting? Past the block nobody is, which
+                    // is what makes this a LATE answer.
+                    let parked = s.pending_approval.as_ref().is_some_and(|p| p.parked);
+                    let shown_command = s
+                        .pending_approval
+                        .as_ref()
+                        .map(|p| p.command.clone())
+                        .unwrap_or_default();
+
                     // The grant is derived HERE, from the command the operator
                     // was SHOWN — never from a value the caller supplied. A
                     // client therefore cannot widen its own permissions: the
                     // most it can do is say "and remember this", and the
                     // remembered thing is whatever was on screen.
                     let derived = if approve && grant {
-                        s.pending_approval
-                            .as_ref()
-                            .filter(|p| p.id == id && p.decided.is_none())
-                            .and_then(|p| approval::grant_for(&p.command))
+                        approval::grant_for(&shown_command)
                     } else {
                         None
                     };
@@ -1167,6 +1321,22 @@ mod desktop_impl {
                             s.approval_grants.push(g);
                         }
                     }
+
+                    if parked {
+                        // A late answer. The execute is gone, so the decision has
+                        // nobody to hand itself to — it becomes a one-shot permit
+                        // and the registration is cleared, because no reader
+                        // should see a prompt for a question already answered.
+                        if approve {
+                            s.approval_permits.push(ApprovalPermit {
+                                id: id.to_string(),
+                                command: shown_command,
+                            });
+                        }
+                        s.pending_approval = None;
+                        return Ok(true);
+                    }
+
                     match s.pending_approval.as_mut() {
                         Some(p) if p.id == id && p.decided.is_none() => {
                             p.decided = Some(approve);
@@ -1215,23 +1385,32 @@ mod desktop_impl {
             }
         }
 
-        /// Block until this command is approved, refused, or the deadline passes.
+        /// Block until this command is approved, refused, or the block expires.
         ///
-        /// Registers the request so the operator can see it, then polls. Every
-        /// exit path CLEARS the registration, so the panel never shows a prompt
-        /// for a command that has already finished waiting — the prompt is only
-        /// ever a live question.
+        /// Registers the request so the operator can see it, then polls. The
+        /// registration is cleared when a decision lands or when it is
+        /// superseded; on a BLOCK TIMEOUT it is deliberately KEPT, because the
+        /// question is still answerable for the rest of its TTL and that is what
+        /// lets an operator who was not watching still say yes.
         ///
         /// The caller runs this BEFORE writing to the shell, so a denial or a
-        /// timeout means the command genuinely never reached the device. That
+        /// park means the command genuinely never reached the device. That
         /// ordering is what makes the gate fail-closed rather than advisory.
+        ///
+        /// Returns what HAPPENED rather than a `Result<bool>`, because a park is
+        /// neither success nor failure and the old two-valued answer had to
+        /// report it as the latter — which is how an unanswered gate became
+        /// indistinguishable from a refusal.
         pub async fn term_await_approval(
             &self,
             sid: &str,
             command: &str,
             max_wait_ms: u64,
-        ) -> Result<bool, DeviceError> {
+        ) -> Result<ApprovalOutcome, DeviceError> {
             let id = approval_id();
+            // The command a SUPERSEDED parked request was asking about, kept so
+            // its expiry can be recorded outside the lock.
+            let mut superseded: Option<String> = None;
             {
                 let mut inner = self.inner.lock().await;
                 match inner.sessions.iter_mut().find(|s| s.id == sid) {
@@ -1244,26 +1423,39 @@ mod desktop_impl {
                             .iter()
                             .any(|g| approval::grant_matches(g, command)) =>
                     {
-                        return Ok(true);
+                        return Ok(ApprovalOutcome::Granted);
                     }
                     Some(s) => {
-                        // At most one request per session: the execute lock
-                        // already serialises executes, so a second registration
-                        // would mean the first waiter was abandoned and its
-                        // prompt should not be overwritten silently.
-                        if s.pending_approval
-                            .as_ref()
-                            .is_some_and(|p| p.decided.is_none())
-                        {
-                            return Err(DeviceError::SessionBusy {
-                                id: sid.to_string(),
-                            });
+                        // At most one request per session — but a PARKED one (past
+                        // its block, nobody waiting) is SUPERSEDED rather than
+                        // blocking the session. Before parking existed the waiter
+                        // held the execute lock, so a second request could not
+                        // arise; now that a park releases the lock, refusing here
+                        // would leave the session unusable for 15 minutes because
+                        // of a question nobody answered. The operator's attention
+                        // belongs to what the AI is doing NOW.
+                        if let Some(p) = s.pending_approval.as_ref() {
+                            if p.decided.is_none() && !p.parked {
+                                // A live waiter should hold the execute lock, so
+                                // this is defensive: it can only happen if the
+                                // lock and the registration disagree.
+                                return Err(DeviceError::SessionBusy {
+                                    id: sid.to_string(),
+                                });
+                            }
+                            if p.decided.is_none() {
+                                // Superseded unanswered: it stopped being
+                                // answerable the moment a newer question took its
+                                // place, which is exactly what `expired` means.
+                                superseded = Some(p.command.clone());
+                            }
                         }
                         s.pending_approval = Some(PendingApproval {
                             id: id.clone(),
                             command: command.to_string(),
                             requested_at: std::time::Instant::now(),
                             decided: None,
+                            parked: false,
                         });
                     }
                     None => {
@@ -1273,19 +1465,25 @@ mod desktop_impl {
                     }
                 }
             }
+            // Outside the lock: both writes touch the filesystem.
+            if let Some(old) = superseded {
+                audit_approval(sid, "expired", &old);
+            }
+            audit_approval(sid, "asked", command);
 
             let deadline = std::time::Instant::now()
                 + std::time::Duration::from_millis(max_wait_ms.min(APPROVAL_WAIT_MS));
-            let outcome = loop {
+            let decided = loop {
                 {
                     let inner = self.inner.lock().await;
-                    let decided = inner
+                    let d = inner
                         .sessions
                         .iter()
                         .find(|s| s.id == sid)
                         .and_then(|s| s.pending_approval.as_ref())
+                        .filter(|p| p.id == id)
                         .and_then(|p| p.decided);
-                    if let Some(d) = decided {
+                    if let Some(d) = d {
                         break Some(d);
                     }
                 }
@@ -1295,27 +1493,119 @@ mod desktop_impl {
                 tokio::time::sleep(std::time::Duration::from_millis(APPROVAL_POLL_MS)).await;
             };
 
-            // Clear on EVERY exit path. A registered-but-decided request left in
-            // place would make the next execute see a stale entry and refuse
-            // itself with SessionBusy.
-            {
-                let mut inner = self.inner.lock().await;
-                if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
-                    if s.pending_approval.as_ref().is_some_and(|p| p.id == id) {
-                        s.pending_approval = None;
+            match decided {
+                // A decision landed while we waited: the waiter consumes it, so
+                // the registration goes and no permit is minted (the command is
+                // about to run; a permit for it would be a second way to run it).
+                Some(approve) => {
+                    {
+                        let mut inner = self.inner.lock().await;
+                        if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                            if s.pending_approval.as_ref().is_some_and(|p| p.id == id) {
+                                s.pending_approval = None;
+                            }
+                        }
+                    }
+                    if approve {
+                        Ok(ApprovalOutcome::Granted)
+                    } else {
+                        Err(DeviceError::ApprovalDenied {
+                            id: sid.to_string(),
+                        })
                     }
                 }
+                // NOBODY ANSWERED. This is the case the rework exists for: the
+                // command still does not run (fail-closed is unchanged), but the
+                // question survives and the session is handed back so the AI can
+                // do something else — or come back with this id once a person
+                // answers.
+                None => {
+                    let expires_in_ms = {
+                        let mut inner = self.inner.lock().await;
+                        let s = inner.sessions.iter_mut().find(|s| s.id == sid);
+                        match s.and_then(|s| s.pending_approval.as_mut()) {
+                            Some(p) if p.id == id => {
+                                // Mark that nobody is waiting any more. This is
+                                // what makes a LATER decision a permit instead of
+                                // a value handed to a waiter that has gone.
+                                p.parked = true;
+                                p.ttl_left_ms()
+                            }
+                            _ => 0,
+                        }
+                    };
+                    Ok(ApprovalOutcome::Parked { id, expires_in_ms })
+                }
             }
+        }
 
-            match outcome {
-                Some(true) => Ok(true),
-                Some(false) => Err(DeviceError::ApprovalDenied {
+        /// Spend a one-shot permit, if the (id, command) pair matches one.
+        ///
+        /// Consumed on match, so a permit authorises ONE run of ONE command: a
+        /// retry after a failure asks again, which is the safe direction (the
+        /// operator approved a moment, not a lifetime).
+        ///
+        /// The command must match the one the operator READ. A permit is not a
+        /// grant: `approval::grant_for` derives a first-word prefix because
+        /// "remember this" is an explicit standing decision, whereas a permit is
+        /// a single yes to a single line — so a different command presenting the
+        /// same id asks again rather than running unasked.
+        pub async fn term_consume_permit(
+            &self,
+            sid: &str,
+            approval_id: &str,
+            command: &str,
+        ) -> Result<bool, DeviceError> {
+            let mut inner = self.inner.lock().await;
+            match inner.sessions.iter_mut().find(|s| s.id == sid) {
+                Some(s) => {
+                    match s
+                        .approval_permits
+                        .iter()
+                        .position(|p| p.id == approval_id && p.command == command)
+                    {
+                        Some(i) => {
+                            s.approval_permits.remove(i);
+                            Ok(true)
+                        }
+                        None => Ok(false),
+                    }
+                }
+                None => Err(DeviceError::SessionNotFound {
                     id: sid.to_string(),
                 }),
-                // FAIL-CLOSED: no decision means no command.
-                None => Err(DeviceError::ApprovalTimeout {
-                    id: sid.to_string(),
-                }),
+            }
+        }
+
+        /// How many permits are outstanding — for tests and for a caller that
+        /// wants to know whether a late yes is still waiting to be spent.
+        #[cfg(test)]
+        pub async fn term_permit_count(&self, sid: &str) -> usize {
+            let inner = self.inner.lock().await;
+            inner
+                .sessions
+                .iter()
+                .find(|s| s.id == sid)
+                .map(|s| s.approval_permits.len())
+                .unwrap_or(0)
+        }
+
+        /// Backdate a pending request, so a test can drive TTL EXPIRY without
+        /// sleeping fifteen minutes.
+        ///
+        /// Exists because the rule under test is "expiry is measured from
+        /// `requested_at`", and that is a pure function of two instants — a test
+        /// that waited would be testing the wall clock instead. Test-only: the
+        /// production path can only ever move a request FORWARD in time.
+        #[cfg(test)]
+        pub async fn term_test_age_pending(&self, sid: &str, by_ms: u64) {
+            let mut inner = self.inner.lock().await;
+            if let Some(s) = inner.sessions.iter_mut().find(|s| s.id == sid) {
+                if let Some(p) = s.pending_approval.as_mut() {
+                    p.requested_at = std::time::Instant::now()
+                        .checked_sub(std::time::Duration::from_millis(by_ms))
+                        .unwrap_or(p.requested_at);
+                }
             }
         }
 
@@ -1458,6 +1748,11 @@ pub use stub::TerminalManager;
 #[cfg(test)]
 mod tests {
     use super::*;
+    // The gate's clocks live in `desktop_impl` (the feature-gated half); the
+    // tests assert against the same values production uses rather than
+    // restating them, so a change to either constant is felt here.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    use super::desktop_impl::APPROVAL_TTL_MS;
 
     #[test]
     fn parse_ssh_user_host_port() {
@@ -1838,26 +2133,39 @@ mod tests {
         let started = std::time::Instant::now();
         // Ask with a tiny budget so the test does not sit for a minute; the
         // production call passes APPROVAL_WAIT_MS.
-        let err = mgr
+        let outcome = mgr
             .term_await_approval(&sid, "rm -rf /", 300)
             .await
-            .expect_err("an unanswered request must fail, never proceed");
-        assert_eq!(err.code(), "approval_timeout");
+            .expect("a park is not an error: the question is still open");
+        // The SAFETY property this test guards is unchanged and is asserted
+        // here: an unanswered gate must never report that the command may run.
+        // What moved is only the SHAPE of "nobody answered" — it used to be an
+        // `approval_timeout` error, which conflated "not yet" with "refused" and
+        // threw the question away; it is now a park, which says the same thing
+        // about the command (it did NOT run) while keeping the question alive.
         assert!(
-            err.to_string().to_lowercase().contains("not run"),
-            "the message must state that nothing ran: {err}"
+            matches!(
+                outcome,
+                crate::tools::terminal::ApprovalOutcome::Parked { .. }
+            ),
+            "an unanswered request must PARK, never report Granted: {outcome:?}"
         );
         assert!(
             started.elapsed() < std::time::Duration::from_secs(5),
             "the wait must honour its budget"
         );
 
-        // The request must be GONE afterwards: a prompt for a command that has
-        // already given up would invite the operator to answer a question
-        // nobody is waiting for.
+        // The request must SURVIVE the block — this is the rework's whole point,
+        // and it is the deliberate INVERSE of what this assertion used to say.
+        // The old rule ("a prompt for a command that has given up must be
+        // cleared") was written when the block WAS the question's whole life: a
+        // prompt past it was a lie. With a TTL the question genuinely outlives
+        // the waiter, so clearing it here would throw away the only chance the
+        // operator had to answer — which is how a gate nobody was watching
+        // became a gate nobody could answer.
         assert!(
-            mgr.term_pending_approval(&sid).await.unwrap().is_none(),
-            "the pending request must be cleared on timeout"
+            mgr.term_pending_approval(&sid).await.unwrap().is_some(),
+            "a parked question must remain visible and answerable for its TTL"
         );
 
         mgr.term_close(&sid).await.ok();
@@ -1886,8 +2194,9 @@ mod tests {
                 .term_decide_approval(&sid, &id, true, false)
                 .await
                 .unwrap());
-            assert!(
+            assert_eq!(
                 waiter.await.unwrap().unwrap(),
+                crate::tools::terminal::ApprovalOutcome::Granted,
                 "an approved command proceeds"
             );
         }
@@ -1939,7 +2248,15 @@ mod tests {
             seen.command, "vlan 100",
             "the prompt shows WHAT it will run"
         );
-        assert!(seen.expires_in_ms > 0 && seen.expires_in_ms <= 60_000);
+        // The reader is shown the QUESTION's TTL, not the execute's block —
+        // `live_pending` and `term_pending_approval` share one deadline now, so
+        // a prompt does not vanish from the panel the moment the execute stops
+        // waiting. Bounded above by the TTL, not by 60 s.
+        assert!(
+            seen.expires_in_ms > 0 && seen.expires_in_ms <= APPROVAL_TTL_MS,
+            "a live prompt counts down the question's TTL: got {}ms",
+            seen.expires_in_ms
+        );
         assert!(mgr.term_info(&sid).await.unwrap().approval_required);
 
         let id = seen.id.clone();
@@ -2049,7 +2366,10 @@ mod tests {
                 .term_decide_approval(&sid, &id, true, true)
                 .await
                 .unwrap());
-            assert!(waiter.await.unwrap().unwrap());
+            assert_eq!(
+                waiter.await.unwrap().unwrap(),
+                crate::tools::terminal::ApprovalOutcome::Granted
+            );
         }
         assert_eq!(
             mgr.term_approval_grants(&sid).await.unwrap(),
@@ -2058,10 +2378,11 @@ mod tests {
 
         // A sibling command in the same family: NO wait, no prompt.
         let t = std::time::Instant::now();
-        assert!(
+        assert_eq!(
             mgr.term_await_approval(&sid, "display ont info 0 1", 60_000)
                 .await
                 .unwrap(),
+            crate::tools::terminal::ApprovalOutcome::Granted,
             "a granted family must run without asking"
         );
         assert!(
@@ -2079,11 +2400,15 @@ mod tests {
         let waiter =
             tokio::spawn(async move { mgr2.term_await_approval(&sid2, "vlan 100", 400).await });
         wait_pending(&mgr, &sid).await;
-        let err = waiter.await.unwrap().unwrap_err();
-        assert_eq!(
-            err.code(),
-            "approval_timeout",
-            "an ungranted command still asks"
+        // It still ASKS — the grant covered only the other family. Nobody
+        // answers here, so the shape is a park; the point is that it did not
+        // sail through on the sibling's grant.
+        assert!(
+            matches!(
+                waiter.await.unwrap().unwrap(),
+                crate::tools::terminal::ApprovalOutcome::Parked { .. }
+            ),
+            "an ungranted command must still ask"
         );
 
         mgr.term_close(&sid).await.ok();
@@ -2122,7 +2447,13 @@ mod tests {
         // Bounded wait, not a bare check: the registration happens on a spawned
         // task, so asserting immediately is a race (it was, and it failed).
         wait_pending(&mgr, &sid).await;
-        waiter.await.unwrap().unwrap_err();
+        assert!(
+            matches!(
+                waiter.await.unwrap().unwrap(),
+                crate::tools::terminal::ApprovalOutcome::Parked { .. }
+            ),
+            "a chained command must still ASK rather than inherit the grant"
+        );
         mgr.term_close(&sid).await.ok();
     }
 
@@ -2180,7 +2511,10 @@ mod tests {
             .term_decide_approval(&sid, &id, true, true)
             .await
             .unwrap());
-        assert!(waiter.await.unwrap().unwrap());
+        assert_eq!(
+            waiter.await.unwrap().unwrap(),
+            crate::tools::terminal::ApprovalOutcome::Granted
+        );
         assert!(
             mgr.term_approval_grants(&sid).await.unwrap().is_empty(),
             "a command whose first word does not describe it must not produce a grant"
@@ -2225,7 +2559,13 @@ mod tests {
                 .await
         });
         wait_pending(&mgr, &sid).await;
-        waiter.await.unwrap().unwrap_err();
+        assert!(
+            matches!(
+                waiter.await.unwrap().unwrap(),
+                crate::tools::terminal::ApprovalOutcome::Parked { .. }
+            ),
+            "a chained command must still ASK rather than inherit the grant"
+        );
         mgr.term_close(&sid).await.ok();
     }
 
@@ -2587,6 +2927,303 @@ mod tests {
             !mgr.term_marker_injected("no-such-session").await,
             "setting a flag on a non-existent session must be a no-op, not a \
              resurrection: the lookup is by id"
+        );
+    }
+
+    // ── PARKING: the unanswered gate stops being a dead end ──────────────
+
+    /// NOBODY ANSWERED → the execute PARKS: it gives up waiting, hands the
+    /// session back, and LEAVES THE QUESTION OPEN.
+    ///
+    /// This is the whole point of the rework. The old gate collapsed
+    /// "unanswered" into `ApprovalTimeout`, so an operator who was not watching
+    /// could not answer at all — the work stopped for a reason nobody saw, and
+    /// the question itself was thrown away at the same moment. The assertions
+    /// below are the three separate facts that has to become: the command did
+    /// not run, the session is usable again, and the question survives.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn an_unanswered_gate_parks_and_keeps_the_question() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let started = std::time::Instant::now();
+        let outcome = mgr
+            .term_await_approval(&sid, "display version", 150)
+            .await
+            .expect("a park is NOT an error");
+        assert!(
+            started.elapsed() < std::time::Duration::from_secs(3),
+            "the block is bounded by the caller's budget, so a park must return \
+             promptly instead of hanging to the TTL"
+        );
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, expires_in_ms } = outcome else {
+            panic!("an unanswered gate must PARK, got {outcome:?}");
+        };
+        assert!(!id.is_empty(), "the parked question must carry its id");
+        assert!(
+            expires_in_ms >= APPROVAL_TTL_MS - 5_000,
+            "the countdown is the QUESTION's TTL, not the block that just \
+             expired — got {expires_in_ms}ms"
+        );
+
+        // THE QUESTION SURVIVES. This is what a timeout used to destroy, and it
+        // is what lets an operator who was not watching still say yes.
+        let still = mgr
+            .term_pending_approval(&sid)
+            .await
+            .unwrap()
+            .expect("a parked question is still answerable — that is its whole point");
+        assert_eq!(still.id, id, "the same question, not a new one");
+        assert_eq!(still.command, "display version");
+    }
+
+    /// A LATE YES becomes a one-shot permit, and the command runs unasked when
+    /// the AI presents it.
+    ///
+    /// Without the permit the operator's answer would decide a request whose
+    /// waiter has already gone: recorded in the trail, and doing nothing. The
+    /// test drives the real sequence — park, decide, re-issue — rather than
+    /// poking the permit store, because the failure it guards against is a
+    /// plumbing gap between those three steps.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_late_yes_mints_a_permit_that_runs_the_command_once() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, .. } = mgr
+            .term_await_approval(&sid, "reload the config", 150)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a park");
+        };
+        assert_eq!(mgr.term_permit_count(&sid).await, 0, "nothing decided yet");
+
+        // The operator answers AFTER the park. This must be decidable — the
+        // question is still inside its TTL — and it must mint the permit.
+        assert!(
+            mgr.term_decide_approval(&sid, &id, true, false)
+                .await
+                .unwrap(),
+            "a parked question must still be answerable while inside its TTL"
+        );
+        assert_eq!(
+            mgr.term_permit_count(&sid).await,
+            1,
+            "a late yes with nobody waiting must become a permit, or the \
+             operator's answer decides nothing"
+        );
+        assert!(
+            mgr.term_pending_approval(&sid).await.unwrap().is_none(),
+            "an answered question must stop being displayed"
+        );
+
+        // The AI re-issues with the id: it runs unasked.
+        assert!(
+            mgr.term_consume_permit(&sid, &id, "reload the config")
+                .await
+                .unwrap(),
+            "the permit must match the exact command the operator read"
+        );
+        // ...ONCE. A retry asks again, which is the safe direction: the operator
+        // approved a moment, not a lifetime.
+        assert!(
+            !mgr.term_consume_permit(&sid, &id, "reload the config")
+                .await
+                .unwrap(),
+            "a permit is single-use"
+        );
+    }
+
+    /// A DIFFERENT command presenting the same id asks again.
+    ///
+    /// The safety property of the permit, and the reason it is not just a
+    /// grant: an operator who approved `systemctl restart nginx` approved THAT
+    /// LINE. A permit that matched loosely — by prefix, or by session — would
+    /// let the next thing the AI thought of run under a decision a person made
+    /// about something else.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_permit_does_not_authorise_a_different_command() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, .. } = mgr
+            .term_await_approval(&sid, "reload the config", 150)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a park");
+        };
+        mgr.term_decide_approval(&sid, &id, true, false)
+            .await
+            .unwrap();
+
+        assert!(
+            !mgr.term_consume_permit(&sid, &id, "reload the config; rm -rf /")
+                .await
+                .unwrap(),
+            "a permit must cover the command the operator READ and nothing else \
+             — appending to it is a different command"
+        );
+        assert!(
+            !mgr.term_consume_permit(&sid, &id, "reload the confi")
+                .await
+                .unwrap(),
+            "not even a prefix of it"
+        );
+        assert_eq!(
+            mgr.term_permit_count(&sid).await,
+            1,
+            "a near miss must not consume the permit — the real command is still \
+             the one the operator approved"
+        );
+    }
+
+    /// A PARKED question is still VISIBLE to the panel — through `term_list`,
+    /// which is the read the panel actually makes.
+    ///
+    /// This is the test that was missing, and its absence is why a real bug
+    /// reached the binary: `term_list`/`term_info` project a request through
+    /// `live_pending`, while every other test reads `term_pending_approval`.
+    /// TWO implementations of one read, and the covered one was not the one the
+    /// operator's UI calls. With `live_pending` still measuring the 60 s BLOCK,
+    /// the parked execute returned a perfectly correct `awaiting_approval` body
+    /// while `terminal_list` reported no pending request at all — so the prompt
+    /// vanished from the panel at exactly the moment it became answerable.
+    ///
+    /// Found by driving the real binary over loopback, not by the suite.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_parked_question_is_visible_through_term_list() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, .. } = mgr
+            .term_await_approval(&sid, "echo still-answerable", 150)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a park");
+        };
+
+        let listed = mgr
+            .term_list()
+            .await
+            .into_iter()
+            .find(|s| s.id == sid)
+            .expect("the session is listed");
+        let shown = listed.pending_approval.expect(
+            "a PARKED question must still be listed — the panel discovers prompts \
+             only through this read, so hiding it here hides the whole feature",
+        );
+        assert_eq!(shown.id, id, "the same question");
+        assert_eq!(shown.command, "echo still-answerable");
+        assert!(
+            shown.expires_in_ms > 60_000,
+            "the listed countdown is the QUESTION's TTL, not the block that \
+             expired — got {}ms",
+            shown.expires_in_ms
+        );
+
+        // And `term_info` must agree: two reads disagreeing makes the panel's
+        // prompt flicker depending on which call it happened to make.
+        let info = mgr.term_info(&sid).await.unwrap();
+        assert_eq!(
+            info.pending_approval.map(|p| p.id),
+            Some(id),
+            "term_info and term_list must project the same question"
+        );
+    }
+
+    /// A REFUSAL after the park mints nothing.
+    ///
+    /// The mirror of the late-yes case, and the one where a bug would be a
+    /// security hole rather than an inconvenience: if a "no" also left something
+    /// behind, a refused command could still run later.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_late_no_mints_nothing() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, .. } = mgr
+            .term_await_approval(&sid, "dangerous thing", 150)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a park");
+        };
+        assert!(mgr
+            .term_decide_approval(&sid, &id, false, false)
+            .await
+            .unwrap());
+
+        assert_eq!(
+            mgr.term_permit_count(&sid).await,
+            0,
+            "a refusal must leave NOTHING behind that could run the command"
+        );
+        assert!(
+            !mgr.term_consume_permit(&sid, &id, "dangerous thing")
+                .await
+                .unwrap(),
+            "and the refused command must not be runnable with its old id"
+        );
+    }
+
+    /// A question past its TTL is NOT decidable, and saying so must not leave a
+    /// prompt on screen.
+    ///
+    /// Driven by manipulating the registration's timestamp rather than sleeping
+    /// fifteen minutes: the rule under test is "expiry is measured from
+    /// `requested_at`", and a test that waited would be testing the clock.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_question_past_its_ttl_is_not_decidable() {
+        let mgr = control_mgr();
+        let sid = open_pty(&mgr).await;
+        mgr.term_set_approval_required(&sid, true).await.unwrap();
+
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, .. } = mgr
+            .term_await_approval(&sid, "stale question", 150)
+            .await
+            .unwrap()
+        else {
+            panic!("expected a park");
+        };
+
+        // Age the request past its TTL. Driven through a test-only manager
+        // method rather than by reaching into the session map: the map is
+        // private to `desktop_impl`, and a test that pokes it stops compiling
+        // the moment the state moves — which is the coupling this avoids.
+        mgr.term_test_age_pending(&sid, APPROVAL_TTL_MS + 1_000)
+            .await;
+
+        assert!(
+            mgr.term_pending_approval(&sid).await.unwrap().is_none(),
+            "an expired question must read as ABSENT, so no reader is ever shown \
+             a prompt for a command that can no longer run"
+        );
+        assert!(
+            !mgr.term_decide_approval(&sid, &id, true, false)
+                .await
+                .unwrap(),
+            "a decision after the TTL must be refused, not recorded as if it \
+             could still do something"
+        );
+        assert_eq!(
+            mgr.term_permit_count(&sid).await,
+            0,
+            "and a too-late yes must mint nothing"
         );
     }
 }

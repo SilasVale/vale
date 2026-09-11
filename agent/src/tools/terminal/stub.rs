@@ -140,8 +140,21 @@ impl TerminalManager {
         _sid: &str,
         _command: &str,
         _max_wait_ms: u64,
-    ) -> Result<bool, DeviceError> {
+    ) -> Result<super::ApprovalOutcome, DeviceError> {
         Err(disabled_err())
+    }
+    /// The permit twin. `Ok(false)` rather than `disabled_err()`, and the
+    /// difference is deliberate: a permit only ever SHORTENS a gate, so "no
+    /// permit" is a truthful answer for a build that stores none — it falls
+    /// through to the gate itself, which then fails loudly. An `Err` here would
+    /// make a headless execute fail for a reason the caller cannot act on.
+    pub async fn term_consume_permit(
+        &self,
+        _sid: &str,
+        _approval_id: &str,
+        _command: &str,
+    ) -> Result<bool, DeviceError> {
+        Ok(false)
     }
     pub async fn term_exit_code(&self, _sid: &str) -> Option<i32> {
         None

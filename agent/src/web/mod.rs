@@ -958,6 +958,15 @@ async fn api_session_approval(
         .await
         .unwrap_or_default();
 
+    // PUSH on every decision, so the badge clears and the prompt disappears
+    // immediately rather than at the next poll — a resolved question that stays
+    // on screen is a question the operator will try to answer twice. Emitted for
+    // `decided: false` too: "someone already answered" and "it expired" both
+    // change what the panel should draw.
+    state
+        .event_bus
+        .emit_term_output(serde_json::json!({ "ev": "sessions-changed" }));
+
     // `decided: false` is NOT an error at the HTTP level — the session exists and
     // the request was well formed, there was simply nothing waiting. The caller
     // distinguishes it, because "someone already answered" and "it timed out" are
@@ -2553,14 +2562,21 @@ mod tests {
             posture,
             vec![
                 ("armed".to_string(), String::new()),
+                // `asked` comes FIRST among the decision events, and that
+                // ordering is the audit's whole value here: it records that a
+                // question was PUT to a person before anything answered it.
+                // Without it an unanswered or expired gate leaves no trace at
+                // all, so a run that stopped because nobody was watching looks
+                // identical to one that was never gated.
+                ("asked".to_string(), "echo audited".to_string()),
                 ("approved".to_string(), "echo audited".to_string()),
                 ("granted".to_string(), "echo".to_string()),
                 ("revoked".to_string(), String::new()),
                 ("disarmed".to_string(), String::new()),
             ],
-            "the trail must explain WHY a command ran unasked: arming, the decision, \
-             what it newly allowed, and taking it back. Note `armed` appears ONCE \
-             despite two identical requests."
+            "the trail must explain WHY a command ran unasked: arming, the QUESTION, \
+             the decision, what it newly allowed, and taking it back. Note `armed` \
+             appears ONCE despite two identical requests."
         );
 
         st.terminal_mgr.term_close(&sid).await.ok();
@@ -3910,6 +3926,168 @@ mod tests {
             "the busy flag leaked out of the refusal path"
         );
 
+        st.terminal_mgr.term_close(&sid).await.ok();
+        let _ = std::fs::remove_file(cfg_path);
+    }
+
+    /// A PARKED command hands the session back, and a later YES still runs it.
+    ///
+    /// The end-to-end shape of the rework, through the routes the panel and the
+    /// AI actually call. Two properties, and each was broken before:
+    ///
+    ///   * the session is USABLE while a question is open. The gate used to hold
+    ///     the execute lock for the whole wait, so an unanswered prompt froze the
+    ///     session; now the park releases it. Asserted as a wall-clock bound
+    ///     because "did it release" is exactly the question and a leaked lock
+    ///     answers it by hanging.
+    ///   * a LATE YES still runs the command. The execute has returned by then,
+    ///     so without the permit the operator's answer would decide a request
+    ///     nobody is waiting on — recorded, and doing nothing.
+    #[cfg(all(feature = "terminal", not(target_os = "windows")))]
+    #[tokio::test]
+    async fn a_parked_command_hands_the_session_back_and_a_late_yes_still_runs_it() {
+        let (st, cfg_path) = state_with_cfg("approval-park", CFG_YAML_TOKEN_ONLY);
+        let sid = st
+            .terminal_mgr
+            .term_open(&crate::tools::terminal::TermOpenRequest {
+                kind: "pty".into(),
+                target: String::new(),
+                password: String::new(),
+                key_path: String::new(),
+                rows: 24,
+                cols: 80,
+                inject_marker: false,
+                data_bits: None,
+                parity: None,
+                stop_bits: None,
+                auto_reconnect: false,
+            })
+            .await
+            .unwrap()
+            .0;
+
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+
+        // Drive the gate directly with a SHORT block, so the test exercises the
+        // park without waiting the production minute. The route's own budget is
+        // covered by the unit tests; what this test is about is what the CALLER
+        // gets and what the session looks like afterwards.
+        let outcome = st
+            .terminal_mgr
+            .term_await_approval(&sid, "echo parked", 200)
+            .await
+            .expect("a park is not an error");
+        let crate::tools::terminal::ApprovalOutcome::Parked { id, expires_in_ms } = outcome else {
+            panic!("expected a park, got {outcome:?}");
+        };
+        assert!(
+            expires_in_ms > 60_000,
+            "the countdown the AI is handed must be the QUESTION's TTL, not the \
+             block that just expired — got {expires_in_ms}ms, which would tell a \
+             client to give up at the moment the question became answerable"
+        );
+
+        // THE SESSION IS USABLE. Disarm so the next command is not gated again:
+        // the question here is the LOCK, not the gate.
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":false}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        let second = tokio::time::timeout(
+            std::time::Duration::from_secs(10),
+            handle_request(
+                req_with_json(
+                    "POST",
+                    "/api/tools/terminal_execute",
+                    &format!(r#"{{"session_id":"{sid}","command":"echo after-park"}}"#),
+                ),
+                st.clone(),
+            ),
+        )
+        .await
+        .expect(
+            "a parked command wedged the session: the next execute never \
+             finished, so an unanswered question froze the session it asked about",
+        );
+        assert_eq!(second.status(), StatusCode::OK);
+        assert_ne!(
+            json_body(second).await["code"],
+            "session_busy",
+            "the busy flag leaked out of the park path"
+        );
+
+        // THE LATE YES STILL RUNS IT. Re-arm, register a question, park on it,
+        // then answer — and the same command with the id must go through.
+        handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/control"),
+                r#"{"approval_required":true}"#,
+            ),
+            st.clone(),
+        )
+        .await;
+        let outcome = st
+            .terminal_mgr
+            .term_await_approval(&sid, "echo late-yes", 200)
+            .await
+            .unwrap();
+        let crate::tools::terminal::ApprovalOutcome::Parked { id: late_id, .. } = outcome else {
+            panic!("expected a park");
+        };
+
+        // The operator answers AFTER the park, through the real route.
+        let resp = handle_request(
+            req_with_json(
+                "POST",
+                &format!("/api/sessions/{sid}/approval"),
+                &format!(r#"{{"id":"{late_id}","approve":true}}"#),
+            ),
+            st.clone(),
+        )
+        .await;
+        assert_eq!(resp.status(), StatusCode::OK);
+        assert_eq!(
+            json_body(resp).await["decided"],
+            true,
+            "a parked question must still be answerable inside its TTL — if this \
+             is false the operator's click is silently discarded"
+        );
+
+        // The AI re-issues with approval_id: it runs, unasked.
+        let run = handle_request(
+            req_with_json(
+                "POST",
+                "/api/tools/terminal_execute",
+                &format!(
+                    r#"{{"session_id":"{sid}","command":"echo late-yes","approval_id":"{late_id}"}}"#
+                ),
+            ),
+            st.clone(),
+        )
+        .await;
+        let v = json_body(run).await;
+        assert_eq!(v["ok"], true, "the permitted command must run: {v}");
+        assert_ne!(
+            v["state"], "awaiting_approval",
+            "a command holding a valid permit must NOT be asked about again — \
+             that would throw away the answer the operator already gave"
+        );
+
+        let _ = id;
         st.terminal_mgr.term_close(&sid).await.ok();
         let _ = std::fs::remove_file(cfg_path);
     }
