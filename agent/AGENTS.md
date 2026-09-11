@@ -418,7 +418,60 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 16 (three holes of the same shape: code that
+Last updated: 2026-09-11 round 17 (the suite nothing ran now runs; 1.2.322 is on
+  d1). Commits: ad4d306a (CI e2e job), a7b48a0b + the publish commit.
+  (1) THE E2E SUITE IS IN CI, and that is the durable fix for round 16's finding.
+  Its `governance` section had been RED for a full round because no workflow
+  executed it — round 14 inserted an `asked` event into the audit sequence, no
+  assertion was updated, and nothing could notice. New job `agent-e2e` builds
+  the agent for the host, writes a scratch config on 127.0.0.1:18811, starts the
+  REAL binary, and runs the two PLATFORM-NEUTRAL sections. The others are
+  device-targeted by design (PowerShell, `C:\ProgramData\...` joins) and are
+  excluded with the reason in the job comment.
+  VERIFIED THREE WAYS, because a CI job that cannot fail is decoration:
+  (a) every step was RUN VERBATIM on this box — 24/24, exit 0; (b) its teeth were
+  tested by restoring the STALE assertion, which failed the suite with exit 1
+  and named the check; (c) it is confirmed RUNNING GREEN in real GitHub Actions
+  (`agent (e2e governance + runs, real binary on loopback) — completed success`).
+  (2) THE THIRD FALSE ENVIRONMENT CLAIM IN FIVE ROUNDS, and this one was in the
+  recipe the CI job would have copied: the e2e README told the reader to export
+  `VALE_DATA_DIR=/tmp/vale-e2e/data`. There is NO such override — `paths.rs`
+  resolves the data dir registry-first and reads no environment at all — so the
+  agent ran against `target/debug/` while the reader believed it was isolated.
+  The pattern across all three (`makensis`, the `--prefix` install, this) is
+  identical: a sentence nobody re-measured. A claim about the environment has a
+  shelf life; the doc now says where the data actually lands.
+  (3) RELEASED 1.2.322 AND UPDATED d1. Publish went through
+  `scripts/publish-release.sh 1.2.322 --skip-reconcile --with-installer`; the CDN
+  tgz sha matches the manifest byte for byte; CI AND the release workflow both
+  green on the tag; the dual-builder audit passes (source-identical, only the exe
+  differs by toolchain, CDN authoritative); keep-latest retired v1.2.321's
+  release + tag, leaving exactly one of each.
+  VERIFIED ON THE DEVICE BY EFFECT, feature by feature: `release=1.2.322` on
+  `/api/status`; `pending_approvals` is ABSENT (not zero) with nothing waiting,
+  which is the shape designed and tested in round 16; `run_id` is present in the
+  device's `memory_save` SCHEMA; and the full join works end to end — `run_begin`
+  minted `run-1789148767682-11e970`, `memory_save` carried it, and `memory_list`
+  read back `"run_id":"run-1789148767682-11e970"` on the record. 52 tools.
+  (4) A DEVICE-SIDE OBSERVATION WORTH KEEPING, cause NOT established: the FIRST
+  `vale update` attempt silently did nothing. No `update start` line in
+  vale-update.log, no `vale-agent.new.exe` staged, no swap script written — and
+  the MCP call returned a connection error that LOOKED like the documented
+  mid-swap drop. Only the release marker (still 1.2.321) revealed it. A second
+  attempt ran normally (copy ok=True, task restarted) and the device came up on
+  1.2.322. I did not establish the cause and will not guess one, but the lesson
+  is the one the docs already record and I re-lived: VERIFY THE UPDATE BY EFFECT,
+  never by the absence of an error — the failure mode of this command is silence.
+  (5) A SELF-INFLICTED PROCESS NOTE: I burned real budget fighting the PTY's
+  multi-line paste handling on the device (a here-string got re-parsed line by
+  line and produced a ParserError, twice). Single-line commands with the JSON
+  body written to a file first worked every time. Worth doing that way from the
+  start.
+  Gates: agent 554 default / 604 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; gateway 759; panel 416 + build; e2e 24/24 locally
+  and in CI. Released 1.2.322, live on d1.
+
+Previous round: 2026-09-11 round 16 (three holes of the same shape: code that
   works, and nothing that reaches it). Commits: a991ba3f (doc drift), 1fa7851a
   (status + e2e), 1488c6f7 (Activity), plus the memory-provenance work below.
   THE ROUND'S PATTERN, and it is the one this log has now recorded three rounds
