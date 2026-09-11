@@ -29,12 +29,21 @@
 // cards use — so "what does fail look like" has exactly one answer in this
 // panel, including the shape half of the palette that survives
 // prefers-reduced-motion (see src/lib/statePalette.test.ts).
+//
+// The RUN STRIP sits at the very top, above the goal and the summary. It is
+// DEVICE-scoped while everything below it is this session's — runs are minted by
+// the device and cross sessions, and the Path view is where the operator already
+// reads work post-hoc, so the runs are bracketed there rather than in a view of
+// their own. It renders in the empty case too: "this session has run nothing"
+// and "this device has run three things" are both true, and the second one is
+// what the operator came back for.
 import { useMemo, useState } from "react";
 import { derivePath, attentionSteps, type PathStep, type PathSummary } from "../lib/path";
 import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_TAG } from "../lib/recipe";
 import { callTool } from "../lib/api";
 import { useTrajectory } from "../hooks/useTrajectory";
 import { fmtDuration } from "./CommandCard";
+import { RunStrip } from "./RunStrip";
 import type { CommandEvent } from "../hooks/useCommandEvents";
 
 /** Compact duration for the summary line ("at least 1m 12s" when some steps
@@ -77,6 +86,7 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   if (path.steps.length === 0) {
     return (
       <div className="path-view">
+        <RunStrip />
         <div className="path-empty">
           <p className="path-empty-title">No path yet</p>
           <p className="path-empty-body">
@@ -122,6 +132,7 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
 
   return (
     <div className="path-view">
+      <RunStrip />
       {goal && (
         <div className="path-goal" title="What this session was asked to achieve">
           <span className="path-goal-label">Goal</span>

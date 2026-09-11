@@ -2739,6 +2739,103 @@ code {
 .path-empty-title { margin: 0 0 5px; font-size: 13px; font-weight: 650; }
 .path-empty-body { margin: 0 auto; max-width: 380px; font-size: 12px; color: var(--muted); line-height: 1.6; }
 
+/* ── Run strip — the device's RUNS, at the top of the Path view ─────────────
+   Device-scoped, while everything below it in this view is one session's: an
+   AI's run crosses sessions and the browser, so it is bracketed above them
+   rather than inside one.
+
+   THE THREE STATES ARE DISTINCT BY SHAPE AS WELL AS COLOUR. This palette has
+   already been caught once relying on a channel a user may not have (the
+   reduced-motion incident behind src/lib/statePalette.test.ts), so each state
+   gets its own border STYLE beside its own word and its own ink:
+     closed        solid border,  reading ink   — the boundary was recorded
+     open          solid border,  accent ink    — the common case
+     unregistered  dashed border, warn ink      — an id with no begin
+     unattributed  dotted border, muted ink     — no id at all
+   The word on the chip is the state's name, never a verdict: a closed run says
+   the end was recorded, not that it went well.
+
+   TEXT WEIGHTS follow the measurements on record in themeContrast.test.ts —
+   --muted for secondary text on the page surface, --chrome-ink-dim for anything
+   sitting on --surface-chip (--muted measures 4.40 there, under AA). */
+.run-strip {
+  flex: none;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.run-strip-head {
+  display: flex; align-items: baseline; gap: 8px; width: 100%;
+  padding: 7px 14px; border: none; background: none; cursor: pointer;
+  font: inherit; text-align: left;
+}
+.run-strip-head:hover { background: var(--surface-recessed); }
+.run-strip-head:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: -2px; }
+.run-strip-caret { flex: none; font-size: 9px; color: var(--muted); }
+.run-strip-title {
+  font-size: 10.5px; font-weight: 650; letter-spacing: 0.05em;
+  text-transform: uppercase; color: var(--muted);
+}
+.run-strip-count {
+  flex: none; font-size: 10.5px; font-weight: 600; color: var(--chrome-ink-dim);
+  background: var(--surface-chip); border-radius: 999px; padding: 0 7px;
+}
+.run-strip-open {
+  flex: none; font-size: 11px; font-weight: 600;
+  color: var(--accent-on-soft);
+  background: var(--accent-soft); border-radius: 999px; padding: 0 8px;
+}
+.run-strip-residue { flex: none; font-size: 11px; color: var(--muted); }
+
+.run-list { list-style: none; margin: 0; padding: 0 0 6px; }
+.run-row { padding: 5px 14px 6px; }
+.run-row + .run-row { border-top: 1px solid var(--line-soft); }
+.run-row-head { display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap; }
+.run-row-state {
+  flex: none; font-size: 10px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; border-radius: 999px; padding: 0 7px;
+  border: 1px solid currentColor;
+}
+.run-row-state[data-state="closed"] { color: var(--muted); border-style: solid; }
+.run-row-state[data-state="open"] { color: var(--accent-on-soft); border-style: solid; }
+.run-row-state[data-state="unregistered"] { color: var(--warn-ink); border-style: dashed; }
+.run-row-state[data-state="unattributed"] { color: var(--muted); border-style: dotted; }
+
+.run-row-label { font-size: 12px; font-weight: 600; color: var(--ink); overflow-wrap: anywhere; }
+/* The raw id IS the name of an unregistered run — the only true one it has. */
+.run-row-id { font: 11px var(--font-mono); color: var(--warn-ink); overflow-wrap: anywhere; }
+/* An explicit marker, never a blank: a blank reads as a label that failed to
+   load, which is a claim about the data that is not true. */
+.run-row-unlabeled { font-size: 12px; font-style: italic; color: var(--muted); }
+
+.run-row-counts { flex: none; display: flex; gap: 6px; }
+.run-row-count {
+  font-size: 10.5px; color: var(--chrome-ink-dim);
+  background: var(--surface-chip); border-radius: 999px; padding: 0 7px;
+}
+.run-row-span { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+
+.run-row-meta { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; margin-top: 2px; }
+.run-row-goal { font-size: 11.5px; color: var(--muted); overflow-wrap: anywhere; }
+.run-row-goal-label {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--chrome-ink-dim); margin-right: 5px;
+}
+/* The honesty lines. Deliberately visible rather than a tooltip: an open run's
+   missing end is part of reading the row correctly. */
+.run-row-note { font-size: 11px; color: var(--muted); }
+/* The client's own words for how it ended, in the READING ink and never in a
+   success/danger colour: "failed: ONU did not register" is as legitimate a
+   value as "done", and colouring free text green or red would be this panel
+   inventing the verdict it refuses to guess at. */
+.run-row-outcome { margin: 2px 0 0; font-size: 11.5px; color: var(--ink); overflow-wrap: anywhere; }
+.run-row-outcome-label {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); margin-right: 5px;
+}
+/* The unattributed bucket, set apart from the runs above it at a glance — it is
+   a different KIND of row, not one more run. */
+.run-row-unattributed { background: var(--surface-recessed); }
+
 /* ── Browser evidence empty state (token color; no inline styles) ── */
 .browser-live-evidence { min-height: 0; }
 .browser-ev-empty-mini { font-size: 11px; color: var(--muted); padding: 4px 0; }
