@@ -1,6 +1,6 @@
 // Shell + DesktopShell tests — the two densities share the same page set;
-// DesktopShell must switch between all 5 pages and the rail must reflect
-// the active page. (Uses mock props; no backend calls.)
+// DesktopShell must switch between every page (activity included — it is the
+// one that works with no session) and the rail must reflect the active page. (Uses mock props; no backend calls.)
 import { describe, it, expect, vi } from "vitest";
 import { render, screen, fireEvent, waitFor } from "@testing-library/react";
 import { DesktopShell } from "../DesktopShell";
@@ -68,11 +68,13 @@ describe("Shell", () => {
 });
 
 describe("DesktopShell", () => {
-  it("switches between all five pages via the rail", () => {
+  it("switches between all six pages via the rail", () => {
     render(<DesktopShell {...baseProps} />);
     // Default page: Terminal (the header title marks the current page).
     expect(document.querySelector(".desktop-header-title")?.textContent).toContain("Terminal");
-    for (const label of ["Browser", "Memory", "Plugins", "Settings"]) {
+    // Every page, activity included: the desktop density must expose the same
+    // page set as the panel's rail (Shell.PAGES is the shared contract).
+    for (const label of ["Activity", "Browser", "Memory", "Plugins", "Settings"]) {
       fireEvent.click(screen.getByTitle(label));
       expect(document.querySelector(".desktop-header-title")?.textContent).toContain(label);
     }

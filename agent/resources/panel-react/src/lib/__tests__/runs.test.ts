@@ -13,8 +13,20 @@
 //   3. INVENTING A VALUE. Absent label/goal/outcome are ABSENT; `""` and
 //      whitespace are the same absence; neither becomes a placeholder.
 //   4. HIDING A RUN. An id with no `run/begin` is still shown, under its raw id.
+//   5. DISCARDING THE RECORD. Grouping once kept counts and extents and dropped
+//      the records themselves, so "3 terminal" was all anyone could ever learn.
+//      `operationRows` carries the records — what ran, how it ended, why — and
+//      the last block below pins them, including the rule that an EXIT CODE OF
+//      ZERO is a value and not a missing one.
 import { describe, it, expect } from "vitest";
-import { groupOperation, groupCount, type OperationEvent, type RunBoundary } from "../runs";
+import {
+  groupOperation,
+  groupCount,
+  operationRows,
+  type ActivityRow,
+  type OperationEvent,
+  type RunBoundary,
+} from "../runs";
 
 const ev = (o: Partial<OperationEvent>): OperationEvent => ({
   source: "terminal",
@@ -263,5 +275,199 @@ describe("groupCount", () => {
     expect(groupCount(groupOperation([ev({ ts_ms: T0 })], []))).toBe(1);
     expect(groupCount(groupOperation([], []))).toBe(0);
     expect(groupCount(groupOperation([ev({ ts_ms: T0, run_id: "r-a" })], [begin("r-a", T0)]))).toBe(1);
+  });
+});
+
+/** The flattened rows, for the tests that only care about them. */
+function rowsOf(events: OperationEvent[], boundaries: RunBoundary[] = []): ActivityRow[] {
+  return operationRows(events, boundaries).flatMap((g) => g.rows);
+}
+
+describe("operationRows — the records are carried, not just counted", () => {
+  it("extracts WHAT ran with the fields the panel used to discard", () => {
+    // THE POINT OF THIS MODULE'S NEW HALF. Every field below was fetched by the
+    // hook and then dropped on the floor: the operator could see "2 terminal"
+    // and never the command.
+    const rows = rowsOf(
+      [
+        ev({
+          ts_ms: T0 + 10,
+          run_id: "r-a",
+          command: "display version",
+          intent: "check the firmware before the upgrade",
+          considered: ["reboot the ONU", "read the log first"],
+          plan_step: 2,
+        }),
+        ev({ ts_ms: T0 + 20, run_id: "r-a", kind: "command/end", exit_code: 0, duration_ms: 1_250 }),
+        {
+          source: "browser",
+          ts_ms: T0 + 30,
+          kind: "action",
+          run_id: "r-a",
+          script: "await page.click('#login')",
+          exit_code: 1,
+          duration_ms: 40,
+          screenshots: ["/pwout/run-1-before.png"],
+          timed_out: true,
+        },
+      ],
+      [begin("r-a", T0)],
+    );
+    expect(rows.map((r) => r.source)).toEqual(["terminal", "terminal", "browser"]);
+    expect(rows[0]).toMatchObject({
+      tsMs: T0 + 10,
+      kind: "command/start",
+      command: "display version",
+      intent: "check the firmware before the upgrade",
+      considered: ["reboot the ONU", "read the log first"],
+      planStep: 2,
+      exitCode: null,
+      runId: "r-a",
+    });
+    expect(rows[1]).toMatchObject({ kind: "command/end", command: null, exitCode: 0, durationMs: 1_250 });
+    expect(rows[2]).toMatchObject({
+      source: "browser",
+      kind: "action",
+      script: "await page.click('#login')",
+      exitCode: 1,
+      durationMs: 40,
+      screenshots: ["/pwout/run-1-before.png"],
+      timedOut: true,
+      // The browser feed has no session ownership — an action is never
+      // attributed to a terminal that did not run it.
+      session: null,
+    });
+  });
+
+  it("keeps the exit code ZERO apart from an exit code nobody recorded", () => {
+    // `0` is the single most common REAL outcome. A reader that treats it as
+    // falsy (or a type that says `number | null` and is checked with `if (x)`)
+    // makes "it succeeded" and "nobody wrote down how it ended" identical —
+    // which is the one distinction this whole panel refuses to blur.
+    const [ok, absent] = rowsOf([
+      ev({ ts_ms: T0, kind: "command/end", exit_code: 0 }),
+      ev({ ts_ms: T0 + 1, kind: "command/end" }),
+    ]);
+    expect(ok.exitCode).toBe(0);
+    expect(absent.exitCode).toBeNull();
+    expect(ok.exitCode).not.toBe(absent.exitCode);
+    // Same rule for a duration: a measured 0 ms is not a missing measurement.
+    expect(rowsOf([ev({ ts_ms: T0, duration_ms: 0 })])[0].durationMs).toBe(0);
+  });
+
+  it("reads absent values as ABSENCE — never '' and never a stand-in word", () => {
+    const [row] = rowsOf([
+      ev({ ts_ms: T0, command: "ls", intent: "   ", considered: [], screenshots: [] }),
+    ]);
+    expect(row.command).toBe("ls");
+    // Blank is the same absence wearing a costume: the device collapses it, and
+    // a reader that rendered "   " would put a blank where a reason goes.
+    expect(row.intent).toBeNull();
+    expect(row.considered).toEqual([]);
+    expect(row.screenshots).toEqual([]);
+    expect(row.status).toBeNull();
+    expect(row.text).toBeNull();
+    expect(row.script).toBeNull();
+  });
+
+  it("orders rows by ts_ms ALONE, whatever order they arrived in", () => {
+    // Both feeds are merged onto one axis and the hook accumulates them across
+    // polls, so arrival order is not time order. The device's two feeds stamp
+    // `ts` in different UNITS (seconds vs milliseconds); nothing here reads it,
+    // and this pins the axis that is actually used.
+    const rows = rowsOf([
+      ev({ ts_ms: T0 + 5_000, command: "third" }),
+      ev({ ts_ms: T0 + 1_000, command: "first" }),
+      ev({ ts_ms: T0 + 3_000, command: "second" }),
+    ]);
+    expect(rows.map((r) => r.command)).toEqual(["first", "second", "third"]);
+    expect(rows.map((r) => r.tsMs)).toEqual([T0 + 1_000, T0 + 3_000, T0 + 5_000]);
+  });
+
+  it("puts unattributed records in the bucket, never in a neighbouring run's rows", () => {
+    // The same central guarantee as the counts, one level down: a row is only
+    // ever in the group whose id it carries.
+    const grouped = operationRows(
+      [
+        ev({ ts_ms: T0 + 10, run_id: "r-a", command: "in the run" }),
+        ev({ ts_ms: T0 + 20, command: "nobody's" }),
+        ev({ ts_ms: T0 + 30, source: "browser", kind: "action", script: "click" }),
+      ],
+      [begin("r-a", T0), end("r-a", T0 + 40)],
+    );
+    const run = grouped.find((g) => g.group.runId === "r-a")!;
+    expect(run.rows.map((r) => r.command)).toEqual(["in the run"]);
+    const bucket = grouped.find((g) => g.group.state === "unattributed")!;
+    expect(bucket.rows.map((r) => r.command ?? r.script)).toEqual(["nobody's", "click"]);
+    // ...and the rows never appear twice.
+    expect(grouped.flatMap((g) => g.rows)).toHaveLength(3);
+  });
+
+  it("returns the groups in render order: oldest run first, the bucket LAST", () => {
+    const grouped = operationRows(
+      [ev({ ts_ms: T0 + 10, run_id: "r-late" }), ev({ ts_ms: T0 + 1, command: "loose" })],
+      [begin("r-late", T0 + 5), begin("r-early", T0)],
+    );
+    expect(grouped.map((g) => g.group.runId)).toEqual(["r-early", "r-late", null]);
+    // A run with a begin but no records is still a group — with no rows.
+    expect(grouped[0].rows).toEqual([]);
+  });
+
+  it("gives every row a unique id, so a list keyed on it cannot silently drop one", () => {
+    // Two records can be genuinely identical (the browser feed has no sequence
+    // and a client may run the same script twice inside one millisecond), and a
+    // duplicate React key throws one of them away without a word.
+    const grouped = operationRows(
+      [
+        ev({ ts_ms: T0, source: "browser", kind: "action", script: "click" }),
+        ev({ ts_ms: T0, source: "browser", kind: "action", script: "click" }),
+      ],
+      [],
+    );
+    const ids = grouped.flatMap((g) => g.rows.map((r) => r.id));
+    expect(ids).toHaveLength(2);
+    expect(new Set(ids).size).toBe(2);
+  });
+
+  it("keeps a row's identity stable across identical recomputation", () => {
+    // The hook re-derives on every poll; an id that changed each time would
+    // re-mount every row (and lose the reader's scroll position) for no new
+    // fact. Same input ⇒ same ids.
+    const events = [ev({ ts_ms: T0 + 10, run_id: "r-a", seq: 7, command: "ls" })];
+    const first = rowsOf(events, [begin("r-a", T0)]).map((r) => r.id);
+    const second = rowsOf(events, [begin("r-a", T0)]).map((r) => r.id);
+    expect(second).toEqual(first);
+  });
+
+  it("drops a record with no usable stamp rather than placing it by guess", () => {
+    // Unchanged from the grouping rule, and stated here because the rows obey
+    // it too: the device itself drops an unstamped record, and a guessed
+    // position on the axis would be worse than a missing row.
+    const rows = rowsOf([
+      ev({ ts_ms: undefined, command: "unstamped" }),
+      ev({ ts_ms: Number.NaN, command: "nan" }),
+      ev({ ts_ms: T0, command: "placed" }),
+    ]);
+    expect(rows.map((r) => r.command)).toEqual(["placed"]);
+  });
+});
+
+describe("groupOperation — rows ride with their group", () => {
+  it("gives each group its own rows and leaves the others alone", () => {
+    const g = groupOperation(
+      [
+        ev({ ts_ms: T0 + 10, run_id: "r-a", command: "a1" }),
+        ev({ ts_ms: T0 + 20, run_id: "r-b", command: "b1" }),
+        ev({ ts_ms: T0 + 30, command: "loose" }),
+      ],
+      [begin("r-a", T0), begin("r-b", T0 + 15)],
+    );
+    expect(g.runs[0].rows.map((r) => r.command)).toEqual(["a1"]);
+    expect(g.runs[1].rows.map((r) => r.command)).toEqual(["b1"]);
+    expect(g.unattributed!.rows.map((r) => r.command)).toEqual(["loose"]);
+    // The rows a group carries are the ones its counts counted.
+    for (const group of [...g.runs, g.unattributed!]) {
+      expect(group.rows.length).toBe(group.terminal + group.browser);
+    }
   });
 });

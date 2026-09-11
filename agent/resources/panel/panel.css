@@ -2939,6 +2939,151 @@ code {
    a different KIND of row, not one more run. */
 .run-row-unattributed { background: var(--surface-recessed); }
 
+/* ── Activity page (the device-level timeline) ───────────────────────────
+   The page is a RECORD, not a console: no live indicator and no refresh button
+   — it polls (useOperationRuns) and shows exactly what the device recorded.
+   The run GROUPS reuse the `.run-row-*` vocabulary above, so the two surfaces
+   that list runs cannot drift apart; only the record ROWS are new here.
+
+   CHANNELS, per the incident this repo already has on record (see
+   src/lib/statePalette.test.ts and the run states above): a difference a reader
+   must act on is never carried by COLOUR alone.
+     * terminal vs browser records — the source chip differs in border STYLE as
+       well as ink (solid vs dashed);
+     * `exit 0` vs any other exit code — the digits are the primary channel, and
+       this stylesheet adds a border-style difference (none vs solid + wash) so
+       the two stay apart even when the number is not being read. Zero is a
+       recorded outcome and stays at full reading ink: it is not dimmed into
+       "nothing".
+
+   TEXT WEIGHTS follow the measurements on record in themeContrast.test.ts:
+   --muted for secondary text on the PAGE surface, --chrome-ink-dim for anything
+   sitting on --surface-chip (--muted measures 4.40 there, under AA). */
+.activity-page {
+  flex: 1;
+  min-height: 0;
+  display: flex;
+  flex-direction: column;
+  overflow-y: auto;
+  background: var(--surface);
+}
+.activity-head {
+  flex: none;
+  padding: 12px 16px 10px;
+  border-bottom: 1px solid var(--line);
+  background: var(--surface);
+}
+.activity-head-line { display: flex; align-items: baseline; gap: 10px; flex-wrap: wrap; }
+.activity-title { margin: 0; font-size: 14px; font-weight: 650; color: var(--ink); }
+.activity-scope { font-size: 11px; color: var(--muted); }
+.activity-lede {
+  margin: 5px 0 0; max-width: 66ch;
+  font-size: 11.5px; line-height: 1.5; color: var(--muted);
+}
+.activity-stats { display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap; margin-top: 8px; }
+.activity-stat {
+  font-size: 10.5px; font-weight: 600; color: var(--chrome-ink-dim);
+  background: var(--surface-chip); border-radius: 999px; padding: 1px 8px;
+}
+/* The records nobody attributed are counted here as well as listed below: that
+   count is the number that would go missing if they were folded into a run. */
+.activity-stat-unattributed {
+  color: var(--ink);
+  border: 1px dotted var(--line-strong);
+}
+.activity-span { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
+/* A quiet line, never an empty container: a titled empty list reads as a
+   feature that failed to load. */
+.activity-empty {
+  margin: 0; padding: 14px 16px; max-width: 66ch;
+  font-size: 12px; line-height: 1.6; color: var(--muted);
+}
+
+.activity-groups { list-style: none; margin: 0; padding: 0 0 10px; }
+.activity-group { border-top: 1px solid var(--line); padding: 8px 0 4px; }
+.activity-group:first-child { border-top: none; }
+/* A different KIND of group, not one more run — the distinction the strip
+   draws, carried to the page. */
+.activity-group-unattributed { background: var(--surface-recessed); }
+.activity-group-head { padding: 0 16px; }
+.activity-group-empty { margin: 4px 0 0; padding: 0 16px; font-size: 11px; color: var(--muted); }
+
+.activity-rows { list-style: none; margin: 4px 0 0; padding: 0 16px; }
+.activity-row { padding: 5px 0 6px 10px; border-left: 2px solid var(--line); }
+.activity-row + .activity-row { border-top: 1px solid var(--line-soft); }
+.activity-row-head { display: flex; align-items: baseline; gap: 7px; flex-wrap: wrap; }
+.activity-row-source {
+  flex: none; font-size: 9.5px; font-weight: 650; letter-spacing: 0.04em;
+  text-transform: uppercase; border-radius: 999px; padding: 0 6px;
+  border: 1px solid currentColor;
+}
+.activity-row-source[data-source="terminal"] { color: var(--muted); border-style: solid; }
+.activity-row-source[data-source="browser"] { color: var(--accent-on-soft); border-style: dashed; }
+.activity-row-kind { font: 10.5px var(--font-mono); color: var(--muted); }
+.activity-row-session {
+  font: 10.5px var(--font-mono); color: var(--chrome-ink-dim);
+  background: var(--surface-chip); border-radius: 999px; padding: 0 6px;
+}
+.activity-row-facts {
+  margin-left: auto; display: flex; align-items: baseline; gap: 8px; flex-wrap: wrap;
+  font: 10.5px var(--font-mono); color: var(--muted);
+}
+/* A RECORDED OUTCOME, drawn for zero exactly as prominently as for anything
+   else, and drawn at all only when the device wrote a code: `exit_code: null`
+   is the ABSENCE of this element, never a word standing in for it. */
+.activity-row-exit { padding: 0 6px; border-radius: 999px; border: 1px solid transparent; }
+.activity-row-exit[data-exit="zero"] { color: var(--ink); }
+.activity-row-exit[data-exit="nonzero"] {
+  color: var(--danger-on-soft);
+  border-style: solid;
+  border-color: currentColor;
+  background: var(--danger-soft);
+}
+.activity-row-timeout {
+  padding: 0 6px; border-radius: 999px;
+  color: var(--warn-ink); border: 1px dashed currentColor;
+}
+.activity-row-step { color: var(--muted); }
+.activity-row-ts { color: var(--muted); }
+
+.activity-row-what {
+  margin: 3px 0 0; font: 12px var(--font-mono); color: var(--ink);
+  overflow-wrap: anywhere; white-space: pre-wrap;
+}
+.activity-row-kindnote { margin: 3px 0 0; font-size: 11.5px; color: var(--muted); }
+.activity-row-intent { margin: 3px 0 0; font-size: 11.5px; color: var(--ink); overflow-wrap: anywhere; }
+.activity-row-intent-label {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--muted); margin-right: 6px;
+}
+.activity-row-alt {
+  margin: 3px 0 0; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted);
+}
+.activity-row-alt-label {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--chrome-ink-dim);
+}
+.activity-row-alt-item {
+  font-size: 11px; color: var(--ink);
+  border: 1px solid var(--line-strong); border-radius: 999px; padding: 0 7px;
+}
+/* Screenshot NAMES only. The evidence drawer owns showing the image; a
+   thumbnail in a timeline row would be a second, weaker answer to the same
+   question. */
+.activity-row-shots {
+  margin: 3px 0 0; display: flex; align-items: baseline; gap: 6px; flex-wrap: wrap;
+  font-size: 11px; color: var(--muted);
+}
+.activity-row-shots-label {
+  font-size: 10px; font-weight: 650; letter-spacing: 0.04em; text-transform: uppercase;
+  color: var(--chrome-ink-dim);
+}
+.activity-row-shot {
+  font: 10.5px var(--font-mono); color: var(--ink);
+  background: var(--surface-chip); border-radius: var(--radius-sm); padding: 1px 6px;
+}
+
 /* ── Browser evidence empty state (token color; no inline styles) ── */
 .browser-live-evidence { min-height: 0; }
 .browser-ev-empty-mini { font-size: 11px; color: var(--muted); padding: 4px 0; }

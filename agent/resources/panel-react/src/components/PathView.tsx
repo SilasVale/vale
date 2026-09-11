@@ -33,10 +33,13 @@
 // The RUN STRIP sits at the very top, above the goal and the summary. It is
 // DEVICE-scoped while everything below it is this session's — runs are minted by
 // the device and cross sessions, and the Path view is where the operator already
-// reads work post-hoc, so the runs are bracketed there rather than in a view of
-// their own. It renders in the empty case too: "this session has run nothing"
-// and "this device has run three things" are both true, and the second one is
-// what the operator came back for.
+// reads work post-hoc, so the runs are bracketed HERE, as the context for the
+// steps underneath them. That is not the same question the device-level ACTIVITY
+// page answers ("what has this device been doing at all", which holds with zero
+// sessions open and for browser-only work); see RunStrip's header for why both
+// exist and why neither replaces the other. It renders in the empty case too:
+// "this session has run nothing" and "this device has run three things" are both
+// true, and the second one is what the operator came back for.
 import { useMemo, useState } from "react";
 import { derivePath, attentionSteps, type PathStep, type PathSummary } from "../lib/path";
 import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_TAG } from "../lib/recipe";

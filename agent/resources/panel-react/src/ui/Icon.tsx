@@ -6,6 +6,7 @@ import type { ReactNode } from "react";
 
 export type IconName =
   | "terminal"
+  | "activity"
   | "browser"
   | "memory"
   | "plugins"
@@ -46,6 +47,14 @@ const PATHS: Record<IconName, ReactNode> = {
     <>
       <polyline points="4 17 10 11 4 5" />
       <line x1="12" y1="19" x2="20" y2="19" />
+    </>
+  ),
+  // The device's activity: a trace with a spike in it. Chosen over a list or a
+  // clock because this page is about work HAPPENING (a merged timeline of two
+  // feeds), not about a document or a time.
+  activity: (
+    <>
+      <polyline points="2 12 6.5 12 9.5 5.5 14 18.5 17 12 22 12" />
     </>
   ),
   browser: (

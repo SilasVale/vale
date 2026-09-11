@@ -1,5 +1,7 @@
-// IconRail — shared by both densities: brand mark on top, 5 page icons,
+// IconRail — shared by both densities: brand mark on top, the page icons,
 // connection dot pinned to the foot. Uses the unified ui/Icon set.
+// The page list comes from `PAGE_ICONS` below, which is a Record over `Page` —
+// so adding a page is a compile error until it has an icon here.
 //
 // The foot dot reports the DEVICE state, not just connectivity: offline (no
 // agent), idle (connected, nothing happening), working (activity within the
@@ -12,8 +14,13 @@ import { getTheme, toggleTheme } from "../lib/theme";
 import { useDeviceActivity } from "../hooks/useDeviceActivity";
 import type { Page } from "./Shell";
 
-const PAGE_ICONS: Record<Page, IconName> = {
+/** The page→icon contract for the rail, exported so the desktop header can draw
+ *  the SAME glyph for a page as the rail button that opened it (that header used
+ *  to carry a hand-written ternary chain, which is how a new page ends up with
+ *  no icon there). */
+export const PAGE_ICONS: Record<Page, IconName> = {
   terminal: "terminal",
+  activity: "activity",
   browser: "browser",
   memory: "memory",
   plugins: "plugins",

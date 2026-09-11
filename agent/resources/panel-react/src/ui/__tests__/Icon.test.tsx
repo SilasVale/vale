@@ -6,7 +6,7 @@ import { render } from "@testing-library/react";
 import { Icon, BrandMark, type IconName } from "../Icon";
 
 const NAMES: IconName[] = [
-  "terminal", "browser", "memory", "plugins", "settings", "sessions",
+  "terminal", "activity", "browser", "memory", "plugins", "settings", "sessions",
   "ssh", "serial", "plus", "close", "export", "chevron", "edit",
   "fullscreen", "search", "arrow-up", "arrow-down", "sun", "moon",
 ];

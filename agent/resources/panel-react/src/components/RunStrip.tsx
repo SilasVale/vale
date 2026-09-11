@@ -6,13 +6,34 @@
 // so "what did it do while I was away" can be read a run at a time instead of as
 // one undifferentiated stream.
 //
-// It is DEVICE-level and deliberately lives inside the per-session Path view
-// rather than in a view of its own: `SessionView` is per-session, and a run
-// crosses sessions (one execution can open three terminals and drive the browser
-// between them). The Path view is where the operator already reads work
-// post-hoc, so the runs are bracketed there — collapsed to a header by default
-// is not an option: the feature exists to make them VISIBLE, so the rows are
-// open and the header collapses them on request.
+// WHY IT STILL LIVES IN THE PATH VIEW, AND WHY THE ACTIVITY PAGE EXISTS TOO.
+// The original argument for putting the runs HERE rather than in a view of their
+// own was that a run crosses sessions (one execution can open three terminals
+// and drive the browser between them) while `SessionView` is per-session — so
+// the device-level thing had to be bracketed where the operator already reads
+// work post-hoc. That argument was HALF right, and the half it missed is why
+// there is now a second surface. The two answer DIFFERENT questions:
+//
+//   * THIS strip, inside the Path view, answers "what did the device do while I
+//     was reading THIS session" — it is the context for the session's own steps,
+//     which is why it is a strip above them and not a page: the operator reads a
+//     run to make sense of the commands underneath it.
+//
+//   * The ACTIVITY page (`ActivityPage`) answers "what has this device been
+//     doing at all" — a question that exists with ZERO sessions open, and for
+//     work that never had a session in the first place (the AI driving the
+//     embedded browser on its own). Neither surface can answer the other's
+//     question: this strip is unreachable without an active session, and a page
+//     of records is the wrong shape for "the run above these five commands".
+//
+// So the old comment's claim is not deleted — it is the reason THIS component is
+// still here — but it is no longer the whole story, and neither surface should
+// be "fixed" away by folding it into the other. Both read ONE grouping
+// (`lib/runs.ts`) and ONE header (`RunGroupHead`, below), so they cannot
+// disagree about which run a record belongs to or what a state is called.
+//
+// Still open by default, and collapsed only on request: this feature exists to
+// make the runs VISIBLE, so it does not start folded away.
 //
 // THE THREE HONEST STATES (see lib/runs.ts for the derivation):
 //   closed       — a run/end exists. The outcome is shown when the client gave
@@ -26,36 +47,14 @@
 // plus the UNATTRIBUTED group: events with no run id at all, kept separate so
 // adjacency is never mistaken for attribution.
 import { useMemo, useState } from "react";
-import { groupOperation, groupCount, type RunGroup, type RunState } from "../lib/runs";
+import { groupOperation, groupCount, RUN_STATE_LABEL, runStateNote, type RunGroup } from "../lib/runs";
 import { useOperationRuns } from "../hooks/useOperationRuns";
 import { fmtDuration } from "./CommandCard";
-
-/** The word each state is rendered as. Deliberately the state's own name rather
- *  than a verdict: "closed" says the boundary was recorded, not that it went
- *  well — that judgement is not this panel's to make from a boundary record. */
-const STATE_LABEL: Record<RunState, string> = {
-  closed: "closed",
-  open: "open",
-  unregistered: "unregistered",
-  unattributed: "unattributed",
-};
-
-/** The one short line of honesty each state needs, or `null` for a state whose
- *  own name already says everything (a closed run needs no note). */
-function stateNote(g: RunGroup): string | null {
-  switch (g.state) {
-    // "Still running" is exactly what this view CANNOT say: the client may have
-    // stopped, or the agent may have restarted. The absence is the fact.
-    case "open": return "no end recorded";
-    case "unregistered": return "no begin recorded";
-    default: return null;
-  }
-}
 
 /** Wall clock for the axis. The date is omitted on purpose — a run strip is
  *  read against the work around it, and the endpoint serves the recent
  *  timeline. */
-function clock(ms: number): string {
+export function clock(ms: number): string {
   return new Date(ms).toLocaleTimeString();
 }
 
@@ -78,6 +77,55 @@ function primary(g: RunGroup) {
 function spanText(g: RunGroup): string {
   if (g.endMs <= g.startMs) return clock(g.startMs);
   return `${clock(g.startMs)} – ${clock(g.endMs)} (${fmtDuration(g.endMs - g.startMs)})`;
+}
+
+/** ONE run's header, shared by both views that list runs (this strip and the
+ *  Activity page) so the state vocabulary, the naming rules and the honesty
+ *  lines have exactly one implementation. */
+export function RunGroupHead({ group }: { group: RunGroup }) {
+  const derived = runStateNote(group);
+  return (
+    <>
+      <div className="run-row-head">
+        <span className="run-row-state" data-state={group.state}>
+          {RUN_STATE_LABEL[group.state]}
+        </span>
+        {primary(group)}
+        <span className="run-row-counts">
+          <span className="run-row-count">{group.terminal} terminal</span>
+          <span className="run-row-count">{group.browser} browser</span>
+        </span>
+        <span
+          className="run-row-span"
+          data-start-ms={group.startMs}
+          data-end-ms={group.endMs}
+        >
+          {spanText(group)}
+        </span>
+      </div>
+      {(group.goal || derived) && (
+        <div className="run-row-meta">
+          {group.goal && (
+            <span className="run-row-goal">
+              <span className="run-row-goal-label">goal</span>
+              {group.goal}
+            </span>
+          )}
+          {derived && <span className="run-row-note">{derived}</span>}
+        </div>
+      )}
+      {/* The outcome is the client's words, not a verdict this panel can
+          derive: "failed: ONU did not register" is as legitimate a value
+          as "done", so it is rendered in the reading ink and NEVER
+          coloured as success or failure. Absent ⇒ nothing at all. */}
+      {group.outcome && (
+        <p className="run-row-outcome">
+          <span className="run-row-outcome-label">outcome</span>
+          {group.outcome}
+        </p>
+      )}
+    </>
+  );
 }
 
 export function RunStrip({ pollMs }: { pollMs?: number }) {
@@ -121,44 +169,7 @@ export function RunStrip({ pollMs }: { pollMs?: number }) {
               data-state={g.state}
               data-run-id={g.runId ?? ""}
             >
-              <div className="run-row-head">
-                <span className="run-row-state" data-state={g.state}>
-                  {STATE_LABEL[g.state]}
-                </span>
-                {primary(g)}
-                <span className="run-row-counts">
-                  <span className="run-row-count">{g.terminal} terminal</span>
-                  <span className="run-row-count">{g.browser} browser</span>
-                </span>
-                <span
-                  className="run-row-span"
-                  data-start-ms={g.startMs}
-                  data-end-ms={g.endMs}
-                >
-                  {spanText(g)}
-                </span>
-              </div>
-              {(g.goal || stateNote(g)) && (
-                <div className="run-row-meta">
-                  {g.goal && (
-                    <span className="run-row-goal">
-                      <span className="run-row-goal-label">goal</span>
-                      {g.goal}
-                    </span>
-                  )}
-                  {stateNote(g) && <span className="run-row-note">{stateNote(g)}</span>}
-                </div>
-              )}
-              {/* The outcome is the client's words, not a verdict this panel can
-                  derive: "failed: ONU did not register" is as legitimate a value
-                  as "done", so it is rendered in the reading ink and NEVER
-                  coloured as success or failure. Absent ⇒ nothing at all. */}
-              {g.outcome && (
-                <p className="run-row-outcome">
-                  <span className="run-row-outcome-label">outcome</span>
-                  {g.outcome}
-                </p>
-              )}
+              <RunGroupHead group={g} />
             </li>
           ))}
 
@@ -172,33 +183,7 @@ export function RunStrip({ pollMs }: { pollMs?: number }) {
               data-state="unattributed"
               data-run-id=""
             >
-              <div className="run-row-head">
-                <span className="run-row-state" data-state="unattributed">
-                  {STATE_LABEL.unattributed}
-                </span>
-                {primary(groups.unattributed)}
-                <span className="run-row-counts">
-                  <span className="run-row-count">
-                    {groups.unattributed.terminal} terminal
-                  </span>
-                  <span className="run-row-count">
-                    {groups.unattributed.browser} browser
-                  </span>
-                </span>
-                <span
-                  className="run-row-span"
-                  data-start-ms={groups.unattributed.startMs}
-                  data-end-ms={groups.unattributed.endMs}
-                >
-                  {spanText(groups.unattributed)}
-                </span>
-              </div>
-              <div className="run-row-meta">
-                <span className="run-row-note">
-                  these events declared no run — shown apart rather than assumed
-                  into one
-                </span>
-              </div>
+              <RunGroupHead group={groups.unattributed} />
             </li>
           )}
         </ul>

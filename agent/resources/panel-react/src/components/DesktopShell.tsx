@@ -12,9 +12,10 @@ import { useEffect, useRef, useState } from "react";
 import { pendingApprovalCount, type Session } from "../hooks/useSessions";
 import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
 import { callApi } from "../lib/api";
-import { IconRail } from "./IconRail";
+import { IconRail, PAGE_ICONS } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
+import { ActivityPage } from "./ActivityPage";
 import { BrowserPage } from "./BrowserPage";
 import { MemoryPage } from "./MemoryPage";
 import { PluginsPage } from "./PluginsPage";
@@ -57,6 +58,7 @@ interface Props {
 
 const PAGE_TITLES: Record<Page, string> = {
   terminal: "Terminal",
+  activity: "Activity",
   browser: "Browser",
   memory: "Memory",
   plugins: "Plugins",
@@ -172,7 +174,7 @@ export function DesktopShell({
           {/* ── Header card: page title + session tabs + New menu ── */}
           <header className="desktop-header">
             <div className="desktop-header-title">
-              <span className="desktop-header-icon"><Icon name={page === "terminal" ? "terminal" : page === "browser" ? "browser" : page === "memory" ? "memory" : page === "plugins" ? "plugins" : "settings"} size={15} /></span>
+              <span className="desktop-header-icon"><Icon name={PAGE_ICONS[page]} size={15} /></span>
               <span>{PAGE_TITLES[page]}</span>
             </div>
 
@@ -295,6 +297,7 @@ export function DesktopShell({
                 onControlledViewChange={(sid, v) => changeView(sid, v)}
               />
             )}
+            {page === "activity" && <ActivityPage />}
             {page === "browser" && <BrowserPage token={token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={plugins} />}

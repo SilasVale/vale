@@ -5,11 +5,16 @@
 import type { ReactNode } from "react";
 
 export type Density = "panel" | "desktop";
-export type Page = "terminal" | "browser" | "memory" | "plugins" | "settings";
+/** The pages, in rail order. `activity` sits directly under `terminal` because
+ *  it is the device-level answer to the question the terminal page answers
+ *  per-session — and because it is the one page that works with no session at
+ *  all, which is where an operator landing on an idle device starts. */
+export type Page = "terminal" | "activity" | "browser" | "memory" | "plugins" | "settings";
 
-export const PAGES: Page[] = ["terminal", "browser", "memory", "plugins", "settings"];
+export const PAGES: Page[] = ["terminal", "activity", "browser", "memory", "plugins", "settings"];
 export const PAGE_LABELS: Record<Page, string> = {
   terminal: "Terminal",
+  activity: "Activity",
   browser: "Browser",
   memory: "Memory",
   plugins: "Plugins",
