@@ -75,10 +75,34 @@ function apiPost(pathname, body) {
 function sh(cmd, opts = {}) {
   return spawnSync(cmd, { shell: true, stdio: "inherit", ...opts });
 }
+/**
+ * The argv for a one-shot PowerShell script — NO SHELL, and that is the point.
+ *
+ * `shell: true` routed this through cmd.exe, where `"` is a quote TOGGLE and
+ * `\"` is not an escape at all. So cmd re-parsed the argument before PowerShell
+ * ever saw it, and any character it treats specially became an OPERATOR.
+ *
+ * Observed on d1: the round-7 update receipt contains `1.2.322 -> 1.2.323`.
+ * cmd saw the `>` and performed a REDIRECTION — the log line landed as
+ * "update requested 1.2.322 - (CLI reached the device...)" (arrow and TARGET
+ * VERSION gone, exactly the half that says what is being installed) and a stray
+ * zero-byte file named `1.2.323` appeared in the working directory. The
+ * receipt's whole purpose is to distinguish "the CLI ran but the swap did not"
+ * from "nothing ran"; a receipt that cannot name its target is half a receipt.
+ *
+ * Passing argv straight to CreateProcess means PowerShell receives the script
+ * VERBATIM and no quoting layer sits between the two. This is also what every
+ * other spawn in this file already does (`spawnSync("reg", [...])`) — `ps()` was
+ * the only one that shelled out.
+ */
+export function psArgv(script: string): string[] {
+  return ["-NoProfile", "-Command", script];
+}
+
 function ps(script) {
   // npm audit #7: results were discarded — a failed Register-ScheduledTask
   // printed SUCCESS anyway. Return the spawn result.
-  return sh(`powershell -NoProfile -Command "${script.replace(/"/g, '\\"')}"`);
+  return spawnSync("powershell", psArgv(script), { stdio: "inherit" });
 }
 // Run a PowerShell script from a temp .ps1 FILE instead of -Command. The
 // layout-migration script is ~10KB — past cmd.exe's 8191-char command-line

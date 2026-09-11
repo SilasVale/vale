@@ -569,3 +569,70 @@ test("rollback: the pin is gated on the verdict, and the CLI never writes the re
   assert.match(stage, /catch \(e\)/, "the staging region is guarded");
   assert.match(stage, /unlinkSync\(BUSYM\)/, "a staging failure releases the in-progress marker");
 });
+
+// ── No shell may sit between the CLI and PowerShell ─────────────────────────
+//
+// INCIDENT (found on d1 during the 1.2.323 update, by reading the log the
+// receipt itself wrote): the receipt came out as
+//   "update requested 1.2.322 - (CLI reached the device...)"
+// — the arrow and the TARGET VERSION were gone — and a stray ZERO-BYTE FILE
+// named `1.2.323` appeared in the working directory.
+//
+// Cause: `ps()` built a command STRING and ran it with `shell: true`, so cmd.exe
+// re-parsed it before PowerShell saw it. cmd has no `\"` escape — a quote is a
+// TOGGLE — so the string-ended-quoted region early and the `>` in `1.2.322 ->
+// 1.2.323` became a REDIRECTION OPERATOR. The target version was written to a
+// file name instead of the log.
+//
+// The unit test I wrote for the receipt could not see this: it asserted the
+// string `updateReceiptPs` GENERATES, and that string was correct. What was
+// wrong was what ARRIVED. This is the "generate vs land" gap, and the fix is
+// structural — pass argv, never a command line.
+test("psArgv: the script is ONE argv element, so no shell can re-parse it", () => {
+  const { psArgv } = require("../bin/vale.js");
+  const script =
+    `"[$(Get-Date -Format o)] update requested 1.2.322 -> 1.2.323 " | Out-File 'D:\\Vale\\logs\\vale-update.log' -Append; ` +
+    `Write-Output "a<b & c|d ^ e%f"`;
+  const argv = psArgv(script);
+
+  assert.deepEqual(argv.slice(0, 2), ["-NoProfile", "-Command"]);
+  assert.equal(argv.length, 3, "the whole script is exactly one argument");
+  assert.equal(argv[2], script, "and it is passed VERBATIM — no quoting, no escaping of any kind");
+
+  // The characters cmd.exe treats as operators must survive untouched. Each of
+  // these broke, or would have broken, the shell form.
+  for (const ch of [">", "<", "|", "&", "^", "%", '"']) {
+    assert.ok(argv[2].includes(ch), `script still carries ${ch}`);
+  }
+  assert.ok(
+    !argv.some((a) => a.includes("\\\"")),
+    "no cmd-style quote escaping may appear anywhere — that escaping is what made `>` an operator",
+  );
+});
+
+test("psArgv: every ps() script is passed as argv, and ps() never shells out", () => {
+  const fs = require("node:fs");
+  const path = require("node:path");
+  const { fileURLToPath } = require("node:url");
+  const here = path.dirname(fileURLToPath(import.meta.url));
+  const src = fs.readFileSync(path.join(here, "..", "bin", "vale.js"), "utf8");
+
+  // Structural, because `ps()` needs a real Windows PowerShell to execute. The
+  // regression is a one-line revert to the string form, so the scan is the
+  // right pin — same approach as the rollback call-site pin.
+  const m = /function ps\(script\) \{([\s\S]*?)\n\}/.exec(src);
+  assert.ok(m, "ps() found in the compiled CLI");
+  assert.match(
+    m[1],
+    /spawnSync\)\("powershell", psArgv\(script\)/,
+    "ps() spawns powershell with argv (the compiled form is `(0, child_process_1.spawnSync)(...)`)",
+  );
+  assert.ok(
+    !/sh\(`powershell/.test(m[1]),
+    "ps() must NOT build a command string — that is the defect: cmd.exe re-parses it and `>` becomes a redirection",
+  );
+  assert.ok(
+    !/shell:\s*true/.test(m[1]),
+    "ps() must not use a shell",
+  );
+});
