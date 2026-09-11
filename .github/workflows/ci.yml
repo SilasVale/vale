@@ -118,6 +118,71 @@ jobs:
         run: cargo fmt --all -- --check
         working-directory: agent
 
+  agent-e2e:
+    # THE SUITE NOTHING RAN. `agent/scripts/e2e/` drives the REAL binary through
+    # the product's own HTTP surface — goal -> arm the gate -> park -> approve ->
+    # trail — and its `governance` section sat RED for a full round because
+    # nothing executed it: round 14 inserted an `asked` event into the audit
+    # sequence, no assertion was updated, and no workflow could notice. An unrun
+    # test does not report drift, it accumulates it.
+    #
+    # Only the two PLATFORM-NEUTRAL sections run here (`governance`, `runs`):
+    # they use tool calls and HTTP only. The rest are device-targeted by design
+    # (PowerShell commands, `C:\ProgramData\...` path joins) and would fail on
+    # the environment rather than the agent — see agent/scripts/e2e/README.md.
+    #
+    # Loopback only: the scratch config binds 127.0.0.1, which is also what the
+    # host policy requires.
+    name: agent (e2e governance + runs, real binary on loopback)
+    runs-on: ubuntu-latest
+    steps:
+      - uses: actions/checkout@v4
+      - uses: dtolnay/rust-toolchain@master
+        with:
+          toolchain: 1.98.1
+      - uses: Swatinem/rust-cache@v2
+        with:
+          workspaces: agent
+      - uses: actions/setup-node@v4
+        with:
+          node-version: 20
+      - name: Build the agent (terminal feature; the suite opens a real PTY)
+        run: cargo build -p vale-agent --features terminal --bin vale-agent
+        working-directory: agent
+      - name: Write a scratch config (loopback, fixed free port)
+        run: |
+          mkdir -p /tmp/vale-e2e
+          cat > /tmp/vale-e2e/config.yaml <<'YAML'
+          server:
+            host: "127.0.0.1"
+            port: 18811
+            name: "vale-ci-e2e"
+          terminal:
+            buffer_mb: 8
+          YAML
+      - name: Start the agent
+        working-directory: agent
+        run: |
+          # NOTE: there is NO VALE_DATA_DIR override (paths.rs is registry-first
+          # and reads no env), so the runtime dirs land beside the exe under
+          # target/debug/. Fine on a fresh runner, and the reason this job needs
+          # no cleanup step.
+          ./target/debug/vale-agent /tmp/vale-e2e/config.yaml > /tmp/vale-e2e/agent.log 2>&1 &
+          for i in $(seq 1 30); do
+            if curl -sf -o /dev/null "http://127.0.0.1:18811/"; then break; fi
+            sleep 1
+          done
+          curl -sf -o /dev/null "http://127.0.0.1:18811/" || { echo "agent never came up"; cat /tmp/vale-e2e/agent.log; exit 1; }
+      - name: Run the platform-neutral sections against the real agent
+        working-directory: agent
+        run: |
+          TOKEN=$(grep -o 'device_token: [a-f0-9]*' /tmp/vale-e2e/config.yaml | awk '{print $2}')
+          test -n "$TOKEN" || { echo "no device_token in the scratch config"; exit 1; }
+          node scripts/e2e/e2e.js --token "$TOKEN" --base http://127.0.0.1:18811 --only governance,runs
+      - name: Show the agent log when the suite fails
+        if: failure()
+        run: tail -50 /tmp/vale-e2e/agent.log || true
+
   agent-windows-target:
     # Compile check for the Windows MSVC target (xwin pulls the SDK; separate job for caching)
     name: agent (xwin check windows-msvc)

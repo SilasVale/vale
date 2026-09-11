@@ -41,9 +41,24 @@ runs against a Linux agent on loopback:
 # on any box with the agent built:
 cargo build --features terminal --bin vale-agent
 # config.yaml: server.host 127.0.0.1, a free port, a device_token
-VALE_DATA_DIR=/tmp/vale-e2e/data ./target/debug/vale-agent /tmp/vale-e2e/config.yaml &
-node agent/scripts/e2e/e2e.js --token <token> --base http://127.0.0.1:<port> --only governance
+./target/debug/vale-agent /tmp/vale-e2e/config.yaml &
+node agent/scripts/e2e/e2e.js --token <token> --base http://127.0.0.1:<port> --only governance,runs
 ```
+
+**There is NO `VALE_DATA_DIR` override** — `paths.rs` resolves the data dir
+registry-first (`registry_value("DataDir")`, else `install_dir()`), and on Linux
+`registry_value` is always `None`, so every runtime directory (sessions, memory,
+pwout, runs, logs) lands BESIDE THE EXE, i.e. under `target/debug/`. Earlier
+revisions of this recipe exported `VALE_DATA_DIR=/tmp/vale-e2e/data`, which
+silently did nothing: the agent ran happily against `target/debug/` while the
+reader believed it was isolated. If you need a clean data dir, point the
+config's `server` at a scratch install and remove `target/debug/{sessions,runs,pwout,memory,logs}`
+between runs.
+
+`runs` is the second platform-neutral section (run identity: mint -> stamp ->
+an unattributed sibling -> ordered timeline -> close -> an unknown id). Both run
+in CI on every push, which is the point: the `governance` section sat RED for a
+full round without anyone noticing, because nothing executed it.
 
 That is how the section was developed and how the audit-trail gap below was
 found. The other sections are DEVICE-targeted by design and will partially fail
