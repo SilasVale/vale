@@ -9,7 +9,7 @@
 // The header card and content card sit on a softly-tinted canvas with
 // rounded corners + shadow — the desktop app reads as surfaces, not bars.
 import { useEffect, useRef, useState } from "react";
-import type { Session } from "../hooks/useSessions";
+import { pendingApprovalCount, type Session } from "../hooks/useSessions";
 import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
 import { callApi } from "../lib/api";
 import { IconRail } from "./IconRail";
@@ -23,6 +23,7 @@ import { ConnModal } from "./ConnModal";
 import { Icon } from "../ui/Icon";
 import type { SessionView } from "./TabBar";
 import { ViewSwitch } from "./ViewSwitch";
+import { WaitingChip } from "./WaitingChip";
 import type { usePlugins } from "../hooks/usePlugins";
 
 interface Props {
@@ -162,6 +163,7 @@ export function DesktopShell({
           page={page}
           onPageChange={setPage}
           connected={connected}
+          pendingCount={pendingApprovalCount(sessions)}
           desktop
         />
       }
@@ -178,18 +180,27 @@ export function DesktopShell({
               <>
                 {/* Session tabs (compact pill strip inside the header) */}
                 <div className="desktop-tabs" role="tablist" aria-label="Terminal sessions" ref={tabsRef}>
-                  {openTabs.map((s) => (
+                  {openTabs.map((s) => {
+                    // Same rule as the panel's TabBar (one meaning, two
+                    // densities): a question waiting for a person is marked on
+                    // the tab itself, keyed on `pendingApproval` — NEVER on the
+                    // armed posture, which is permanent and would mark every
+                    // session forever.
+                    const waiting = !!s.pendingApproval;
+                    return (
                     <div
                       key={s.sid}
                       role="tab"
                       aria-selected={s.sid === activeSid}
                       className={`dtab ${s.sid === activeSid ? "active" : ""}`}
                       data-active={s.sid === activeSid ? "1" : undefined}
-                      title={s.sid}
+                      title={waiting ? `${s.sid} — waiting for your approval` : s.sid}
+                      aria-label={waiting ? `${s.label} — waiting for your approval` : undefined}
                       onClick={() => onActivate(s.sid)}
                     >
                       <span className="dtab-dot" data-kind={s.kind} />
                       <span className="dtab-name">{s.label}</span>
+                      {waiting && <span className="tab-wait" aria-hidden="true" />}
                       {confirmCloseSid === s.sid ? (
                         <span className="dtab-confirm" onClick={(e) => e.stopPropagation()}>
                           <span className="tab-confirm-hint">close?</span>
@@ -216,7 +227,8 @@ export function DesktopShell({
                         </button>
                       )}
                     </div>
-                  ))}
+                    );
+                  })}
                 </div>
 
                 {/* New-session menu — ONE entry point instead of four buttons */}
@@ -295,6 +307,9 @@ export function DesktopShell({
               <span className="desktop-status-msg">
                 {status || (sseState === "down" ? "Connection lost — reconnecting…" : "")}
               </span>
+              {/* This density has no StatusBar, so the device-level waiting
+                  count lives here instead (same shared chip). */}
+              <WaitingChip sessions={sessions} />
             </div>
           )}
           {!showStatus && (
@@ -304,6 +319,7 @@ export function DesktopShell({
                   ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}${agentUptime ? ` · up ${agentUptime}` : ""}${agentCpu !== null ? ` · CPU ${Math.round(agentCpu)}%` : ""}${agentMem !== null ? ` · MEM ${Math.round(agentMem)}%` : ""}`
                   : "connecting…"}
               </span>
+              <WaitingChip sessions={sessions} />
             </div>
           )}
 

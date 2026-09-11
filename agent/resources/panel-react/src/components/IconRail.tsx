@@ -20,23 +20,35 @@ const PAGE_ICONS: Record<Page, IconName> = {
   settings: "settings",
 };
 
-export function IconRail({ page, onPageChange, connected, desktop }: {
+export function IconRail({ page, onPageChange, connected, desktop, pendingCount = 0 }: {
   page: Page;
   onPageChange: (p: Page) => void;
   connected: boolean;
   desktop?: boolean;
+  /** Sessions holding a question for the operator (see `pendingApprovalCount`).
+   *  Optional and defaulted so a caller that has no session list (or an older
+   *  embedding) cannot crash the rail — it degrades to "no questions waiting". */
+  pendingCount?: number;
 }) {
   const btn = (active: boolean) => (desktop ? `desktop-rail-btn${active ? " active" : ""}` : `rail-btn${active ? " active" : ""}`);
   const [theme, setThemeState] = useState(getTheme());
   const themeBtnClass = desktop ? "desktop-rail-btn" : "rail-btn";
   const flipTheme = () => setThemeState(toggleTheme());
   const working = useDeviceActivity();
-  const state = !connected ? "off" : working ? "working" : "idle";
+  // WAITING OUTRANKS WORKING. Both can be true at once (the AI asked, then kept
+  // working elsewhere), and of the two, "a decision is waiting for you" is the
+  // one that decays if it goes unnoticed: the question expires. Precedence, in
+  // order: no transport → off (nothing can be answered anyway), a question →
+  // waiting, activity → working, else idle.
+  const waiting = pendingCount > 0;
+  const state = !connected ? "off" : waiting ? "waiting" : working ? "working" : "idle";
   const label = !connected
     ? "disconnected"
-    : working
-      ? "device is working"
-      : "device is idle";
+    : waiting
+      ? `${pendingCount} command${pendingCount === 1 ? "" : "s"} waiting for your answer`
+      : working
+        ? "device is working"
+        : "device is idle";
   return (
     <>
       {desktop ? (
@@ -69,9 +81,9 @@ export function IconRail({ page, onPageChange, connected, desktop }: {
       </button>
       {desktop ? (
         <>
-          {/* data-state drives the colour in CSS (off / idle / working) — the
-              same three-value vocabulary the panel dot uses, so the two
-              densities cannot drift apart. */}
+          {/* data-state drives the colour AND the shape in CSS (off / idle /
+              working / waiting) — the same vocabulary the panel dot uses, so
+              the two densities cannot drift apart. */}
           <div className="desktop-rail-status" data-state={state} title={label}>
             <span className="dot" />
           </div>

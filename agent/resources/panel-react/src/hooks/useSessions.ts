@@ -35,14 +35,45 @@ function mapGrants(s: any): string[] {
   return g.filter((x: unknown): x is string => typeof x === "string" && x.length > 0);
 }
 
-function mapPending(s: any): Session["pendingApproval"] {
+/** A question the device is holding open for a person to answer.
+ *
+ *  `expiresAtMs` is an ABSOLUTE wall-clock deadline, not the device's remaining
+ *  budget. The device reports `expires_in_ms` — a countdown that SHRINKS on
+ *  every read — and a component that keeps that number while also accumulating
+ *  its own elapsed time counts the same seconds twice: with the old 60 s block
+ *  a 2 s poll made the display fall at roughly double speed, which is fatal at
+ *  the gate's real ~15-minute TTL (the operator would be told the question had
+ *  minutes left when it had half an hour, or the reverse). Converting ONCE, at
+ *  the edge where the wire shape is read, leaves the display with one honest
+ *  number that only the clock moves. */
+export interface PendingApproval {
+  id: string;
+  command: string;
+  expiresAtMs: number;
+}
+
+export function mapPending(s: any): PendingApproval | null {
   const p = s?.pending_approval;
   if (!p || typeof p.id !== "string") return null;
+  const budget = typeof p.expires_in_ms === "number" && Number.isFinite(p.expires_in_ms)
+    ? Math.max(0, p.expires_in_ms)
+    : 0;
   return {
     id: p.id,
     command: typeof p.command === "string" ? p.command : "",
-    expiresInMs: typeof p.expires_in_ms === "number" ? p.expires_in_ms : 0,
+    expiresAtMs: Date.now() + budget,
   };
+}
+
+/** How many sessions are holding a question for the operator right now.
+ *
+ *  Keyed on `pendingApproval`, NEVER on `approvalRequired`: the gate being armed
+ *  is a standing posture (every command will ask), while a pending approval is
+ *  an actual decision waiting. A badge driven by "armed" would make every armed
+ *  session shout permanently — and an indicator that is always on is one nobody
+ *  reads. Closed tombstones are excluded: their question is history. */
+export function pendingApprovalCount(sessions: Session[]): number {
+  return sessions.filter((s) => !s.closed && s.pendingApproval).length;
 }
 
 export interface Session {
@@ -63,7 +94,7 @@ export interface Session {
   /** The command currently blocked at the gate, if any. Present only while a
    *  decision is actually being waited for — the agent clears it on every exit
    *  path, so a rendered prompt is always a live question. */
-  pendingApproval: { id: string; command: string; expiresInMs: number } | null;
+  pendingApproval: PendingApproval | null;
   /** First words allowed without asking. Server-owned and derived from commands
    *  the operator approved, so the panel's job is to SHOW them: a grant nobody
    *  can see is one nobody can judge or revoke, and these decide what runs. */
@@ -265,10 +296,14 @@ export function useSessions(connected: boolean) {
   // it must be able to start and stop as the mode changes without tearing down
   // the event listeners.
   //
-  // A pending approval is TRANSIENT: the agent gives up after its own budget, so
-  // the 30 s background sweep would routinely miss the prompt entirely and the
-  // operator would see commands refused for a reason that never appeared on
-  // screen. 2 s is well inside the agent's one-minute window.
+  // WHAT IT IS FOR, now that the question lives for the gate's full TTL
+  // (~15 minutes) instead of a one-minute block: DISCOVERY, not rescue. The 30 s
+  // background sweep would still find a question eventually, but "eventually" is
+  // up to 30 s of the operator staring at a session that is already waiting —
+  // and the decision is theirs to make in the first seconds. 2 s also notices
+  // RETIREMENT promptly, so an expired question clears instead of sitting there.
+  // (The old comment here justified 2 s as "well inside the agent's one-minute
+  // window"; that window is gone, and the reason above is the one that survived.)
   //
   // Gated on being armed, so an idle panel still polls nothing — the same "poll
   // only when needed" discipline as round-163, which removed a 3 s poll in

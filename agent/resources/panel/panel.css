@@ -355,6 +355,17 @@ code {
   background: var(--state-running);
   box-shadow: 0 0 0 2.5px var(--state-running-soft);
 }
+/* WAITING (a decision is holding in some session) outranks working, and it is a
+   DIAMOND rather than a circle because the two states' tokens — --state-warn and
+   --state-running — sit in the same orange band at this size. Shape is the
+   channel that still works with colour vision deficiencies and in greyscale;
+   animation is not a channel here at all (prefers-reduced-motion). */
+.rail-dot[data-state="waiting"] {
+  background: var(--state-warn);
+  border-radius: 2px;
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 2.5px var(--state-warn-soft);
+}
 .rail-dot[data-state="off"] { background: var(--chrome-ink-faint); }
 .rail-brand {
   width: 30px; height: 30px;
@@ -432,6 +443,14 @@ code {
 .desktop-rail-status[data-state="working"] .dot {
   background: var(--state-running);
   box-shadow: 0 0 0 2.5px var(--state-running-soft);
+}
+/* Same waiting state as .rail-dot — same diamond, same warn token, so the two
+   densities cannot drift on what "a question is waiting" looks like. */
+.desktop-rail-status[data-state="waiting"] .dot {
+  background: var(--state-warn);
+  border-radius: 2px;
+  transform: rotate(45deg);
+  box-shadow: 0 0 0 2.5px var(--state-warn-soft);
 }
 
 /* ---------- sidebar / context rail ---------- */
@@ -618,6 +637,22 @@ code {
 }
 .tab-dot[data-kind="ssh"] { background: var(--lane-ds); }
 .tab-dot[data-kind="serial"] { background: var(--lane-or); }
+/* A question is waiting for a person in this session. Deliberately NOT another
+   .tab-dot: the two marks share a row, and a second circle beside the lane dot
+   reads as another lane. A small rotated square in the warn token says
+   "attention" in a shape that cannot be confused with the lane mark — and shape
+   carries the state, so it survives prefers-reduced-motion (colour alone does
+   not separate it from the accent dot at 7px). */
+.tab-wait {
+  display: inline-block;
+  flex: none;
+  width: 6px; height: 6px;
+  margin-left: 5px;
+  vertical-align: 1px;
+  background: var(--state-warn);
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
 /* Capped like .dtab-name (R131). This one had NO limit at all, so a single
    session named after a long path could push every other tab out of reach —
    the panel's strip scrolled, but one tab could occupy the whole row. */
@@ -916,6 +951,14 @@ code {
   font-size: 11px; font-weight: 650; letter-spacing: 0.03em;
   text-transform: uppercase; color: var(--warn-ink);
 }
+/* The last minute says so IN WORDS, not only in ink: the urgent state used to be
+   a colour change alone, and this repo has a recorded incident where two states
+   were distinguishable only by an animation that prefers-reduced-motion removes.
+   Colour + text, never one channel on its own. */
+.approval-urgent {
+  font-size: 10.5px; font-weight: 700; letter-spacing: 0.03em;
+  text-transform: uppercase; color: var(--danger-on-soft);
+}
 .approval-left {
   margin-left: auto;
   font: 600 11px var(--font-mono);
@@ -1012,6 +1055,41 @@ code {
 .approval-grant-x:disabled { opacity: 0.5; cursor: default; }
 .approval-note b { font-weight: 700; }
 
+/* The question has RETIRED (0 s): the command was not run and nothing here can
+   be answered any more. It sits where the prompt sat, but demoted — a quiet
+   surface chip with a line border instead of the prompt's raised warning wash.
+   That difference is the point: the warning treatment on a dead row would read
+   as "still your move", and a 0s timer reads the same way. --chrome-ink-dim is
+   the readable-on-chip weight (--muted measured 4.40 on this surface, under
+   AA). No button is styled here on purpose: the row renders none. */
+.approval-expired {
+  display: flex;
+  align-items: center;
+  align-self: center;
+  flex: 0 0 auto;
+  padding: 5px 10px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-chip);
+  color: var(--chrome-ink-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+
+/* Screen-reader-only text. Clipped rather than display:none: a clipped element
+   is still in the accessibility tree, so it can carry the alertdialog's STATIC
+   description and the one polite last-minute announcement — while a
+   display:none node is dropped by screen readers entirely. */
+.approval-sr {
+  position: absolute;
+  width: 1px; height: 1px;
+  margin: -1px; padding: 0;
+  overflow: hidden;
+  clip: rect(0 0 0 0);
+  white-space: nowrap;
+  border: 0;
+}
+
 /* ── Session control handoff (agent §D5) ──
    Sits with the session toolbar in both densities. The dot carries the state
    through the SAME shape channel as the rest of the panel (human = filled
@@ -1100,6 +1178,31 @@ code {
   white-space: nowrap;
 }
 #sse-status.hidden { display: none; }
+/* The device-level "a decision is waiting" chip (StatusBar + the desktop
+   footer). Rendered only when the count is > 0 — the component owns that rule,
+   and the styling here must not imply an always-on badge. Same diamond as the
+   rail's waiting dot: one meaning, one shape. --chrome-ink-dim is the readable
+   text weight on --surface-chip (--muted measured 4.40 there, under AA). */
+.waiting-chip {
+  display: inline-flex;
+  align-items: center;
+  gap: 5px;
+  margin-left: 10px;
+  padding: 1px 8px;
+  border: 1px solid var(--line);
+  border-radius: 999px;
+  background: var(--surface-chip);
+  color: var(--chrome-ink-dim);
+  font-size: 11.5px;
+  white-space: nowrap;
+}
+.waiting-mark {
+  flex: none;
+  width: 6px; height: 6px;
+  background: var(--state-warn);
+  border-radius: 1px;
+  transform: rotate(45deg);
+}
 
 /* ---------- terminal ---------- */
 #term-container {
@@ -3760,6 +3863,9 @@ button.dtab-close:hover { opacity: 1; }
 .desktop-status.error .desktop-status-msg { color: var(--danger); font-weight: 600; }
 .desktop-status.idle { color: var(--chrome-ink-faint); }
 .desktop-status-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* This density has no StatusBar, so the shared waiting chip rides the footer —
+   pinned right, where the session/vitals line already ends. */
+.desktop-status .waiting-chip { margin-left: auto; }
 /* stage-l: native-menu "Show Status" flashes the strip to draw the eye. */
 .desktop-status.flash { animation: desktop-status-flash 1.2s ease-out; }
 @keyframes desktop-status-flash {

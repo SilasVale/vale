@@ -275,6 +275,9 @@
 .desktop-status.error .desktop-status-msg { color: var(--danger); font-weight: 600; }
 .desktop-status.idle { color: var(--chrome-ink-faint); }
 .desktop-status-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+/* This density has no StatusBar, so the shared waiting chip rides the footer —
+   pinned right, where the session/vitals line already ends. */
+.desktop-status .waiting-chip { margin-left: auto; }
 /* stage-l: native-menu "Show Status" flashes the strip to draw the eye. */
 .desktop-status.flash { animation: desktop-status-flash 1.2s ease-out; }
 @keyframes desktop-status-flash {

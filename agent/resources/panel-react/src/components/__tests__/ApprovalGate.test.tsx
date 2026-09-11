@@ -15,13 +15,19 @@
 import { describe, it, expect, vi, beforeEach, afterEach } from "vitest";
 import { render, screen, fireEvent, waitFor, act } from "@testing-library/react";
 import { ApprovalGate, firstWord } from "../ApprovalGate";
+import { mapPending } from "../../hooks/useSessions";
 
-const pending = (over: Partial<{ id: string; command: string; expiresInMs: number }> = {}) => ({
-  id: "ap-1",
-  command: "vlan 100",
-  expiresInMs: 60_000,
-  ...over,
-});
+/** A question whose deadline is `expiresInMs` from NOW.
+ *
+ *  The component's shape is ABSOLUTE (`expiresAtMs`) because the device reports
+ *  a budget that SHRINKS on every read; the fixtures state a budget and let the
+ *  clock place it, exactly as `mapPending` does at the wire edge. */
+const pending = (
+  over: Partial<{ id: string; command: string; expiresInMs: number; expiresAtMs: number }> = {},
+) => {
+  const { expiresInMs = 60_000, ...rest } = over;
+  return { id: "ap-1", command: "vlan 100", expiresAtMs: Date.now() + expiresInMs, ...rest };
+};
 
 /** Every prop the gate needs, with inert defaults. A builder rather than
  *  inline literals so a future required prop is one edit, not eleven. */
@@ -140,7 +146,8 @@ describe("ApprovalGate — a command waiting", () => {
     rerender(
       <ApprovalGate {...gateProps({ armed: true, pending: pending({ id: "b", expiresInMs: 60_000 }) })} />,
     );
-    expect(screen.getByText("60s")).toBeTruthy();
+    // A full minute left reads as "1m" — whole minutes with a ceiling.
+    expect(screen.getByText("1m")).toBeTruthy();
   });
 
   it("shows the prompt INSTEAD of the toggle — one thing to act on", () => {
@@ -228,5 +235,224 @@ describe("ApprovalGate — grants", () => {
     ]) {
       expect(firstWord(cmd), `${cmd} must not be offered a grant`).toBeNull();
     }
+  });
+});
+
+describe("ApprovalGate — the deadline is absolute (the double-speed regression)", () => {
+  it("does NOT fall twice as fast when a re-read reports a smaller budget", async () => {
+    // THE REGRESSION THIS FILE EXISTS FOR NOW. The device reports
+    // `expires_in_ms` — a countdown that SHRINKS on every read — and the panel
+    // re-reads it every 2 s while the gate is armed. A component that keeps the
+    // shrinking budget AND accumulates its own elapsed time counts every second
+    // twice. Against the old 60 s block that was invisible; at the gate's real
+    // ~15-minute TTL the operator would be told the question had minutes left
+    // when it had half an hour's worth.
+    const TTL = 15 * 60_000;
+    const view = (elapsed: number) => (
+      <ApprovalGate
+        {...gateProps({
+          armed: true,
+          // The SAME question, mapped from the wire exactly as useSessions does.
+          pending: mapPending({
+            pending_approval: { id: "ap-ttl", command: "reload", expires_in_ms: TTL - elapsed },
+          }),
+        })}
+      />
+    );
+    const { rerender } = render(view(0));
+    expect(screen.getByText("15m")).toBeTruthy();
+
+    // A minute of the loop, in the tick steps the component itself uses.
+    for (let elapsed = 30_000; elapsed <= 60_000; elapsed += 30_000) {
+      await act(async () => { vi.advanceTimersByTime(30_000); });
+      rerender(view(elapsed));
+    }
+
+    // 14 minutes left. A double-counting display shows 13m: it subtracts its own
+    // accumulated 60 s from the fresh 840 s budget.
+    expect(screen.getByText("14m")).toBeTruthy();
+    expect(screen.queryByText("13m")).toBeNull();
+  });
+
+  it("counts DOWN in real time — a 15-minute question still has ~14m a minute later", async () => {
+    // The other half: the display must actually move. A frozen deadline would
+    // pass the test above and fail the operator.
+    render(<ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 15 * 60_000 }) })} />);
+    expect(screen.getByText("15m")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(90_000); });
+    expect(screen.getByText("14m")).toBeTruthy();
+  });
+});
+
+describe("ApprovalGate — 0 s is settled, not answerable", () => {
+  it("replaces the prompt with a status row that has NO buttons and no timer", async () => {
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 2_000 }) })} />,
+    );
+    expect(screen.getByRole("alertdialog")).toBeTruthy();
+
+    await act(async () => { vi.advanceTimersByTime(2_500); });
+
+    // NOT alertdialog any more: there is nothing to answer.
+    expect(screen.queryByRole("alertdialog")).toBeNull();
+    const row = screen.getByRole("status");
+    expect(row.textContent).toContain("Expired — the command was not run.");
+    expect(container.querySelector(".approval-expired")).toBeTruthy();
+    // A disabled "Run it" at 0 s reads as answerable, and the device would
+    // refuse it — so the row renders no button of any kind.
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+    expect(screen.queryByText("Run it")).toBeNull();
+    expect(screen.queryByText("Refuse")).toBeNull();
+    // No frozen "0s" either: a stopped countdown still looks like a countdown.
+    expect(container.querySelector(".approval-left")).toBeNull();
+    expect(container.querySelector(".approval-prompt")).toBeNull();
+  });
+
+  it("treats a question that arrives already expired as settled", () => {
+    // A panel that first reads the list after the TTL has run out must not
+    // render a fresh, answerable prompt for a question the device retired.
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 0 }) })} />,
+    );
+    expect(screen.getByRole("status").textContent).toContain("Expired");
+    expect(container.querySelectorAll("button")).toHaveLength(0);
+  });
+
+  it("clears to NOTHING when the next list read drops the id", () => {
+    const { container, rerender } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 0 }) })} />,
+    );
+    expect(container.querySelector(".approval-expired")).toBeTruthy();
+    // The device retired the question and terminal_list stopped reporting it.
+    rerender(<ApprovalGate {...gateProps({ armed: true, pending: null })} />);
+    expect(container.querySelector(".approval-expired")).toBeNull();
+    expect(screen.queryByRole("status")).toBeNull();
+    // The armed toggle is what is left — no residue of the answered question.
+    expect(screen.getByText("Asking first")).toBeTruthy();
+  });
+});
+
+describe("ApprovalGate — a countdown a screen reader can live with", () => {
+  it("reads whole minutes with a ceiling, then seconds in the last minute", () => {
+    const at = (ms: number, id: string) => (
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ id, expiresInMs: ms }) })} />
+    );
+    const { rerender } = render(at(15 * 60_000, "a"));
+    expect(screen.getByText("15m")).toBeTruthy();
+    rerender(at(2 * 60_000, "b"));
+    expect(screen.getByText("2m")).toBeTruthy();
+    // Ceiling, not floor: 61 s is closer to two minutes than to one, and
+    // rounding DOWN would retire the question in the operator's head early.
+    rerender(at(61_000, "c"));
+    expect(screen.getByText("2m")).toBeTruthy();
+    rerender(at(59_000, "d"));
+    expect(screen.getByText("59s")).toBeTruthy();
+  });
+
+  it("ticks once a second only inside the last minute", async () => {
+    // The observable half: with 45 s left, five seconds of real time must move
+    // the display. A 30 s ticker would still say "45s".
+    const { rerender } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ id: "slow", expiresInMs: 15 * 60_000 }) })} />,
+    );
+    rerender(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ id: "fast", expiresInMs: 45_000 }) })} />,
+    );
+    expect(screen.getByText("45s")).toBeTruthy();
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(screen.getByText("40s")).toBeTruthy();
+  });
+
+  it("asks for a 30 s tick before the last minute and a 1 s tick inside it", () => {
+    // The other half of the same requirement, pinned at the source: the old
+    // fixed 500 ms interval re-rendered the whole workspace 1800 times per
+    // question to display a number that changes once a minute.
+    const spy = vi.spyOn(window, "setInterval");
+    const { unmount } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ id: "long", expiresInMs: 15 * 60_000 }) })} />,
+    );
+    expect(spy).toHaveBeenCalledWith(expect.any(Function), 30_000);
+    expect(spy).not.toHaveBeenCalledWith(expect.any(Function), 500);
+    unmount();
+    spy.mockClear();
+    render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ id: "last", expiresInMs: 45_000 }) })} />,
+    );
+    expect(spy).toHaveBeenCalledWith(expect.any(Function), 1_000);
+    spy.mockRestore();
+  });
+
+  it("keeps the ticking number OUT of the alertdialog's live region", async () => {
+    // role="alertdialog" inherits from `alert` — an ASSERTIVE live region. A
+    // 1 Hz text change inside it would machine-gun a screen reader for the
+    // question's whole TTL, so the countdown is aria-hidden and the description
+    // is a STATIC sentence naming the wall-clock deadline.
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 45_000 }) })} />,
+    );
+    const dialog = screen.getByRole("alertdialog");
+    const left = container.querySelector(".approval-left")!;
+    expect(left.getAttribute("aria-hidden")).toBe("true");
+    expect(left.textContent).toBe("45s");
+
+    const descId = dialog.getAttribute("aria-describedby");
+    expect(descId, "the alertdialog needs a static description").toBeTruthy();
+    const desc = document.getElementById(descId!)!;
+    const text = desc.textContent!;
+    expect(text).toMatch(/Waiting for your answer\./);
+    expect(text).toMatch(/Expires at \d{2}:\d{2}\./);
+
+    await act(async () => { vi.advanceTimersByTime(5_000); });
+    expect(container.querySelector(".approval-left")!.textContent).toBe("40s");
+    // ...and the description did not move with it.
+    expect(document.getElementById(descId!)!.textContent).toBe(text);
+  });
+
+  it("announces the last minute exactly once", async () => {
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 2 * 60_000 }) })} />,
+    );
+    const statuses = () => [...container.querySelectorAll('[role="status"]')];
+    expect(statuses()).toHaveLength(1);
+    expect(statuses()[0].textContent).toBe("");
+
+    await act(async () => { vi.advanceTimersByTime(60_000); });
+    expect(statuses()[0].textContent).toBe("Less than a minute left to answer.");
+
+    // Ten more ticks, one announcement: the region's text does not change, so
+    // a polite live region has nothing new to say.
+    await act(async () => { vi.advanceTimersByTime(20_000); });
+    expect(statuses()).toHaveLength(1);
+    expect(statuses()[0].textContent).toBe("Less than a minute left to answer.");
+  });
+
+  it("says the last minute in WORDS, not only in ink", async () => {
+    // The urgent threshold moved from the last 10 s to the last minute, and it
+    // is colour + TEXT — this repo has a recorded incident where two states
+    // differed only by an animation that prefers-reduced-motion disables.
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending({ expiresInMs: 45_000 }) })} />,
+    );
+    expect(container.querySelector(".approval-urgent")!.textContent).toMatch(/last minute/i);
+    expect(container.querySelector(".approval-left")!.className).toContain("urgent");
+  });
+});
+
+describe("ApprovalGate — copy that is true whether the AI is blocked or parked", () => {
+  it("does not claim the AI is blocked, and explains the late yes", () => {
+    const { container } = render(
+      <ApprovalGate {...gateProps({ armed: true, pending: pending() })} />,
+    );
+    // A claim about the OPERATOR, which is true either way.
+    expect(screen.getByText("Waiting for you")).toBeTruthy();
+    const note = container.querySelector(".approval-note")!.textContent!;
+    expect(note).toMatch(/not\s+run/i);
+    // Without this sentence a late yes mints a permit, shows no run, and reads
+    // as a broken button.
+    expect(note).toMatch(/still counts/i);
+    expect(note).toMatch(/next time the AI asks/i);
+    // The panel cannot tell "blocked" from "gave up and parked" — there is no
+    // such bit on the wire — so it must not assert either.
+    expect(note).not.toMatch(/paused|blocked|stopped waiting for good/i);
   });
 });

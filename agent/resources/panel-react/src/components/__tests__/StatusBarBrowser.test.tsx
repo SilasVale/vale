@@ -72,3 +72,38 @@ describe("BrowserPage", () => {
     expect(screen.getByText("The browser needs the Vale desktop app")).toBeTruthy();
   });
 });
+
+describe("StatusBar — the device-level waiting chip", () => {
+  const question = { id: "g1", command: "reload", expiresAtMs: Date.now() + 60_000 };
+
+  it("counts what is waiting, and renders NOTHING at zero", () => {
+    const { rerender } = render(
+      <StatusBar sessions={[sess({ approvalRequired: true })]} status="ok" sseState="connected" />,
+    );
+    // Armed is a posture, not a question: a chip here would be permanent noise.
+    expect(screen.queryByText(/waiting/)).toBeNull();
+
+    rerender(<StatusBar sessions={[sess({ pendingApproval: question })]} status="ok" sseState="connected" />);
+    expect(screen.getByText("1 waiting")).toBeTruthy();
+
+    rerender(
+      <StatusBar
+        sessions={[sess({ pendingApproval: question }), sess({ sid: "s2", pendingApproval: question })]}
+        status="ok"
+        sseState="connected"
+      />,
+    );
+    expect(screen.getByText("2 waiting")).toBeTruthy();
+
+    // Never "0 waiting": a permanent zero is chrome people stop reading.
+    rerender(<StatusBar sessions={[sess()]} status="ok" sseState="connected" />);
+    expect(screen.queryByText(/waiting/)).toBeNull();
+  });
+
+  it("does not count a closed tombstone's question", () => {
+    render(
+      <StatusBar sessions={[sess({ closed: true, pendingApproval: question })]} status="ok" sseState="connected" />,
+    );
+    expect(screen.queryByText(/waiting/)).toBeNull();
+  });
+});

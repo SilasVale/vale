@@ -3,7 +3,7 @@
 // density (design doc §4). The old AppFrame three-column wiring + Sidebar
 // dual-view are replaced by Shell + ContextRail.
 import { useState } from "react";
-import type { Session } from "../hooks/useSessions";
+import { pendingApprovalCount, type Session } from "../hooks/useSessions";
 import { IconRail } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { ContextRail } from "./ContextRail";
@@ -59,6 +59,7 @@ export function PanelApp(props: Props) {
             page={page}
             onPageChange={setPage}
             connected={connected}
+            pendingCount={pendingApprovalCount(props.sessions)}
           />
         }
         contextRail={page === "terminal" || page === "plugins" ? (

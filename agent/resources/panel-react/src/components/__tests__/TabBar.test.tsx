@@ -87,3 +87,58 @@ describe("TabBar", () => {
     expect(screen.queryByText("Terminal")).toBeNull();
   });
 });
+
+describe("TabBar — a question waiting for a person", () => {
+  const question = { id: "g1", command: "reload", expiresAtMs: Date.now() + 60_000 };
+
+  it("marks the session that is holding a question, with a shape AND a word", () => {
+    const p = props({
+      sessions: [
+        session(),
+        session({ sid: "s2", label: "gated", pendingApproval: question }),
+      ],
+    });
+    const { container } = render(<TabBar {...p} />);
+    // A SHAPE, not the lane dot: the strip's other marks are circles, so a
+    // second circle beside them would read as another lane.
+    expect(container.querySelectorAll(".tab-wait")).toHaveLength(1);
+    const tab = screen.getByTitle("gated — waiting for your approval");
+    expect(tab.querySelector(".tab-wait")).toBeTruthy();
+    // ...and the word, for anyone who cannot see the mark.
+    expect(tab.getAttribute("aria-label")).toBe("gated — waiting for your approval");
+    // The unmarked session keeps its ordinary title.
+    expect(screen.getByTitle("s1")).toBeTruthy();
+  });
+
+  it("does NOT mark a session that is merely ARMED", () => {
+    // Keying the badge off `approvalRequired` would make every armed session
+    // shout forever, which is how a badge becomes wallpaper.
+    const { container } = render(
+      <TabBar {...props({ sessions: [session({ sid: "s3", label: "armed", approvalRequired: true })] })} />,
+    );
+    expect(container.querySelector(".tab-wait")).toBeNull();
+    expect(screen.queryByTitle("armed — waiting for your approval")).toBeNull();
+    expect(screen.getByTitle("s3")).toBeTruthy();
+    expect(screen.queryByLabelText("armed — waiting for your approval")).toBeNull();
+  });
+
+  it("never marks a CLOSED tombstone, even if it still carries a question", () => {
+    const { container } = render(
+      <TabBar
+        {...props({
+          sessions: [session({ sid: "s9", label: "gone", closed: true, pendingApproval: question })],
+          activeSid: null,
+        })}
+      />,
+    );
+    expect(container.querySelector(".tab-wait")).toBeNull();
+    expect(screen.getByTitle("gone — closed (history stays in Trajectory/Logs)")).toBeTruthy();
+  });
+
+  it("shows no COUNT — one session holds at most one question", () => {
+    const { container } = render(
+      <TabBar {...props({ sessions: [session({ sid: "s2", label: "gated", pendingApproval: question })] })} />,
+    );
+    expect(container.querySelector(".tab-wait")!.textContent).toBe("");
+  });
+});
