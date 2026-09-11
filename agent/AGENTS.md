@@ -488,7 +488,75 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 19 (I SHIPPED A BUG, FOUND IT ON THE DEVICE, AND
+Last updated: 2026-09-11 round 20 (the memory ledger that never moved, the run
+  family's turn, and two flakes killed at the cause). Commits: 5bd73924 (ledger),
+  9ff2d5d3 (abandoned runs), 6a7bbd29 + e1521114 (release 1.2.325), 1ecf7db7
+  (the two flakes).
+  (1) THE MEMORY BYTE LEDGER MOVED FOR SOME WRITES ONLY. `total_bytes` is what
+  `enforce_limits` reads for `max_bytes`. `insert()` maintained it and `load()`
+  recomputed it; `update()` did NEITHER — and `update()` is the path every EDIT
+  and every SOFT-DELETE takes (`delete()` delegates to it). So an edit that grew
+  content UNDERCOUNTED (the cap silently stopped being enforced) and a soft-delete
+  kept counting removed content so the ledger OVERCOUNTED and enforce evicted LIVE
+  records for a phantom — the "premature eviction" a load-time comment claims was
+  already fixed. Fixed with `ledger_adjust(guard, prev, next)`, which states the
+  invariant once (ledger = sum of content over records where !deleted) and which
+  all three write paths now call. Not "remember to update it here too" — the
+  chance to forget is gone.
+  WHY IT SURVIVED: the only test naming the ledger DROPS AND REOPENS the store,
+  and the reopen recomputes it — its own comment says "total recomputed on load".
+  The in-process ledger was asserted nowhere, and no production reader existed to
+  notice.
+  (2) THE RUN FAMILY GOT ITS RECOVERY ARM. `runs::end` has exactly ONE caller (the
+  `run_end` tool), so a run killed mid-flight by the watchdog, a crash or an
+  update (which kills the agent BY DESIGN) stayed "open" forever. This is round
+  18's approval loss in the sibling event family, and it belongs at BOOT because
+  that is the one moment that can tell "nobody said" apart from "still going".
+  Idempotent by construction — round 18's own lesson. THE PAYOFF WAS IMMEDIATE ON
+  d1: the first boot after the release closed **two real orphaned runs**, one of
+  them the run minted in ROUND 15 for the release smoke test. They had been
+  reading as live for days.
+  (3) IT ALSO FOUND A SECOND, PRE-EXISTING DEFECT. `runs.rs` was the ONE
+  append-only log in this crate that never repaired a torn tail: `session_log` and
+  the memory store have called `jsonl::prepare_append` since round 111; runs.rs did
+  not. A crash mid-write leaves a fragment with no newline, the next append FUSES
+  onto it, and two records become one unparseable line — both vanish. My own test
+  surfaced it (it closed an orphan and then could not read the closure back).
+  Fixed with `has_torn_tail` — repair ONLY, no version header, because `recent`
+  returns every parseable line and a header would surface as a phantom entry to
+  /api/operation (verified: adding one failed four existing tests).
+  (4) TWO FLAKES, BOTH "GREEN ALONE, RED UNDER LOAD", BOTH FIXED AT THE CAUSE.
+  (a) MINE: the new eviction test reused the temp dir `vale-mem-evict-{pid}` that
+  `eviction_tombstones_persist_across_restart` already owned. Tests run in
+  PARALLEL THREADS of one process, so the two stores shared a file and one's
+  `remove_dir_all` wiped the other's records — the ledger read 18 where 16 was
+  written. The tell was the "2 extra bytes": my other new test writes content
+  "ab", and 18 = 16 + that stranger. (b) PRE-EXISTING, and the one that ACTUALLY
+  BROKE CI: `force_signal_kills_the_whole_group_not_just_the_shell` SAMPLED
+  `kill -0 -PGID` once, and `kill -0` succeeds on a ZOMBIE until the reaper runs;
+  on a loaded runner that lag is enough. The probe now POLLS for 5s — which does
+  NOT weaken it, proven by mutation: reintroducing the round-55 bug (kill the
+  direct pid, not the group) still fails it after the full 5s.
+  (5) RELEASED 1.2.325 AND IT IS LIVE ON d1. CDN sha matches the manifest; CI and
+  the release workflow green on the tag; keep-latest left one release and one tag;
+  the last-5 window still holds 1.2.321-325 so rollback is possible. The receipt
+  read `update requested 1.2.324 -> 1.2.325` — round 19's fix holding in
+  production — and the boot log showed the new pass closing those two old runs.
+  (6) A NOTE ON THE DUAL-BUILDER AUDIT: it reported **WARN**, not OK, and the WARN
+  is the STRONGER result. The OK path lists a differing `vale-agent.exe`; the WARN
+  path is reached only when EVERY source-derived file matches INCLUDING the exe,
+  and just the tarball container bytes differ (packaging metadata). The two
+  builders converged for this release — the outcome step 6 of the release docs was
+  written to achieve. The script's wording undersells it.
+  Gates: agent 559 default / 609 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK. The full suite ran 6x consecutively green after the
+  flake fix.
+  METHOD NOTE, third time this session and now written into the log's own body:
+  a mutation or a diagnosis has a PREMISE, and checking the premise matters more
+  than reading the result. Three of my mutation scripts had a wrong anchor this
+  session and reported "fail 0", which measures nothing.
+
+Previous round: 2026-09-11 round 19 (I SHIPPED A BUG, FOUND IT ON THE DEVICE, AND
   FIXED IT IN THE SAME ROUND). Commits: c9309ed8 (1.2.323), 13983349 (the shell
   fix), then 1.2.324.
   (1) THE BUG I SHIPPED. Round 7's update receipt is the thing that tells an
