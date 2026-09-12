@@ -519,7 +519,46 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 56 (the FOURTH instance of one disease, and the worst:
+Last updated: 2026-09-11 round 57 (a finding the ops tool had reported on EVERY run
+since it was written was finally ACTED ON — the gateway advertised a model NVIDIA has
+never offered, and the console would now offer it as a clickable chip).
+Commit: ca8172cb. Worker deployed; verified by effect.
+  (1) THE FINDING: `nv/minimaxai/minimax-m3` was in MODEL_REGISTRY and absent from
+  NVIDIA's catalogue. The drift tool had flagged it every run; every round recorded
+  it as "one genuine absence" and moved on. Recording a defect is not fixing it —
+  round 55's lesson, one level up.
+  (2) IT SURVIVED THE OBVIOUS OBJECTION, which is why acting was right rather than
+  hasty: the tool compares the ADVERTISED id against the upstream list, so the
+  mismatch could have been a prefix artefact (`nv/` stripped on the wire). It is not
+  — NVIDIA has NO MiniMax entry at all, prefixed or bare, across 82 models of which
+  7 are Chinese-lab (yi-large, deepseek x3, kimi x2, glm). `nv/moonshotai/kimi-k3`
+  and `nv/nvidia/nemotron-3-ultra-550b-a55b` resolve EXACTLY, so the list is current.
+  (3) WHY IT GOT WORSE SINCE IT WAS FOUND: round 49's console Models page renders the
+  server-derived catalogue, so this id became a SELECTABLE CHIP. Choosing it fails
+  upstream. An advertised model that cannot work costs a user a failed request.
+  (4) VERIFIED BY EFFECT ON THE LIVE WORKER: 22 -> 21 advertised; nv/ is now
+  [nemotron, kimi-k3]; `og/minimax-m3` is a DIFFERENT channel on a different upstream
+  and is untouched. model-drift reports no CHECK for nv/ at all now.
+  (5) THE FIXTURE MOVED WITH ITS SUBJECT: the entry was also the BYOK fixture in
+  `model-route.test.mjs` ("pure BYOK (nv/gmi): env key never substitutes"), so it
+  moved to `nv/moonshotai/kimi-k3` — a model that exists — rather than the test being
+  deleted with the entry.
+  (6) THE REPO CAUGHT WHAT I WOULD HAVE SHIPPED: editing `src/channels.ts` left the
+  SOURCE VIEWER MIRROR stale and `code viewer: the tracked mirror matches what src/
+  would publish` failed, naming its own fix (`bash gateway/scripts/sync-code-viewer.sh`).
+  That check exists so the viewer cannot serve code the worker does not run.
+  (7) THE GUIDE'S CLAIM WAS STALE AND IS FIXED: the model-drift paragraph said this
+  was "one genuine absence" and stopped; it now records that it was acted on and how
+  the objection was answered.
+  (8) STILL OPEN: the panel's governance-pill visual prominence (a taste call), the
+  `--dsw-alias-*` namespace rename on the landing page, and the drift tool's
+  "opportunity" rows (80 nv / 66 cm models upstream we do not advertise — adding one
+  needs the registry's other five facets, so it is a product decision, not a
+  mechanical one).
+  Gates: gateway 772 + format; token contract green; release-audit 9; e2e-only 5;
+  CI green on main.
+
+Previous round: 2026-09-11 round 56 (the FOURTH instance of one disease, and the worst:
 a CI gate that runs on EVERY PUSH passed while testing nothing — I stopped fixing
 instances and audited the whole repo for the pattern). Commit: 22494a05. CI green.
   (1) THE AUDIT FIRST, and it is part of the result: no `continue-on-error` anywhere
