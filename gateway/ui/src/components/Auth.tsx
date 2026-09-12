@@ -58,40 +58,49 @@ export default function Auth() {
 
   return (
     <div className="auth-wrap">
-      <div className="auth-card">
+      {/* The brand lives BESIDE the form, not stacked on top of it. The page was
+          a 396px card floating in a 1440px field of nothing, with the only
+          explanatory sentence — `auth.foot` — orphaned UNDER the card in the
+          smallest type on the screen. Moving the brand out gives the page a
+          composition and gives that sentence somewhere it can be read. */}
+      <aside className="auth-aside">
         <div className="auth-lang">
           <button className="lang-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
             {lang === "zh" ? "EN" : "中文"}
           </button>
         </div>
         <div className="auth-brand">
-          <img className="brand-img" src="/favicon.svg" alt="Vale" width={46} />
+          <img className="brand-img" src="/favicon.svg" alt="" width={52} height={52} />
           <div>
             <h1>Vale</h1>
             <p>{t("app.sub")}</p>
           </div>
         </div>
+        <p className="auth-pitch">{t("auth.foot")}</p>
+      </aside>
 
-        <div className="auth-tabs" role="tablist">
-          <button
-            className={`auth-tab ${tab === "login" ? "active" : ""}`}
-            onClick={() => setTab("login")}
-          >
-            {t("auth.login")}
-          </button>
-          <button
-            className={`auth-tab ${tab === "register" ? "active" : ""}`}
-            onClick={() => setTab("register")}
-          >
-            {t("auth.register")}
-          </button>
-          <button
-            className={`auth-tab ${tab === "reset" ? "active" : ""}`}
-            onClick={() => setTab("reset")}
-          >
-            {t("auth.resetTab")}
-          </button>
-        </div>
+      <main className="auth-main">
+        <div className="auth-card">
+          <div className="auth-tabs" role="tablist">
+            <button
+              className={`auth-tab ${tab === "login" ? "active" : ""}`}
+              onClick={() => setTab("login")}
+            >
+              {t("auth.login")}
+            </button>
+            <button
+              className={`auth-tab ${tab === "register" ? "active" : ""}`}
+              onClick={() => setTab("register")}
+            >
+              {t("auth.register")}
+            </button>
+            <button
+              className={`auth-tab ${tab === "reset" ? "active" : ""}`}
+              onClick={() => setTab("reset")}
+            >
+              {t("auth.resetTab")}
+            </button>
+          </div>
 
         {tab === "login" && (
           <form className="auth-form" onSubmit={handleLogin} autoComplete="off">
@@ -200,8 +209,8 @@ export default function Auth() {
             </button>
           </form>
         )}
-      </div>
-      <p className="auth-foot">{t("auth.foot")}</p>
+        </div>
+      </main>
     </div>
   );
 }

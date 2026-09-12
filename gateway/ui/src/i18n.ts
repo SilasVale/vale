@@ -2,7 +2,7 @@ import { useCallback, useSyncExternalStore } from "react";
 
 const I18N = {
   zh: {
-    "app.sub": "Vale 平台 · AI 网关与设备",
+    "app.sub": "AI 网关与设备",
     "auth.login": "登录",
     "auth.register": "注册",
     "auth.username": "用户名",
@@ -251,7 +251,7 @@ const I18N = {
     "err.loadRoutes": "路由信息加载失败",
   },
   en: {
-    "app.sub": "Vale platform — AI relay & devices",
+    "app.sub": "AI relay & devices",
     "auth.login": "Log in",
     "auth.register": "Sign up",
     "auth.username": "Username",

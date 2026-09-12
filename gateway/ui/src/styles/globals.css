@@ -1278,14 +1278,60 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
    Auth page
    ================================================================ */
 
+/* ── Auth ────────────────────────────────────────────────────────────────
+   A SPLIT PAGE, not a card in a void. Measured before: at 1440x900 the card was
+   396px wide inside ~1440px of empty background, and the one explanatory
+   sentence sat OUTSIDE the card, under it, in the smallest type on the screen.
+   The brand now owns the left half and that sentence lives with it.
+
+   Every value here is a design token. `scripts/test/token-contract-check.mjs`
+   fails the build on a neutral that is not on the panel's declared scale, so the
+   palette cannot drift out of this file's control again. */
 .auth-wrap {
   min-height: 100vh;
+  display: grid;
+  grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+  background: var(--bg-secondary);
+}
+
+/* Brand half. The gradient is built from the accent the whole product already
+   uses, so the page reads as Vale before a single word is read. */
+.auth-aside {
   display: flex;
   flex-direction: column;
+  justify-content: center;
+  align-items: flex-start;
+  gap: 28px;
+  padding: 56px 64px;
+  background: var(--bg);
+  border-right: 1px solid var(--border);
+  position: relative;
+  overflow: hidden;
+}
+
+/* Pinned to the aside's own top-right. It was absolutely positioned inside the
+   CARD until the brand block moved out — at which point the card got shorter and
+   the button landed on its top border, which is what the first screenshot of
+   this redesign showed. */
+.auth-aside .auth-lang {
+  position: absolute;
+  top: 24px;
+  right: 24px;
+}
+
+.auth-pitch {
+  position: relative;
+  max-width: 30em;
+  font-size: 15px;
+  line-height: 1.7;
+  color: var(--text-secondary);
+}
+
+.auth-main {
+  display: flex;
   align-items: center;
   justify-content: center;
-  padding: 24px;
-  background: var(--bg-secondary);
+  padding: 40px 24px;
 }
 
 .auth-card {
@@ -1308,8 +1354,26 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .auth-brand {
   display: flex;
   align-items: center;
-  gap: 13px;
-  margin-bottom: 26px;
+  gap: 15px;
+  position: relative;
+}
+
+.brand-img {
+  border-radius: var(--radius-sm);
+  flex-shrink: 0;
+}
+
+/* Below the split's comfortable width the brand half would be a narrow column
+   with a washed-out circle in it, so the page stacks and the decoration goes. */
+@media (max-width: 900px) {
+  .auth-wrap { grid-template-columns: minmax(0, 1fr); }
+  .auth-aside {
+    padding: 40px 28px 0;
+    gap: 20px;
+    border-right: 0;
+    border-bottom: 1px solid var(--border);
+  }
+  .auth-main { padding: 28px 20px 48px; }
 }
 
 .auth-logo {
@@ -1405,15 +1469,6 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 }
 
 .auth-form input::placeholder { color: var(--text-faint); }
-
-.auth-foot {
-  margin-top: 20px;
-  font-size: 12px;
-  color: var(--text-muted);
-  text-align: center;
-  line-height: 18px;
-  max-width: 420px;
-}
 
 .lang-btn {
   border: 1px solid var(--border-strong);
