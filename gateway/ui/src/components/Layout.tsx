@@ -21,6 +21,10 @@ const icons = {
   device: (
     <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><rect x="2" y="3" width="20" height="14" rx="2" ry="2"/><line x1="8" y1="21" x2="16" y2="21"/><line x1="12" y1="17" x2="12" y2="21"/></svg>
   ),
+  // A stacked-layers glyph: the catalogue is a set of channels, each holding models.
+  models: (
+    <svg width="18" height="18" viewBox="0 0 24 24" fill="none" stroke="currentColor" strokeWidth="1.8" strokeLinecap="round" strokeLinejoin="round"><path d="M12 2l9 5-9 5-9-5 9-5z"/><path d="M3 12l9 5 9-5"/><path d="M3 17l9 5 9-5"/></svg>
+  ),
 } as const;
 
 type IconName = keyof typeof icons;
@@ -46,6 +50,7 @@ export default function Layout() {
     { to: "/", labelKey: "nav.overview", icon: "overview" },
     { to: "/keys", labelKey: "nav.keys", icon: "key" },
     { to: "/routes", labelKey: "nav.routes", icon: "route" },
+    { to: "/models", labelKey: "nav.models", icon: "models" },
   ];
   const adminItems: NavItem[] = [
     { to: "/users", labelKey: "nav.users", icon: "users" },

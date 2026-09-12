@@ -5,6 +5,7 @@ import Layout from "./components/Layout.tsx";
 import Overview from "./views/Overview.tsx";
 import Keys from "./views/Keys.tsx";
 import RoutesView from "./views/Routes.tsx";
+import ModelsView from "./views/Models.tsx";
 import Users from "./views/Users.tsx";
 import DevicesPanel from "./views/DevicesPanel.tsx";
 
@@ -20,6 +21,7 @@ function AuthedApp() {
         <Route path="/" element={<Overview />} />
         <Route path="/keys" element={<Keys />} />
         <Route path="/routes" element={<RoutesView />} />
+        <Route path="/models" element={<ModelsView />} />
         <Route path="/users" element={<AdminOnly view={<Users />} />} />
         <Route path="/devices" element={<AdminOnly view={<DevicesPanel />} />} />
         <Route path="*" element={<Navigate to="/" replace />} />

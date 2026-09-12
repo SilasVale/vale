@@ -1518,6 +1518,77 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 
 .auth-form input::placeholder { color: var(--text-secondary); }
 
+/* ── Models view ──────────────────────────────────────────────────────────
+   The catalogue `/api/admin/public` has always returned and the console never
+   rendered. Every colour here is a token, and the TEXT ones are the text weights
+   added in round 46 — a channel that is down is not a dot, it is a word. */
+.models-card { margin-bottom: 14px; }
+
+.models-head {
+  display: flex;
+  align-items: center;
+  gap: 10px;
+  margin-bottom: 6px;
+}
+
+/* The channel's identity. The lane hue rides a LEFT BORDER, not the text: a border
+   is a mark, so it can stay vivid while the label keeps a readable ink. */
+.models-prefix {
+  font: 600 12px var(--ds-font-family-code);
+  padding: 2px 9px;
+  border-radius: var(--radius-pill);
+  background: var(--bg-tertiary);
+  color: var(--text-secondary);
+  border-left: 3px solid var(--text-muted);
+}
+.models-prefix.lane-og { border-left-color: var(--accent); }
+.models-prefix.lane-ds { border-left-color: #4f6bed; }
+.models-prefix.lane-or { border-left-color: #7048e8; }
+.models-prefix.lane-qw { border-left-color: #c2255c; }
+.models-prefix.lane-nv { border-left-color: var(--success); }
+.models-prefix.lane-gmi { border-left-color: var(--warning); }
+.models-prefix.lane-cm { border-left-color: var(--info); }
+.models-prefix.lane-amd { border-left-color: var(--danger); }
+
+.models-backend { font-weight: 600; color: var(--text); }
+.models-n { font-size: 11.5px; color: var(--text-secondary); }
+
+.models-health { margin-left: auto; font-size: 11.5px; font-weight: 600; }
+.models-health.ok { color: var(--success-text); }
+.models-health.bad { color: var(--error-text); }
+/* Not probed is NOT the same as down, and must not borrow the colour of either. */
+.models-health.unknown { color: var(--text-secondary); font-weight: 500; }
+
+.models-desc {
+  font-size: 12px;
+  line-height: 1.55;
+  color: var(--text-secondary);
+  margin-bottom: 10px;
+}
+
+.models-list { display: flex; flex-wrap: wrap; gap: 6px; }
+
+.model-chip {
+  font: 500 11.5px var(--ds-font-family-code);
+  padding: 3px 9px;
+  border-radius: var(--radius-sm);
+  border: 1px solid var(--border);
+  background: var(--bg);
+  color: var(--text-secondary);
+  cursor: pointer;
+  transition: border-color var(--ds-dur) var(--ds-ease), color var(--ds-dur) var(--ds-ease);
+}
+.model-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-on-soft); }
+.model-chip.current {
+  background: var(--accent-soft);
+  border-color: var(--accent);
+  color: var(--accent-on-soft);
+  font-weight: 600;
+}
+.model-chip:disabled { opacity: 0.55; cursor: default; }
+
+.models-failed { color: var(--error-text); }
+
 .lang-btn {
   border: 1px solid var(--border-strong);
   background: var(--bg);
