@@ -1406,8 +1406,25 @@ const commands = {
                     "-Command",
                     `(Get-ScheduledTask -TaskName '${t}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State -ErrorAction SilentlyContinue)`,
                 ], { encoding: "utf8" });
+                // THREE STATES, NOT ONE. Every failure to READ the state landed on the same
+                // output as a genuinely absent task: a missing powershell (spawn error), a
+                // `Get-ScheduledTask` that threw on permissions, and "the task is not there" all
+                // printed "(not installed)" — so an operator asking "is autostart on?" was sent
+                // to re-run setup by an access-denied. This is the THIRD instance of the shape
+                // fixed in `statusReport` and `rollback status`: a failed READ reported as
+                // evidence of ABSENCE.
+                const err = r && r.error;
+                const st = r ? r.status : null;
                 const s = String((r && r.stdout) || "").trim();
-                console.log(`${t}: ${s || "(not installed)"}`);
+                if (err || st === null || st !== 0) {
+                    const why = err
+                        ? err.message
+                        : String((r && r.stderr) || "").trim() || `exit ${st}`;
+                    console.log(`${t}: state UNKNOWN -- could not read it (${why})`);
+                }
+                else {
+                    console.log(`${t}: ${s || "(not installed)"}`);
+                }
             }
             return;
         }
@@ -1514,11 +1531,18 @@ const commands = {
             /* best-effort */
         }
         console.log(`update: ${fromVersion || "unknown"} -> ${toVersion || "unknown"} -- staging, the connection will drop`);
-        try {
-            ps(updateReceiptPs((0, exports.psq)(DATA_DIR), fromVersion || "unknown", toVersion || "unknown").join("; "));
-        }
-        catch {
-            /* best-effort: a missing receipt must never block a real update */
+        // `ps()` RETURNS its spawn result, it does not throw (npm audit #7 made it return
+        // precisely because a discarded result printed success anyway). So this try/catch
+        // could never fire and a failed receipt write was SILENT — and the receipt is the
+        // ONE artifact that separates "the CLI ran but the swap did not" from "nothing ran
+        // at all" (the round-17 incident). Silent here means the log looks like the command
+        // never reached the device. Best-effort, so it warns rather than aborting.
+        const receipt = ps(updateReceiptPs((0, exports.psq)(DATA_DIR), fromVersion || "unknown", toVersion || "unknown").join("; "));
+        if (!receipt || receipt.status !== 0 || receipt.error) {
+            console.error("update: WARNING -- could not write the receipt to vale-update.log (" +
+                ((receipt && receipt.error && receipt.error.message) ||
+                    `exit ${receipt ? receipt.status : "?"}`) +
+                "); if this swap fails, the log will not distinguish it from a command that never arrived");
         }
         // Swap the exe in-place: stop -> replace (with retry; the running agent
         // locks its own file) -> start.
