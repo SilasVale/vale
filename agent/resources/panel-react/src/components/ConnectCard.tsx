@@ -19,6 +19,7 @@
 // of the card is to put it in the user's own client config. It is never put in
 // a URL (ADR 0004) and never logged.
 
+import { releaseVersionLabel } from "../lib/agentVersion";
 import { useCallback, useEffect, useMemo, useState } from "react";
 import { callApi, getHost, getToken } from "../lib/api";
 import { copyText } from "../lib/clipboard";
@@ -41,7 +42,15 @@ const CLIENTS: ClientSpec[] = [
     where: "~/.dsh/mcp.json (or the Harness MCP settings)",
     build: (url, token) =>
       JSON.stringify(
-        { mcpServers: { vale: { type: "http", url, headers: { Authorization: `Bearer ${token}` } } } },
+        {
+          mcpServers: {
+            vale: {
+              type: "http",
+              url,
+              headers: { Authorization: `Bearer ${token}` },
+            },
+          },
+        },
         null,
         2,
       ),
@@ -49,7 +58,8 @@ const CLIENTS: ClientSpec[] = [
   {
     id: "claude",
     label: "Claude Code",
-    where: "claude mcp add --transport http vale <url> --header \"Authorization: Bearer <token>\"",
+    where:
+      'claude mcp add --transport http vale <url> --header "Authorization: Bearer <token>"',
     build: (url, token) =>
       `claude mcp add --transport http vale ${url} \\\n  --header "Authorization: Bearer ${token}"`,
   },
@@ -65,11 +75,32 @@ const CLIENTS: ClientSpec[] = [
 /** Tool families, in the order a newcomer should meet them. Anything not
  *  listed still counts toward the total — this is a summary, not a registry. */
 const FAMILIES: Array<{ prefix: string; label: string; blurb: string }> = [
-  { prefix: "terminal_", label: "Terminal", blurb: "PTY / SSH / serial sessions — run commands, read output, drive hardware consoles" },
-  { prefix: "system_", label: "System", blurb: "files, processes, network reachability" },
-  { prefix: "browser_", label: "Browser", blurb: "a real browser the AI and you both watch" },
-  { prefix: "memory_", label: "Memory", blurb: "device-local knowledge shared across AI clients" },
-  { prefix: "mcp_client_", label: "MCP bridge", blurb: "connect further MCP servers" },
+  {
+    prefix: "terminal_",
+    label: "Terminal",
+    blurb:
+      "PTY / SSH / serial sessions — run commands, read output, drive hardware consoles",
+  },
+  {
+    prefix: "system_",
+    label: "System",
+    blurb: "files, processes, network reachability",
+  },
+  {
+    prefix: "browser_",
+    label: "Browser",
+    blurb: "a real browser the AI and you both watch",
+  },
+  {
+    prefix: "memory_",
+    label: "Memory",
+    blurb: "device-local knowledge shared across AI clients",
+  },
+  {
+    prefix: "mcp_client_",
+    label: "MCP bridge",
+    blurb: "connect further MCP servers",
+  },
 ];
 
 type Probe = { state: "idle" | "running" | "ok" | "fail"; detail?: string };
@@ -85,10 +116,7 @@ export function ConnectCard() {
   // configured value: whatever host the operator reached this panel on is, by
   // definition, a host their AI client can reach too. A hardcoded value here
   // would be wrong for every remote/tunnel user.
-  const mcpUrl = useMemo(
-    () => `${location.protocol}//${getHost()}/mcp`,
-    [],
-  );
+  const mcpUrl = useMemo(() => `${location.protocol}//${getHost()}/mcp`, []);
   const token = getToken();
 
   useEffect(() => {
@@ -102,8 +130,12 @@ export function ConnectCard() {
         }
         setTools(names);
       })
-      .catch(() => { if (alive) setTools([]); });
-    return () => { alive = false; };
+      .catch(() => {
+        if (alive) setTools([]);
+      });
+    return () => {
+      alive = false;
+    };
   }, []);
 
   const snippet = useMemo(() => {
@@ -132,10 +164,15 @@ export function ConnectCard() {
       .then((s) =>
         setProbe({
           state: "ok",
-          detail: `v${s?.version ?? "?"} · ${s?.live_sessions ?? 0} live session(s)`,
+          // The RELEASE, not the frozen Cargo protocol version — see
+          // lib/agentVersion.ts. This probe reported v1.0.145 from Settings while the
+          // status strip said v1.2.354 for the same device.
+          detail: `${releaseVersionLabel(s)} · ${s?.live_sessions ?? 0} live session(s)`,
         }),
       )
-      .catch((e) => setProbe({ state: "fail", detail: String(e?.message ?? e) }));
+      .catch((e) =>
+        setProbe({ state: "fail", detail: String(e?.message ?? e) }),
+      );
   }, []);
 
   const counts = useMemo(() => {
@@ -147,7 +184,8 @@ export function ConnectCard() {
       if (n > 0) out.push({ label: f.label, blurb: f.blurb, n });
     }
     const rest = (tools?.length ?? 0) - claimed;
-    if (rest > 0) out.push({ label: "Other", blurb: "updates, page inspection", n: rest });
+    if (rest > 0)
+      out.push({ label: "Other", blurb: "updates, page inspection", n: rest });
     return out;
   }, [tools]);
 
@@ -156,14 +194,17 @@ export function ConnectCard() {
       <div className="settings-section">
         <h3>Connect an AI client</h3>
         <p className="connect-lede">
-          This panel is the <b>human</b> view of the machine. AI clients drive it over
-          MCP — point one here and it can operate this device with the tools below.
+          This panel is the <b>human</b> view of the machine. AI clients drive
+          it over MCP — point one here and it can operate this device with the
+          tools below.
         </p>
 
         {tools === null ? (
           <p className="connect-muted">Reading the tool surface…</p>
         ) : tools.length === 0 ? (
-          <p className="connect-muted">Could not read the tool surface from this agent.</p>
+          <p className="connect-muted">
+            Could not read the tool surface from this agent.
+          </p>
         ) : (
           <>
             <div className="connect-total">
@@ -205,7 +246,11 @@ export function ConnectCard() {
           <button type="button" onClick={() => doCopy("snippet", snippet)}>
             {copied === "snippet" ? "Copied" : "Copy config"}
           </button>
-          <button type="button" onClick={runProbe} disabled={probe.state === "running"}>
+          <button
+            type="button"
+            onClick={runProbe}
+            disabled={probe.state === "running"}
+          >
             {probe.state === "running" ? "Testing…" : "Test this credential"}
           </button>
         </div>
@@ -216,8 +261,8 @@ export function ConnectCard() {
           <p className="connect-probe fail">Failed — {probe.detail}</p>
         )}
         <p className="connect-muted connect-foot">
-          The token is this device's own credential. Anyone holding it can drive the
-          machine, so treat the config like a password.
+          The token is this device's own credential. Anyone holding it can drive
+          the machine, so treat the config like a password.
         </p>
       </div>
     </>

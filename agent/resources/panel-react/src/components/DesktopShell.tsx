@@ -8,6 +8,7 @@
 //
 // The header card and content card sit on a softly-tinted canvas with
 // rounded corners + shadow — the desktop app reads as surfaces, not bars.
+import { releaseVersion } from "../lib/agentVersion";
 import { useEffect, useRef, useState } from "react";
 import { pendingApprovalCount, type Session } from "../hooks/useSessions";
 import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
@@ -40,14 +41,31 @@ interface Props {
   /** Arm/disarm the approval gate for a session. */
   onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
   /** Answer a pending approval request (`grant` also remembers it). */
-  onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
+  onDecideApproval: (
+    sid: string,
+    id: string,
+    approve: boolean,
+    grant?: boolean,
+  ) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
   /** State the session's goal, or clear it with an empty string. */
   onSetGoal: (sid: string, goal: string) => Promise<unknown>;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
-  onNewSession: (kind: "pty" | "ssh" | "serial" | "browser", target?: string, extra?: Record<string, unknown>) => void;
-  onConnConnect: (kind: "ssh" | "serial", target: string, extra: Record<string, unknown>) => Promise<unknown>;
+  registerWrite: (
+    sid: string,
+    fn: (bytes: Uint8Array) => void,
+    getRendered: () => number,
+  ) => (() => void) & { unregister?: (sid: string) => void };
+  onNewSession: (
+    kind: "pty" | "ssh" | "serial" | "browser",
+    target?: string,
+    extra?: Record<string, unknown>,
+  ) => void;
+  onConnConnect: (
+    kind: "ssh" | "serial",
+    target: string,
+    extra: Record<string, unknown>,
+  ) => Promise<unknown>;
   connModal: "ssh" | "serial" | null;
   onConnClose: () => void;
   status: string; // session status line (open/close failures etc.)
@@ -68,10 +86,27 @@ const PAGE_TITLES: Record<Page, string> = {
 };
 
 export function DesktopShell({
-  sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
-  onSetApproval, onDecideApproval, onRevokeGrants, onSetGoal,
-  registerWrite, onNewSession, onConnConnect, connModal, onConnClose,
-  status, sseState, token, plugins, cmdEvents,
+  sessions,
+  activeSid,
+  onActivate,
+  onClose,
+  onExport,
+  onViewChange,
+  onSetControl,
+  onSetApproval,
+  onDecideApproval,
+  onRevokeGrants,
+  onSetGoal,
+  registerWrite,
+  onNewSession,
+  onConnConnect,
+  connModal,
+  onConnClose,
+  status,
+  sseState,
+  token,
+  plugins,
+  cmdEvents,
 }: Props) {
   const [page, setPage] = useState<Page>("terminal");
   const [newMenuOpen, setNewMenuOpen] = useState(false);
@@ -98,27 +133,32 @@ export function DesktopShell({
     const fmtUptime = (secs: number): string => {
       if (secs < 60) return `${secs}s`;
       if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-      if (secs < 86400) return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
+      if (secs < 86400)
+        return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
       return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
     };
     const tick = async () => {
       try {
         const j = await callApi("/api/status");
         if (!alive || !j) return;
-        // npm RELEASE version first (the number that changes per release —
-        // written by update/setup into .vale-release and echoed as `release`);
-        // Cargo protocol `version` (1.0.x, frozen) is the fallback.
-        const v = typeof j.release === "string" && j.release ? j.release
-          : (typeof j.version === "string" ? j.version : "");
+        // ONE COPY OF THE RULE now — see lib/agentVersion.ts for why `release` wins
+        // and what happens when two callers each decide for themselves.
+        const v = releaseVersion(j);
         if (v) setAgentVersion(v);
-        if (typeof j.uptime_secs === "number") setAgentUptime(fmtUptime(j.uptime_secs));
+        if (typeof j.uptime_secs === "number")
+          setAgentUptime(fmtUptime(j.uptime_secs));
         if (typeof j.cpu_pct === "number") setAgentCpu(j.cpu_pct);
         if (typeof j.mem_pct === "number") setAgentMem(j.mem_pct);
-      } catch { /* keep last values — vitals are a nicety */ }
+      } catch {
+        /* keep last values — vitals are a nicety */
+      }
     };
     void tick();
     const t = window.setInterval(tick, 15000);
-    return () => { alive = false; window.clearInterval(t); };
+    return () => {
+      alive = false;
+      window.clearInterval(t);
+    };
   }, []);
   // stage-n: native menu page navigation — the electron menu sends
   // vale-menu commands for pages too (open-memory / open-settings /
@@ -136,24 +176,31 @@ export function DesktopShell({
   }, []);
   // Per-session terminal|trajectory view — mirrored from TerminalWorkspace
   // (which owns the panel-density copy) so the header toggle stays in sync.
-  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
+  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>(
+    {},
+  );
   const changeView = (sid: string, v: SessionView) => {
     setSessionViews((m) => ({ ...m, [sid]: v }));
     onViewChange(sid, v);
   };
-  const activeView: SessionView = (activeSid && sessionViews[activeSid]) || "terminal";
+  const activeView: SessionView =
+    (activeSid && sessionViews[activeSid]) || "terminal";
   // Close the New menu on outside click.
   useEffect(() => {
     if (!newMenuOpen) return;
     const close = (e: MouseEvent) => {
-      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node)) setNewMenuOpen(false);
+      if (newMenuRef.current && !newMenuRef.current.contains(e.target as Node))
+        setNewMenuOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
   }, [newMenuOpen]);
   const connected = sseState === "connected";
   const liveCount = sessions.filter((s) => !s.closed).length;
-  const statusError = status.startsWith("error") || status.startsWith("open failed") || status.startsWith("close failed");
+  const statusError =
+    status.startsWith("error") ||
+    status.startsWith("open failed") ||
+    status.startsWith("close failed");
   // round-164: desktop density had no status bar — session open/close
   // failures were invisible. The status line folds into the content card
   // footer (visible only when there is something to say).
@@ -176,14 +223,21 @@ export function DesktopShell({
           {/* ── Header card: page title + session tabs + New menu ── */}
           <header className="desktop-header">
             <div className="desktop-header-title">
-              <span className="desktop-header-icon"><Icon name={PAGE_ICONS[page]} size={15} /></span>
+              <span className="desktop-header-icon">
+                <Icon name={PAGE_ICONS[page]} size={15} />
+              </span>
               <span>{PAGE_TITLES[page]}</span>
             </div>
 
             {page === "terminal" && (
               <>
                 {/* Session tabs (compact pill strip inside the header) */}
-                <div className="desktop-tabs" role="tablist" aria-label="Terminal sessions" ref={tabsRef}>
+                <div
+                  className="desktop-tabs"
+                  role="tablist"
+                  aria-label="Terminal sessions"
+                  ref={tabsRef}
+                >
                   {openTabs.map((s) => {
                     // Same rule as the panel's TabBar (one meaning, two
                     // densities): a question waiting for a person is marked on
@@ -192,45 +246,72 @@ export function DesktopShell({
                     // session forever.
                     const waiting = !!s.pendingApproval;
                     return (
-                    <div
-                      key={s.sid}
-                      role="tab"
-                      aria-selected={s.sid === activeSid}
-                      className={`dtab ${s.sid === activeSid ? "active" : ""}`}
-                      data-active={s.sid === activeSid ? "1" : undefined}
-                      title={waiting ? `${s.sid} — waiting for your approval` : s.sid}
-                      aria-label={waiting ? `${s.label} — waiting for your approval` : undefined}
-                      onClick={() => onActivate(s.sid)}
-                    >
-                      <span className="dtab-dot" data-kind={s.kind} />
-                      <span className="dtab-name">{s.label}</span>
-                      {waiting && <span className="tab-wait" aria-hidden="true" />}
-                      {confirmCloseSid === s.sid ? (
-                        <span className="dtab-confirm" onClick={(e) => e.stopPropagation()}>
-                          <span className="tab-confirm-hint">close?</span>
+                      <div
+                        key={s.sid}
+                        role="tab"
+                        aria-selected={s.sid === activeSid}
+                        className={`dtab ${s.sid === activeSid ? "active" : ""}`}
+                        data-active={s.sid === activeSid ? "1" : undefined}
+                        title={
+                          waiting
+                            ? `${s.sid} — waiting for your approval`
+                            : s.sid
+                        }
+                        aria-label={
+                          waiting
+                            ? `${s.label} — waiting for your approval`
+                            : undefined
+                        }
+                        onClick={() => onActivate(s.sid)}
+                      >
+                        <span className="dtab-dot" data-kind={s.kind} />
+                        <span className="dtab-name">{s.label}</span>
+                        {waiting && (
+                          <span className="tab-wait" aria-hidden="true" />
+                        )}
+                        {confirmCloseSid === s.sid ? (
+                          <span
+                            className="dtab-confirm"
+                            onClick={(e) => e.stopPropagation()}
+                          >
+                            <span className="tab-confirm-hint">close?</span>
+                            <button
+                              type="button"
+                              className="btn btn-danger btn-mini"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmCloseSid(null);
+                                onClose(s.sid);
+                              }}
+                            >
+                              Close
+                            </button>
+                            <button
+                              type="button"
+                              className="btn btn-ghost btn-mini"
+                              onClick={(e) => {
+                                e.stopPropagation();
+                                setConfirmCloseSid(null);
+                              }}
+                            >
+                              Cancel
+                            </button>
+                          </span>
+                        ) : (
                           <button
                             type="button"
-                            className="btn btn-danger btn-mini"
-                            onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(null); onClose(s.sid); }}
-                          >Close</button>
-                          <button
-                            type="button"
-                            className="btn btn-ghost btn-mini"
-                            onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(null); }}
-                          >Cancel</button>
-                        </span>
-                      ) : (
-                        <button
-                          type="button"
-                          className="dtab-close"
-                          title="Close session"
-                          aria-label={`Close session ${s.label}`}
-                          onClick={(e) => { e.stopPropagation(); setConfirmCloseSid(s.sid); }}
-                        >
-                          <Icon name="close" size={10} />
-                        </button>
-                      )}
-                    </div>
+                            className="dtab-close"
+                            title="Close session"
+                            aria-label={`Close session ${s.label}`}
+                            onClick={(e) => {
+                              e.stopPropagation();
+                              setConfirmCloseSid(s.sid);
+                            }}
+                          >
+                            <Icon name="close" size={10} />
+                          </button>
+                        )}
+                      </div>
                     );
                   })}
                 </div>
@@ -246,17 +327,53 @@ export function DesktopShell({
                   </button>
                   {newMenuOpen && (
                     <div className="new-menu" role="menu">
-                      <button role="menuitem" onClick={() => { setNewMenuOpen(false); onNewSession("pty"); }}>
-                        <span className="nm-ico" data-kind="pty"><Icon name="terminal" size={13} /></span> Terminal
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setNewMenuOpen(false);
+                          onNewSession("pty");
+                        }}
+                      >
+                        <span className="nm-ico" data-kind="pty">
+                          <Icon name="terminal" size={13} />
+                        </span>{" "}
+                        Terminal
                       </button>
-                      <button role="menuitem" onClick={() => { setNewMenuOpen(false); onNewSession("ssh"); }}>
-                        <span className="nm-ico" data-kind="ssh"><Icon name="ssh" size={13} /></span> SSH…
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setNewMenuOpen(false);
+                          onNewSession("ssh");
+                        }}
+                      >
+                        <span className="nm-ico" data-kind="ssh">
+                          <Icon name="ssh" size={13} />
+                        </span>{" "}
+                        SSH…
                       </button>
-                      <button role="menuitem" onClick={() => { setNewMenuOpen(false); onNewSession("serial"); }}>
-                        <span className="nm-ico" data-kind="serial"><Icon name="serial" size={13} /></span> Serial…
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setNewMenuOpen(false);
+                          onNewSession("serial");
+                        }}
+                      >
+                        <span className="nm-ico" data-kind="serial">
+                          <Icon name="serial" size={13} />
+                        </span>{" "}
+                        Serial…
                       </button>
-                      <button role="menuitem" onClick={() => { setNewMenuOpen(false); onNewSession("browser"); }}>
-                        <span className="nm-ico" data-kind="browser"><Icon name="browser" size={13} /></span> Browser…
+                      <button
+                        role="menuitem"
+                        onClick={() => {
+                          setNewMenuOpen(false);
+                          onNewSession("browser");
+                        }}
+                      >
+                        <span className="nm-ico" data-kind="browser">
+                          <Icon name="browser" size={13} />
+                        </span>{" "}
+                        Browser…
                       </button>
                     </div>
                   )}
@@ -304,14 +421,19 @@ export function DesktopShell({
             {page === "browser" && <BrowserPage token={token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={plugins} />}
-            {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}
+            {page === "settings" && (
+              <SettingsPage onOpenMemory={() => setPage("memory")} />
+            )}
           </main>
 
           {/* ── Status strip: folded into the content card footer ── */}
           {showStatus && (
             <div className={`desktop-status${statusError ? " error" : ""}`}>
               <span className="desktop-status-msg">
-                {status || (sseState === "down" ? "Connection lost — reconnecting…" : "")}
+                {status ||
+                  (sseState === "down"
+                    ? "Connection lost — reconnecting…"
+                    : "")}
               </span>
               {/* This density has no StatusBar, so the device-level waiting
                   count lives here instead (same shared chip). */}
@@ -336,7 +458,9 @@ export function DesktopShell({
             <ConnModal
               kind={connModal}
               onClose={onConnClose}
-              onConnect={(target, extra) => onConnConnect(connModal!, target, extra)}
+              onConnect={(target, extra) =>
+                onConnConnect(connModal!, target, extra)
+              }
             />
           )}
         </div>

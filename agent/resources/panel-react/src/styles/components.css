@@ -3056,6 +3056,15 @@
 .mem-busy { color: var(--accent); font-size: 13px; animation: mem-busy-spin 1s linear infinite; display: inline-block; }
 @keyframes mem-busy-spin { to { transform: rotate(360deg); } }
 .mem-confirm-hint { font-size: 11px; color: var(--danger-on-soft); font-weight: 600; }
+/* The same hint, shared: two inline confirms that look different would be two
+   vocabularies for one interaction. */
+.mem-confirm-hint,
+.plug-confirm-hint {
+  font-size: 11px;
+  color: var(--danger-on-soft);
+  font-weight: 600;
+  align-self: center;
+}
 .mem-export-actions { margin-left: auto; display: flex; gap: 6px; }
 .mem-export-head { display: flex; align-items: center; justify-content: space-between; }
 

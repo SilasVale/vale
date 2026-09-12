@@ -16,18 +16,29 @@ function fmtUptime(startedAtMs: number): string {
   return `${Math.floor(min / 60)}h ${min % 60}m`;
 }
 
-export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins> }) {
+export function PluginsPage({
+  plugins,
+}: {
+  plugins: ReturnType<typeof usePlugins>;
+}) {
   const [q, setQ] = useState("");
   const query = q.trim().toLowerCase();
   const rows = useMemo(() => {
     if (!query) return plugins.rows;
-    return plugins.rows.filter((r) =>
-      r.name.toLowerCase().includes(query) ||
-      r.displayName.toLowerCase().includes(query) ||
-      (r.description || "").toLowerCase().includes(query)
+    return plugins.rows.filter(
+      (r) =>
+        r.name.toLowerCase().includes(query) ||
+        r.displayName.toLowerCase().includes(query) ||
+        (r.description || "").toLowerCase().includes(query),
     );
   }, [plugins.rows, query]);
 
+  // Stopping playwright-mcp is `taskkill /T /F` on the whole node+Chromium tree
+  // (agent/src/plugins/playwright/manager.rs) — it kills a browser an AI client may
+  // be driving, and page state goes with it. Every other destructive control in this
+  // panel asks first (MemoryPage's inline "delete?", TabBar, Settings); this one did
+  // not. Same inline two-step, not a native confirm().
+  const [confirmStop, setConfirmStop] = useState(false);
   const logRef = useRef<HTMLDivElement>(null);
   const prevLogLen = useRef(plugins.log.length);
   // Keep the newest log line visible (the tail is what the operator needs).
@@ -39,12 +50,19 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
   }, [plugins.log]);
 
   const pw = plugins.playwrightRow;
+  const pwOngoing = pw?.state === "ongoing";
+  useEffect(() => {
+    if (!pwOngoing) setConfirmStop(false);
+  }, [pwOngoing]);
 
   return (
     <div id="plugins-view">
       <header className="plug-header">
         <h2 className="plug-title">Plugins</h2>
-        <p className="plug-sub">Device tooling and browser automation. Enabled plugins are available to every client.</p>
+        <p className="plug-sub">
+          Device tooling and browser automation. Enabled plugins are available
+          to every client.
+        </p>
       </header>
       <div className="plug-search-wrap">
         <input
@@ -68,23 +86,35 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
           // empty trail standing in for a failed read (lib/trailRead.ts). The
           // error line below carries the device's own words.
           <p className="plug-empty">
-            {plugins.loadError ? "Inventory unavailable." : "Loading inventory…"}
+            {plugins.loadError
+              ? "Inventory unavailable."
+              : "Loading inventory…"}
           </p>
         ) : rows.length === 0 ? (
           <p className="plug-empty">No plugins match “{q}”</p>
-        ) : rows.map((r) => (
-          <div className="plug-row" key={r.name}>
-            <span className="plug-dot" data-state={r.state} />
-            <span className="plug-name" title={r.name}>{r.displayName}</span>
-            <span className="plug-desc" title={r.description}>{r.description}</span>
-            {typeof r.toolCount === "number" && (
-              /* stage-n: MCP surface of the plugin — the number clients care about */
-              <span className="plug-tools" title={`${r.toolCount} MCP tools`}>{r.toolCount} tool{r.toolCount === 1 ? "" : "s"}</span>
-            )}
-            <span className="plug-tag" data-state={r.state}>{r.stateLabel}</span>
-            {r.enabled && <span className="plug-pill">Enabled</span>}
-          </div>
-        ))}
+        ) : (
+          rows.map((r) => (
+            <div className="plug-row" key={r.name}>
+              <span className="plug-dot" data-state={r.state} />
+              <span className="plug-name" title={r.name}>
+                {r.displayName}
+              </span>
+              <span className="plug-desc" title={r.description}>
+                {r.description}
+              </span>
+              {typeof r.toolCount === "number" && (
+                /* stage-n: MCP surface of the plugin — the number clients care about */
+                <span className="plug-tools" title={`${r.toolCount} MCP tools`}>
+                  {r.toolCount} tool{r.toolCount === 1 ? "" : "s"}
+                </span>
+              )}
+              <span className="plug-tag" data-state={r.state}>
+                {r.stateLabel}
+              </span>
+              {r.enabled && <span className="plug-pill">Enabled</span>}
+            </div>
+          ))
+        )}
       </div>
       {plugins.loadError && <p className="plug-error">{plugins.loadError}</p>}
 
@@ -93,7 +123,11 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
           {/* muted while the first status poll is pending (≤ one poll) */}
           <span className="plug-dot" data-state={pw ? pw.state : "muted"} />
           <span className="plug-card-title">Playwright</span>
-          {pw && <span className="plug-tag" data-state={pw.state}>{pw.stateLabel}</span>}
+          {pw && (
+            <span className="plug-tag" data-state={pw.state}>
+              {pw.stateLabel}
+            </span>
+          )}
           {pw?.playwright?.running ? (
             <span className="plug-meta">
               port {pw.playwright.port}
@@ -109,7 +143,9 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
                   : " · uptime not reported"}
             </span>
           ) : (
-            <span className="plug-meta">bundled playwright-mcp · Chromium (task-hosted)</span>
+            <span className="plug-meta">
+              bundled playwright-mcp · Chromium (task-hosted)
+            </span>
           )}
           <span className="plug-actions">
             <button
@@ -119,26 +155,60 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
             >
               {plugins.busy === "start" ? "Starting…" : "Start"}
             </button>
-            <button
-              className="plug-btn danger"
-              disabled={!pw || pw.state !== "ongoing" || plugins.busy !== null}
-              onClick={plugins.stop}
-            >
-              {plugins.busy === "stop" ? "Stopping…" : "Stop"}
-            </button>
+            {confirmStop ? (
+              <>
+                <span className="plug-confirm-hint">stop the browser?</span>
+                <button
+                  className="plug-btn danger"
+                  disabled={plugins.busy !== null}
+                  onClick={() => {
+                    setConfirmStop(false);
+                    plugins.stop();
+                  }}
+                >
+                  Stop
+                </button>
+                <button
+                  className="plug-btn"
+                  onClick={() => setConfirmStop(false)}
+                >
+                  Cancel
+                </button>
+              </>
+            ) : (
+              <button
+                className="plug-btn danger"
+                disabled={!pwOngoing || plugins.busy !== null}
+                onClick={() => setConfirmStop(true)}
+              >
+                {plugins.busy === "stop" ? "Stopping…" : "Stop"}
+              </button>
+            )}
           </span>
         </header>
         <p className="plug-card-desc">
-          {pw?.description || "playwright-mcp browser automation"} — loopback-only listener (port {pw?.playwright?.port ?? 9229}) with a per-launch token.
+          {pw?.description || "playwright-mcp browser automation"} — bound to
+          127.0.0.1 (port {pw?.playwright?.port ?? 9229}) and started with{" "}
+          <code>--allowed-hosts 127.0.0.1</code>, which blocks DNS-rebinding
+          access from a remote page. There is NO per-launch token:{" "}
+          <code>@playwright/mcp</code> has no flag to set one, and the
+          connection secret this card used to promise is display-only — it
+          protects nothing.
         </p>
-        <div className="plug-log" ref={logRef} aria-label="Playwright start/stop log">
+        <div
+          className="plug-log"
+          ref={logRef}
+          aria-label="Playwright start/stop log"
+        >
           {plugins.log.length === 0 ? (
             <p className="plug-log-empty">No start/stop actions yet.</p>
-          ) : plugins.log.map((l, i) => (
-            <p key={i} className={`plug-log-line${l.error ? " error" : ""}`}>
-              <span className="plug-log-ts">[{l.ts}]</span> {l.text}
-            </p>
-          ))}
+          ) : (
+            plugins.log.map((l, i) => (
+              <p key={i} className={`plug-log-line${l.error ? " error" : ""}`}>
+                <span className="plug-log-ts">[{l.ts}]</span> {l.text}
+              </p>
+            ))
+          )}
         </div>
       </section>
     </div>
