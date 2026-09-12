@@ -150,7 +150,9 @@ fn check_auth(headers: &axum::http::HeaderMap, state: &AppState) -> Result<(), B
     // control; a short-circuiting == leaks the match position via timing
     // (low practical value at 64 hex chars, but the proxy-secret compare in
     // this same file already sets the precedent).
-    if from_header.is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes())) {
+    if token_is_usable(token)
+        && from_header.is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes()))
+    {
         return Ok(());
     }
     Err(Box::new(built_response(
@@ -163,6 +165,24 @@ fn check_auth(headers: &axum::http::HeaderMap, state: &AppState) -> Result<(), B
 /// Constant-time byte compare — the device token is compared at every
 /// /api/* gate; a short-circuiting == leaks the match position via timing
 /// (round-116; the proxy-secret check below already used this shape).
+/// Is a CONFIGURED token usable as a gate at all?
+///
+/// `timing_safe_eq(b"", b"")` returns TRUE, so a blank configured token would accept a
+/// blank `Authorization: Bearer ` — an open, unauthenticated RCE surface. Both gates in
+/// this file failed closed only on *absence* (`None`), never on *blankness*:
+///
+///   * `check_auth` — `device_token: Some("")` authenticated every `/api/*` route.
+///   * `TokenGate`   — the same shape for `/mcp`.
+///
+/// Round-104 hardened the proxy-secret gate against exactly this ("an EMPTY/absent
+/// configured secret must never match"); the two token gates were left relying on
+/// `ensure_token()` in ANOTHER crate to normalize blank to `None`. That normalizer is
+/// not a defence: a hand-built `Config` reaching the public `bind()` has no normalizer,
+/// and a security gate must not depend on a caller having sanitized its input.
+fn token_is_usable(token: &str) -> bool {
+    !token.trim().is_empty()
+}
+
 fn timing_safe_eq(a: &[u8], b: &[u8]) -> bool {
     a.len() == b.len()
         && a.iter()
@@ -236,12 +256,13 @@ where
         let Some(token) = token else {
             return Box::pin(async { Ok(unauthorized_mcp_response()) });
         };
-        let authorized = req
-            .headers()
-            .get(axum::http::header::AUTHORIZATION)
-            .and_then(|v| v.to_str().ok())
-            .and_then(|v| v.strip_prefix("Bearer "))
-            .is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes()));
+        let authorized = token_is_usable(&token)
+            && req
+                .headers()
+                .get(axum::http::header::AUTHORIZATION)
+                .and_then(|v| v.to_str().ok())
+                .and_then(|v| v.strip_prefix("Bearer "))
+                .is_some_and(|h| timing_safe_eq(h.as_bytes(), token.as_bytes()));
         if !authorized {
             return Box::pin(async { Ok(unauthorized_mcp_response()) });
         }
@@ -5519,5 +5540,58 @@ mod tests {
         // stronger: `term_sse_requires_auth` below fails under exactly that
         // mutant (verified), and `route_pre_dispatch`'s own auth coverage
         // (R102's route walk) covers the rest.
+    }
+    /// The blank-token fail-open, in BOTH gates.
+    ///
+    /// `timing_safe_eq(b"", b"")` is TRUE, and both gates failed closed only on
+    /// ABSENCE (`None`), never on BLANKNESS. So `device_token: Some("")` made
+    /// `Authorization: Bearer ` — an empty value — authenticate every `/api/*`
+    /// route, and `TokenGate` had the identical shape for `/mcp`. Reachability
+    /// today is blocked only by `ensure_token()` in another crate, which is not a
+    /// defence: a gate must not depend on its caller having sanitized its input.
+    ///
+    /// Round-104 hardened the proxy-secret gate against exactly this; these two
+    /// were the pair that was missed.
+    #[test]
+    fn a_blank_configured_token_is_never_usable() {
+        assert!(
+            !token_is_usable(""),
+            "an empty token must never gate anything"
+        );
+        assert!(
+            !token_is_usable("   \t "),
+            "whitespace-only is blank too — `Bearer    ` must not authenticate"
+        );
+        // The real shape must keep working.
+        assert!(token_is_usable("a".repeat(64).as_str()));
+        assert!(token_is_usable("0f8c1d2e"));
+    }
+
+    /// And the two gates must actually USE it — a correct helper nobody calls is
+    /// the same defect with better spelling.
+    #[test]
+    fn both_token_gates_consult_token_is_usable() {
+        const SRC: &str = include_str!("mod.rs");
+        // Only CODE counts: drop the test module (this test's prose names the
+        // helper) and strip line comments. A naive scan counts mentions.
+        let production = match SRC.find("#[cfg(test)]") {
+            Some(i) => &SRC[..i],
+            None => SRC,
+        };
+        let code: String = production
+            .lines()
+            .map(|l| match l.find("//") {
+                Some(i) => &l[..i],
+                None => l,
+            })
+            .collect::<Vec<_>>()
+            .join("\n");
+        assert_eq!(
+            code.matches("token_is_usable(").count(),
+            3,
+            "expected exactly one DEFINITION plus one CALL at each of the two gates \
+             (check_auth and TokenGate); a gate that stopped consulting it is the \
+             fail-open this test exists to prevent"
+        );
     }
 }
