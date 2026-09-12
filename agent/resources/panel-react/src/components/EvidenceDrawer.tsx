@@ -9,6 +9,7 @@
 //      duplicate /api/events fetch) while open, and
 //   3. fetches each new screenshot blob when its row appears.
 // Visual parity comes from reusing the existing .browser-ev-* classes.
+import { actionVerdict } from "../lib/browserAction";
 import { useCallback, useEffect, useRef, useState } from "react";
 
 export interface Shot { name: string; mtime_ms: number }
@@ -152,18 +153,33 @@ export function EvidenceDrawer({ apiBase, token, open, onClose }: {
             {actions.map((a) => {
               const k = `${a.ts}:${String(a.script || "").slice(0, 40)}`;
               const isExpanded = expanded.has(k);
+              // ONE VERDICT, derived in lib/browserAction.ts. The badge used to
+              // read "running" for `exit_code === null` — a state no record in
+              // this feed can be in, because every writer appends after the
+              // action ends — and "exit undefined" for a record that simply does
+              // not carry a code (`=== null` never matches `undefined`).
+              const v = actionVerdict(a);
+              const cls = v.state === "ok" ? "" : v.state === "timeout" ? " running" : " err";
+              const badge = v.state === "ok" ? " ok" : v.state === "timeout" ? " run" : " err";
               return (
-                <div key={k} className={`browser-action${a.exit_code === 0 ? "" : a.exit_code === null ? " running" : " err"}`}>
+                <div key={k} className={`browser-action${cls}`}>
                   <div className="browser-action-row">
                     <span className="browser-action-time">{new Date(a.ts).toLocaleTimeString()}</span>
-                    <span className={`browser-action-badge${a.exit_code === 0 ? " ok" : a.exit_code === null ? " run" : " err"}`}>
-                      {a.timed_out ? "timeout" : a.exit_code === 0 ? "ok" : a.exit_code === null ? "running" : `exit ${a.exit_code}`}
-                    </span>
+                    <span className={`browser-action-badge${badge}`}>{v.label}</span>
                     {typeof a.duration_ms === "number" && <span className="browser-action-dur">{a.duration_ms}ms</span>}
                     {a.screenshots && a.screenshots.length > 0 && (
                       <span className="browser-action-shots">{a.screenshots.length} shot{a.screenshots.length > 1 ? "s" : ""}</span>
                     )}
                   </div>
+                  {/* THE DEVICE'S OWN EXPLANATION, RENDERED AT LAST. `stderr_tail`
+                      is where "spawn failed: ..." or "timed out after Ns" lives;
+                      it was declared on the type, fetched from the route, and
+                      drawn nowhere — so the one sentence that says what happened
+                      never reached the operator. A FAILURE WITH NO VISIBLE REASON
+                      reads as a mystery, which is what this was. */}
+                  {v.detail && v.state !== "ok" && (
+                    <p className="browser-action-detail">{v.detail}</p>
+                  )}
                   <div className={`browser-action-script${isExpanded ? " expanded" : ""}`} onClick={() => toggleExpanded(k)}>
                     {String(a.script || "").split("\n").map((ln, i) => <div key={i}>{ln || "\u00A0"}</div>)}
                   </div>

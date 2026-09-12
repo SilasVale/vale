@@ -75,6 +75,12 @@ export function buildRecipe(path: SessionPath, input: RecipeInput): RecipeDraft 
   if (s.counts.fail) outcome.push(`${s.counts.fail} FAILED`);
   if (s.counts.warn) outcome.push(`${s.counts.warn} interrupted`);
   if (s.counts.running) outcome.push(`${s.counts.running} still running`);
+  // `bg` IS NOT `running` AND IS NOT A VERDICT. It was absent from this list, so
+  // a path whose commands were all handed off to run in the background produced
+  // a recipe whose outcome line read complete — the same omission the palette,
+  // the sheet's legend and the state list each had when round 31 added the state,
+  // and the reason `PATH_STATES` now exists as the one list to check against.
+  if (s.counts.bg) outcome.push(`${s.counts.bg} backgrounded`);
   if (s.counts.muted) outcome.push(`${s.counts.muted} with no verdict`);
 
   const where = input.sessionLabel

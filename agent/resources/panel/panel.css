@@ -3705,6 +3705,17 @@ button.dtab-close:hover { opacity: 1; }
 .traj-empty-fail,
 .path-empty-title-fail { color: var(--state-fail); }
 
+/* The device's own sentence about why a browser action ended as it did
+   (stderr_tail: "spawn failed: …", "timed out after Ns"). It was recorded and
+   never rendered, which left every failure without a visible reason. */
+.browser-action-detail {
+  margin: 2px 0 4px;
+  font: 11px var(--font-mono);
+  color: var(--state-fail);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}
+
 
 /* ============ layout.css ============ */
 /* ============================================================

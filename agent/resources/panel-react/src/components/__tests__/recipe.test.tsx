@@ -225,3 +225,23 @@ describe("recipes keep the WHY", () => {
     expect(r.content).not.toContain("# Goal:");
   });
 });
+
+describe("a recipe names backgrounded work", () => {
+  // `bg` was missing from the recipe's outcome list, so a path whose commands were
+  // all handed off produced a recipe whose outcome line read complete. Round 31
+  // added the state; the palette, the sheet's legend, the recipe and the state
+  // list each had to be found by hand, which is why `PATH_STATES` now exists.
+  const step = (o: Partial<PathStep>): PathStep => ({
+    id: "x", index: 1, command: "c", state: "bg", owner: "ai", stateLabel: "backgrounded",
+    startedAt: 0, durationMs: 1000, exitCode: null, reason: "backgrounded", outputChars: 0,
+    intent: null, considered: [], planStep: null, runId: null, ...o,
+  });
+
+  it("counts it, and does not call the run complete-sounding", () => {
+    const p = derivePath([{ id: "r-1", startSeq: 1, command: "npm run build", startTs: 1,
+      events: [], ended: true, exitCode: null, reason: "backgrounded", durationMs: 5 }]);
+    expect(p.summary.counts.bg).toBe(1);
+    const text = buildRecipe(p, { name: "n", sessionKind: "pty" }).content;
+    expect(text).toContain("1 backgrounded");
+  });
+});
