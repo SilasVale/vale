@@ -519,7 +519,37 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 87 (`autostart status` reported a failed READ as "not
+Last updated: 2026-09-12 round 88 (FOURTH read-failure-as-absence, in FOUR copies of one
+probe: `vale status` said "STOPPED" when it had never looked — and one of the copies was
+MINE, added two rounds earlier).
+Commit: 0a8c3d53. CI green.
+  (1) THE `tasklist` PROBE READ ONLY `.stdout` at every site, discarding `status`, `error`
+  and `stderr` — so a missing or refused `tasklist` left it empty and every caller read
+  that as "not running", a claim of ABSENCE from a failed READ. Fourth instance of this
+  shape (`statusReport`, `rollback status`, `autostart status`), and it matters most for
+  the agent itself: `vale status` reporting STOPPED is the worst answer a device operator
+  can be given.
+  (2) THERE WERE FOUR READ SITES AND ONE WAS MINE — the `tunnel start` probe added in round
+  82 replicated the flaw it was written next to. So the fix is not another copy: ONE
+  `processRunning(image)` returning `"yes" | "no" | "unknown"`, used by all of them.
+  `StatusFacts.agentRunning` is `boolean | null` now, following the rule its neighbours
+  state ("null is NOT 'up to date'").
+  (3) VERIFIED BY EFFECT (this box has no tasklist, so every read genuinely fails): before
+  "status: STOPPED" for a probe that never answered; after "status: UNKNOWN -- the process
+  list could not be read (tasklist failed); this is not a verdict". `tunnel status` and
+  `tunnel start` distinguish the same third state.
+  (4) MUTATION-PROVEN: collapsing the report back to two states fails the new test (35/1),
+  which ALSO asserts the two real answers stay exact — so the third state cannot be
+  implemented by never saying either.
+  (5) STILL OPEN: L2b the rollback path's `npm install -g` is judged on exit status only;
+  L9 `vale status`'s "release" line can read the Cargo fallback for a fresh install; L13
+  the `save`/`restore` pair can write a settings file the agent will reject; L12 the
+  `vale tunnel` paths are computed before the install check (harmless as written, but the
+  pattern invites a stale read).
+  Gates: CLI 36 (was 35) + freshness gate (re-checked after prettier); CI green;
+  d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 87 (`autostart status` reported a failed READ as "not
 installed" — the THIRD instance of that shape — and the update receipt's try/catch could
 never fire because `ps()` returns rather than throws).
 Commit: 58b62623. CI green.
