@@ -515,7 +515,63 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 45 (I swept the live panel for EVERY text node under
+Last updated: 2026-09-11 round 46 (I opened the console's FIVE VIEWS BEHIND THE
+LOGIN for the first time — by mocking the admin APIs in a real browser — and the
+whole accessibility class turned out to have one cause the theme was missing).
+Commit: 4f80ba15. Worker deployed; live bundle verified. NO DEVICE RELEASE: the
+console is served by the worker, not embedded in the exe.
+  (1) HOW TO SEE A LOGGED-IN VIEW WITHOUT CREDENTIALS, which is reusable: navigate
+  the device's browser to the LIVE console with `page.addInitScript` stubbing
+  `window.fetch` BEFORE boot (returning mocked `/api/me`, `/api/devices`,
+  `/api/plugins/status`, `/api/keys`, `/api/routes`, `/api/users`), set
+  `localStorage.valegate-lang`, then load `#/<view>`. `gateway/ui/devices-render-smoke.mjs`
+  already holds a working mock set. The live bundle is the same code as the repo's,
+  so nothing needs transferring.
+  (2) AN ORPHAN SEPARATOR, found in the DOM not by eye. `d2`'s meta line rendered
+  as "· z9y8x7…t3s2". The JSX gave EACH optional part its own leading " · " while
+  the TOKEN's was UNCONDITIONAL, so a device with neither lastSeenAt nor
+  registeredAt got a separator with no left side. Now a `.filter(Boolean).join(" · ")`.
+  Pinned in `devices-render-smoke.mjs`; mutation-proven (restoring the unconditional
+  prefix fails "no meta line starts with an orphan separator"). MY FIRST MUTATION
+  DID NOT BITE and I checked WHY before trusting the pin — the replacement I wrote
+  had not reproduced the defect.
+  (3) THE ROUND'S REAL FINDING: A SEMANTIC COLOUR HAS TWO WEIGHTS, and the console
+  had one value per state used for both. As a MARK (dot, border, filled badge) 3:1
+  suffices; as TEXT it is 4.5:1. Measured on the devices view: 在线/隧道正常 3.13,
+  可更新到 3.30, 离线/隧道断开 4.11, 删除 4.32 — the STATUS WORDS, the most important
+  information on the page. THE PANEL ALREADY SOLVED THIS: `--success-text` exists
+  there beside `--success` for exactly this reason, plus `--danger-on-soft` and the
+  whole `--chrome-active-*` family. The console now has `--success-text` /
+  `--warning-text` / `--error-text` in BOTH theme blocks.
+  (4) AND THE NEUTRAL LADDER IS THE SAME STORY, measured per surface:
+    #71717a (--text-muted)  white 4.83 | --bg 4.63 | --bg-secondary 4.40 | --bg-tertiary 4.10
+    #a1a1aa (--text-faint)  white 2.56 | --bg 2.46 | --bg-secondary 2.34 | --bg-tertiary 2.18
+  `--text-muted` passed or failed depending on WHICH SURFACE a rule landed on —
+  invisible to any stylesheet check. 25 `color:` rules used it, 5 used `--text-faint`.
+  THE TRADE-OFF IS STATED IN THE CSS because it is real: this loses one step of
+  hierarchy on white cards, taken deliberately, because a rule that can be ENFORCED
+  beats a nuance that cannot.
+  (5) THE CHECK GENERALIZED FROM MY SIX FIXES TO THE CLASS — 15 more rules, several
+  on views I had not yet opened. That is the pattern worth keeping: fix the measured
+  instance, then make the rule, then let the rule find the rest.
+  (6) THE STALE-BUNDLE TRAP, recorded because of the wrong conclusion it invites: my
+  first sweep after the fixes reported them MISSING, because I had run `npm run
+  build` and never `wrangler deploy`. "The fix did not work" was one command away
+  from being written down as fact.
+  (7) FINAL STATE, verified on the deployed worker: all five views swept,
+  **0 under AA across 223 text nodes**. (Two reported failures were FALSE POSITIVES
+  of the sweep — `.rail-avatar` and `.empty-mark` are white on `background-image`
+  GRADIENTS, which a `backgroundColor` walk cannot see; the sweep now skips anything
+  under a background-image and says so.)
+  (8) STILL OPEN: the redesign's subjective half — the console's information
+  architecture beyond colour (whether five views is right, the layout of each), and
+  the panel's governance-pill prominence. Both want a human's direction; the
+  objective half of both surfaces is now measured and clean.
+  Gates: token contract green (17 light / 12 dark shared tokens agree; no dead
+  fallbacks; no mark weight paints text); gateway 766 + format; gateway-ui 1 +
+  render smoke + devices dashboard render; agent 583 + fmt clean. CI green on main.
+
+Previous round: 2026-09-11 round 45 (I swept the live panel for EVERY text node under
 the AA contrast bar instead of spot-checking; four defects fell out, and every one
 was a measured fix that already existed on its SIBLING). Commits: 2ad79c06,
 8f3def97. Released 1.2.350 and 1.2.351; d1 is on 1.2.351 and current; the
