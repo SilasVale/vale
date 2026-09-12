@@ -9,10 +9,15 @@ vi.mock("../../lib/api", async (importOriginal) => ({
 }));
 
 const mockCallApi = callApi as unknown as ReturnType<typeof vi.fn>;
-const R = "[2026-09-12T06:51:49+08:00] update requested 1.2.327 -> 1.2.328 (CLI reached the device)";
+const R =
+  "[2026-09-12T06:51:49+08:00] update requested 1.2.327 -> 1.2.328 (CLI reached the device)";
 
 function device(logs: Array<{ name: string; present: boolean; log: string }>) {
-  mockCallApi.mockResolvedValue({ ok: true, dir: "C:\\ProgramData\\Vale\\logs", logs });
+  mockCallApi.mockResolvedValue({
+    ok: true,
+    dir: "C:\\ProgramData\\Vale\\logs",
+    logs,
+  });
 }
 
 describe("DeviceLogsCard — the device's logs, and the update verdict they answer", () => {
@@ -49,12 +54,20 @@ describe("DeviceLogsCard — the device's logs, and the update verdict they answ
     mockCallApi.mockResolvedValue({ ok: false, error: "logs unavailable" });
     render(<DeviceLogsCard />);
     expect(await screen.findByText(/did not answer/i)).toBeTruthy();
-    expect(screen.getByText(/not the same as a device with no logs/i)).toBeTruthy();
+    expect(
+      screen.getByText(/not the same as a device with no logs/i),
+    ).toBeTruthy();
     // And it does NOT draw the healthy-empty state.
     expect(screen.queryByText(/not written yet/i)).toBeNull();
   });
   it("carries the verdict as DATA, so the tone is not the only signal", async () => {
-    device([{ name: "vale-update.log", present: true, log: [R, "update start", "copy ok=true"].join("\n") }]);
+    device([
+      {
+        name: "vale-update.log",
+        present: true,
+        log: [R, "update start", "copy ok=true"].join("\n"),
+      },
+    ]);
     const { container } = render(<DeviceLogsCard />);
     await screen.findByText(/swap launched/i);
     const el = container.querySelector(".device-logs-verdict")!;
@@ -64,6 +77,8 @@ describe("DeviceLogsCard — the device's logs, and the update verdict they answ
   it("an empty log is 'no-log', not 'the update was lost'", async () => {
     device([{ name: "vale-update.log", present: false, log: "" }]);
     render(<DeviceLogsCard />);
-    expect(await screen.findByText(/no update has been attempted here/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/no update has been attempted here/i),
+    ).toBeTruthy();
   });
 });

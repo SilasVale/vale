@@ -23,7 +23,11 @@ describe("DetailsPanel", () => {
   it("no selection → hint; close button notifies", () => {
     const onClose = vi.fn();
     render(<DetailsPanel card={null} onClose={onClose} />);
-    expect(screen.getByText("Select a command card to inspect its parameters, output, and exit code.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Select a command card to inspect its parameters, output, and exit code.",
+      ),
+    ).toBeTruthy();
     fireEvent.click(screen.getByTitle("Close details"));
     expect(onClose).toHaveBeenCalledTimes(1);
   });
@@ -40,13 +44,23 @@ describe("DetailsPanel", () => {
   });
 
   it("running card shows Running + em-dash placeholders", () => {
-    render(<DetailsPanel card={card({ ended: false, exitCode: null })} onClose={() => {}} />);
+    render(
+      <DetailsPanel
+        card={card({ ended: false, exitCode: null })}
+        onClose={() => {}}
+      />,
+    );
     expect(screen.getByText("Running")).toBeTruthy();
     expect(screen.getAllByText("—").length).toBeGreaterThanOrEqual(2);
   });
 
   it("failed card surfaces exit code and reason", () => {
-    render(<DetailsPanel card={card({ exitCode: 3, reason: "exited:3" })} onClose={() => {}} />);
+    render(
+      <DetailsPanel
+        card={card({ exitCode: 3, reason: "exited:3" })}
+        onClose={() => {}}
+      />,
+    );
     expect(screen.getByText("Failed (exit 3)")).toBeTruthy();
     expect(screen.getByText("exited:3")).toBeTruthy();
   });

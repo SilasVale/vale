@@ -41,21 +41,36 @@ describe("SettingsPage memory card", () => {
   it("prefills entries/MiB/retention from GET /api/settings", async () => {
     render(<SettingsPage />);
     await waitFor(() => {
-      expect((screen.getByLabelText("Memory max entries") as HTMLInputElement).value).toBe("50");
+      expect(
+        (screen.getByLabelText("Memory max entries") as HTMLInputElement).value,
+      ).toBe("50");
     });
-    expect((screen.getByLabelText("Memory max MiB") as HTMLInputElement).value).toBe("16");
-    expect((screen.getByLabelText("Memory retention days") as HTMLInputElement).value).toBe("30");
+    expect(
+      (screen.getByLabelText("Memory max MiB") as HTMLInputElement).value,
+    ).toBe("16");
+    expect(
+      (screen.getByLabelText("Memory retention days") as HTMLInputElement)
+        .value,
+    ).toBe("30");
   });
 
   it("PUTs the edited capacity with retention null when cleared", async () => {
     render(<SettingsPage />);
     await waitFor(() => {
-      expect((screen.getByLabelText("Memory max entries") as HTMLInputElement).value).toBe("50");
+      expect(
+        (screen.getByLabelText("Memory max entries") as HTMLInputElement).value,
+      ).toBe("50");
     });
-    fireEvent.change(screen.getByLabelText("Memory max entries"), { target: { value: "100" } });
-    fireEvent.change(screen.getByLabelText("Memory retention days"), { target: { value: "" } });
+    fireEvent.change(screen.getByLabelText("Memory max entries"), {
+      target: { value: "100" },
+    });
+    fireEvent.change(screen.getByLabelText("Memory retention days"), {
+      target: { value: "" },
+    });
     fireEvent.click(screen.getByLabelText("Save memory capacity"));
-    await waitFor(() => expect(screen.getByText("saved — applies immediately")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("saved — applies immediately")).toBeTruthy(),
+    );
     const put = mockCallApi.mock.calls.find((c) => c[1]?.method === "PUT");
     if (!put) throw new Error("expected a PUT /api/settings call");
     expect(JSON.parse(put[1].body)).toEqual({
@@ -68,11 +83,19 @@ describe("SettingsPage memory card", () => {
   it("blocks the PUT on invalid entries with a hint", async () => {
     render(<SettingsPage />);
     await waitFor(() => {
-      expect((screen.getByLabelText("Memory max entries") as HTMLInputElement).value).toBe("50");
+      expect(
+        (screen.getByLabelText("Memory max entries") as HTMLInputElement).value,
+      ).toBe("50");
     });
-    fireEvent.change(screen.getByLabelText("Memory max entries"), { target: { value: "0" } });
+    fireEvent.change(screen.getByLabelText("Memory max entries"), {
+      target: { value: "0" },
+    });
     fireEvent.click(screen.getByLabelText("Save memory capacity"));
-    await waitFor(() => expect(screen.getByText("entries must be >= 1")).toBeTruthy());
-    expect(mockCallApi.mock.calls.filter((c) => c[1]?.method === "PUT")).toHaveLength(0);
+    await waitFor(() =>
+      expect(screen.getByText("entries must be >= 1")).toBeTruthy(),
+    );
+    expect(
+      mockCallApi.mock.calls.filter((c) => c[1]?.method === "PUT"),
+    ).toHaveLength(0);
   });
 });

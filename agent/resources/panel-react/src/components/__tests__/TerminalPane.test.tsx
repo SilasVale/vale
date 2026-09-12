@@ -21,7 +21,11 @@ const session = (over: Record<string, unknown> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
+  pendingApproval: null,
+  approvalGrants: [],
+  goal: null,
+  plan: [],
+  ...over,
 });
 
 const registerWrite = vi.fn(() => () => {});
@@ -34,21 +38,38 @@ beforeEach(() => {
 
 describe("TerminalPane", () => {
   it("mounts xterm, registers the write callback, adopts history", async () => {
-    const { container } = render(<TerminalPane session={session()} registerWrite={registerWrite} />);
+    const { container } = render(
+      <TerminalPane session={session()} registerWrite={registerWrite} />,
+    );
     expect(container.querySelector(".term-host")).toBeTruthy();
     expect(container.querySelector(".term-session.active")).toBeTruthy();
-    expect(registerWrite).toHaveBeenCalledWith("s1", expect.any(Function), expect.any(Function), expect.any(Function));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith(
-      "terminal_read",
-      expect.objectContaining({ session_id: "s1" }),
-    ));
+    expect(registerWrite).toHaveBeenCalledWith(
+      "s1",
+      expect.any(Function),
+      expect.any(Function),
+      expect.any(Function),
+    );
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith(
+        "terminal_read",
+        expect.objectContaining({ session_id: "s1" }),
+      ),
+    );
   });
 
   it("write callback reaches the terminal", async () => {
-    const { container } = render(<TerminalPane session={session()} registerWrite={registerWrite} />);
-    const cb = (registerWrite.mock.calls[0] as unknown[])[1] as (bytes: Uint8Array) => void;
+    const { container } = render(
+      <TerminalPane session={session()} registerWrite={registerWrite} />,
+    );
+    const cb = (registerWrite.mock.calls[0] as unknown[])[1] as (
+      bytes: Uint8Array,
+    ) => void;
     cb(new TextEncoder().encode("hello-pane"));
-    await waitFor(() => expect(container.querySelector(".term-host")!.textContent).toContain("hello-pane"));
+    await waitFor(() =>
+      expect(container.querySelector(".term-host")!.textContent).toContain(
+        "hello-pane",
+      ),
+    );
   });
 
   it("font zoom persists and clamps to min/max", async () => {
@@ -73,8 +94,15 @@ describe("TerminalPane", () => {
   });
 
   it("inactive session hides and drops the overlays", () => {
-    const { container } = render(<TerminalPane session={session({ active: false })} registerWrite={registerWrite} />);
-    expect(container.querySelector(".term-session")!.getAttribute("style")).toContain("none");
+    const { container } = render(
+      <TerminalPane
+        session={session({ active: false })}
+        registerWrite={registerWrite}
+      />,
+    );
+    expect(
+      container.querySelector(".term-session")!.getAttribute("style"),
+    ).toContain("none");
     expect(screen.queryByTitle("Smaller font")).toBeNull();
   });
 });

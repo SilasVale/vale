@@ -82,6 +82,16 @@ interface Props {
   /** Desktop density: the header (DesktopShell) owns the view switch —
    *  pass the controlled value + setter so both render the same view. */
   controlledView?: SessionView;
+  /**
+   * The per-session view map, OWNED BY App.
+   *
+   * This component used to keep its own copy for the panel density, which meant
+   * `onViewChange` — the wire the shortcut and PathView's "jump to step" both use —
+   * wrote App's map while the render read this one. The button was focusable, its
+   * tooltip promised an action, and it did nothing. Same defect as the desktop
+   * shell's shadow copy, in the other shell.
+   */
+  sessionViews?: Record<string, SessionView>;
   onControlledViewChange?: (sid: string, v: SessionView) => void;
 }
 
@@ -103,17 +113,15 @@ export function TerminalWorkspace({
   density,
   sseState,
   controlledView,
+  sessionViews,
   onControlledViewChange,
 }: Props) {
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>(
-    {},
-  );
   const sessionView: SessionView =
     density === "desktop"
       ? (controlledView ?? "terminal")
-      : (activeSid && sessionViews[activeSid]) || "terminal";
+      : (activeSid && sessionViews?.[activeSid]) || "terminal";
   const trajOpen = !!activeSid && sessionView === "trajectory";
   const pathOpen = !!activeSid && sessionView === "path";
   // The active session record — used to stamp a saved recipe with what the
@@ -178,7 +186,8 @@ export function TerminalWorkspace({
       onControlledViewChange?.(activeSid, v);
       return;
     }
-    setSessionViews((m) => ({ ...m, [activeSid]: v }));
+    // Both densities write through ONE wire now. The local copy this used to update
+    // was the reason the panel's own PathView button was inert.
     onViewChange(activeSid, v);
   };
 

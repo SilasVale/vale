@@ -24,10 +24,16 @@ const session = (over: Partial<Session & { active: boolean }> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
+  pendingApproval: null,
+  approvalGrants: [],
+  goal: null,
+  plan: [],
+  ...over,
 });
 
-const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {}) => ({
+const props = (
+  over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {},
+) => ({
   sessions: [session()],
   activeSid: "s1" as string | null,
   onActivate: vi.fn(),
@@ -58,26 +64,62 @@ describe("TerminalWorkspace", () => {
     expect(screen.getByText("Connection lost — reconnecting…")).toBeTruthy();
   });
 
-  it("view switch flips to the trajectory timeline and notifies", () => {
+  it("view switch notifies — the wire App listens on", () => {
+    // THE NOTIFY HALF. This used to also assert that the trajectory view RENDERED
+    // straight after the click, which only passed because this component kept its own
+    // `sessionViews` copy. That copy is what made App's map write-only, so the click
+    // updated private state here and NOTHING in the real app: Ctrl+Shift+Y and
+    // PathView's "jump to step" were both inert with this test green. The render half is
+    // a separate, controlled test below — which is how the component actually works.
     const p = props();
     render(<TerminalWorkspace {...p} />);
     fireEvent.click(screen.getByText("Trajectory"));
     expect(p.onViewChange).toHaveBeenCalledWith("s1", "trajectory");
-    expect(screen.getByText("No commands in this session yet.")).toBeTruthy();
     fireEvent.click(screen.getByText("Terminal"));
     expect(p.onViewChange).toHaveBeenCalledWith("s1", "terminal");
   });
 
+  it("RENDERS the trajectory view it is GIVEN, not one it remembers", () => {
+    render(
+      <TerminalWorkspace {...props({ sessionViews: { s1: "trajectory" } })} />,
+    );
+    expect(screen.getByText("No commands in this session yet.")).toBeTruthy();
+  });
+
   it("Logs drawer opens, selects a card into DetailsPanel, closes clean", () => {
-    const cards = [{
-      id: "c-1", command: "ls", output: "a", startedAt: 1,
-      ended: true, exitCode: 0, reason: null, durationMs: 10, seq: 1,
-    }];
-    render(<TerminalWorkspace {...props({ cmdEvents: { cards, events: [], firstSeq: 1, readState: "ok" as const } })} />);
+    const cards = [
+      {
+        id: "c-1",
+        command: "ls",
+        output: "a",
+        startedAt: 1,
+        ended: true,
+        exitCode: 0,
+        reason: null,
+        durationMs: 10,
+        seq: 1,
+      },
+    ];
+    render(
+      <TerminalWorkspace
+        {...props({
+          cmdEvents: {
+            cards,
+            events: [],
+            firstSeq: 1,
+            readState: "ok" as const,
+          },
+        })}
+      />,
+    );
     expect(screen.queryByText("Details")).toBeNull();
     fireEvent.click(screen.getByTitle("Command log"));
     expect(screen.getByText("Details")).toBeTruthy();
-    expect(screen.getByText("Select a command card to inspect its parameters, output, and exit code.")).toBeTruthy();
+    expect(
+      screen.getByText(
+        "Select a command card to inspect its parameters, output, and exit code.",
+      ),
+    ).toBeTruthy();
     // select the card in the stream → details shows it; click again → deselect
     fireEvent.click(screen.getByTitle("ls"));
     expect(screen.queryAllByText("ls").length).toBeGreaterThan(1);
@@ -89,7 +131,11 @@ describe("TerminalWorkspace", () => {
     const onControlled = vi.fn();
     const { container } = render(
       <TerminalWorkspace
-        {...props({ density: "desktop", controlledView: "terminal", onControlledViewChange: onControlled })}
+        {...props({
+          density: "desktop",
+          controlledView: "terminal",
+          onControlledViewChange: onControlled,
+        })}
       />,
     );
     expect(container.querySelector(".desktop-terminal")).toBeTruthy();
@@ -97,7 +143,11 @@ describe("TerminalWorkspace", () => {
   });
 
   it("desktop honors the controlled view value", () => {
-    const base = props({ density: "desktop", controlledView: "terminal", onControlledViewChange: vi.fn() });
+    const base = props({
+      density: "desktop",
+      controlledView: "terminal",
+      onControlledViewChange: vi.fn(),
+    });
     const { rerender } = render(<TerminalWorkspace {...base} />);
     expect(screen.queryByText("No commands in this session yet.")).toBeNull();
     rerender(<TerminalWorkspace {...base} controlledView="trajectory" />);

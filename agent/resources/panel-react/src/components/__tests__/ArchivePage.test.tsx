@@ -69,14 +69,18 @@ function device(opts: {
 }) {
   mockCallApi.mockImplementation((path: string) => {
     if (path === "/api/sessions") {
-      if (opts.listPending) return new Promise(() => { /* never settles */ });
+      if (opts.listPending)
+        return new Promise(() => {
+          /* never settles */
+        });
       if (opts.listFails) return Promise.reject(new Error("HTTP 502"));
       return Promise.resolve({ ok: true, sessions: opts.sessions ?? [] });
     }
     const m = /^\/api\/sessions\/(.+)$/.exec(path);
     if (m) {
       const sid = decodeURIComponent(m[1]);
-      if (opts.failEventsFor?.includes(sid)) return Promise.reject(new Error("HTTP 404"));
+      if (opts.failEventsFor?.includes(sid))
+        return Promise.reject(new Error("HTTP 404"));
       return Promise.resolve({
         ok: true,
         id: sid,
@@ -111,7 +115,12 @@ beforeEach(() => {
 describe("ArchivePage — (a) the list is the device's RECORDED sessions", () => {
   it("reads GET /api/sessions and never the live terminal_list", async () => {
     device({
-      sessions: [{ id: "recorded-1", state: { kind: "status", ts: T0, status: "closed" } }],
+      sessions: [
+        {
+          id: "recorded-1",
+          state: { kind: "status", ts: T0, status: "closed" },
+        },
+      ],
       live: [{ id: "live-only" }],
     });
     render(<ArchivePage sessions={[session({ sid: "live-only" })]} />);
@@ -129,14 +138,22 @@ describe("ArchivePage — (a) the list is the device's RECORDED sessions", () =>
       sessions: [
         // Directory order (what the route returns) is deliberately NOT the order
         // the operator should read.
-        { id: "oldest", state: { kind: "status", ts: T0 - 900, status: "closed" } },
+        {
+          id: "oldest",
+          state: { kind: "status", ts: T0 - 900, status: "closed" },
+        },
         { id: "newest", state: { kind: "status", ts: T0, status: "closed" } },
-        { id: "middle", state: { kind: "status", ts: T0 - 400, status: "closed" } },
+        {
+          id: "middle",
+          state: { kind: "status", ts: T0 - 400, status: "closed" },
+        },
       ],
     });
     const { container } = render(<ArchivePage sessions={[]} />);
     await screen.findByText("newest");
-    const names = [...container.querySelectorAll(".archive-row-name")].map((n) => n.textContent);
+    const names = [...container.querySelectorAll(".archive-row-name")].map(
+      (n) => n.textContent,
+    );
     expect(names).toEqual(["newest", "middle", "oldest"]);
   });
 });
@@ -144,7 +161,12 @@ describe("ArchivePage — (a) the list is the device's RECORDED sessions", () =>
 describe("ArchivePage — (b) a recorded session opens through the EXISTING reader", () => {
   it("renders an archived session's events with the trajectory renderer the live views use", async () => {
     device({
-      sessions: [{ id: "s-old", state: { kind: "command/end", ts: T0 + 2, exit_code: 0 } }],
+      sessions: [
+        {
+          id: "s-old",
+          state: { kind: "command/end", ts: T0 + 2, exit_code: 0 },
+        },
+      ],
       events: { "s-old": trail("display version", "V1.2.325") },
     });
     // The panel holds NO sessions: this is the reload/restart case, where the
@@ -157,7 +179,9 @@ describe("ArchivePage — (b) a recorded session opens through the EXISTING read
     // ...inside the SHARED renderer's frame (#traj-view / .traj-round-cmd), not
     // a second timeline written for this page.
     expect(document.querySelector("#traj-view")).toBeTruthy();
-    expect(document.querySelector(".traj-round-cmd")?.textContent).toBe("display version");
+    expect(document.querySelector(".traj-round-cmd")?.textContent).toBe(
+      "display version",
+    );
     // And it came from the audit route, read by the shared hook.
     expect(mockCallApi).toHaveBeenCalledWith("/api/sessions/s-old");
   });
@@ -169,7 +193,13 @@ describe("ArchivePage — (b) a recorded session opens through the EXISTING read
         "s-two": [
           ...trail("first", "a"),
           { seq: 4, ts: T0 + 3, kind: "command/start", command: "second" },
-          { seq: 5, ts: T0 + 5, kind: "command/end", exit_code: 1, duration_ms: 10 },
+          {
+            seq: 5,
+            ts: T0 + 5,
+            kind: "command/end",
+            exit_code: 1,
+            duration_ms: 10,
+          },
         ],
       },
     });
@@ -184,8 +214,14 @@ describe("ArchivePage — (c) live and archived are distinguishable", () => {
   it("calls a recorded session that is still open LIVE, and words the marks differently", async () => {
     device({
       sessions: [
-        { id: "still-open", state: { kind: "status", ts: T0, status: "opened" } },
-        { id: "long-gone", state: { kind: "status", ts: T0 - 500, status: "closed" } },
+        {
+          id: "still-open",
+          state: { kind: "status", ts: T0, status: "opened" },
+        },
+        {
+          id: "long-gone",
+          state: { kind: "status", ts: T0 - 500, status: "closed" },
+        },
       ],
     });
     render(<ArchivePage sessions={[session({ sid: "still-open" })]} />);
@@ -204,7 +240,11 @@ describe("ArchivePage — (c) live and archived are distinguishable", () => {
   });
 
   it("treats a session the panel has TOMBSTONED as archived, not as live", async () => {
-    device({ sessions: [{ id: "dead", state: { kind: "status", ts: T0, status: "closed" } }] });
+    device({
+      sessions: [
+        { id: "dead", state: { kind: "status", ts: T0, status: "closed" } },
+      ],
+    });
     // Closed in this panel = the live set no longer contains it, however recently
     // it was in the tab strip.
     render(<ArchivePage sessions={[session({ sid: "dead", closed: true })]} />);
@@ -215,10 +255,17 @@ describe("ArchivePage — (c) live and archived are distinguishable", () => {
 
   it("keeps the live/archived mark on the trail header too", async () => {
     device({
-      sessions: [{ id: "still-open", state: { kind: "status", ts: T0, status: "opened" } }],
+      sessions: [
+        {
+          id: "still-open",
+          state: { kind: "status", ts: T0, status: "opened" },
+        },
+      ],
       events: { "still-open": trail("uptime", "3 days") },
     });
-    const { container } = render(<ArchivePage sessions={[session({ sid: "still-open" })]} />);
+    const { container } = render(
+      <ArchivePage sessions={[session({ sid: "still-open" })]} />,
+    );
     await open("still-open");
     await screen.findByText("uptime");
     const head = container.querySelector(".archive-trail-head")!;
@@ -235,25 +282,33 @@ describe("ArchivePage — a TRIMMED trail is not presented as complete", () => {
   // whole story when it is not.
   it("says earlier events are not recorded when the trail does not begin at 1", async () => {
     device({
-      sessions: [{ id: "long", state: { kind: "status", ts: T0, status: "closed" } }],
+      sessions: [
+        { id: "long", state: { kind: "status", ts: T0, status: "closed" } },
+      ],
       events: { long: trail("echo late", "late\n") },
       firstSeqFor: { long: 1734 },
     });
     render(<ArchivePage sessions={[]} />);
     await open("long");
 
-    expect(await screen.findByText(/Earlier events are not recorded/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/Earlier events are not recorded/i),
+    ).toBeTruthy();
     expect(screen.getByText(/begins at event 1734/)).toBeTruthy();
     // It states the device's REAL rule. The old wording said "the last 2000
     // lines", which overstates what survived by an order of magnitude on a real
     // session (d1: 33 discarded, 26 surviving).
-    expect(screen.getByText(/keeps its most recent command onward/i)).toBeTruthy();
+    expect(
+      screen.getByText(/keeps its most recent command onward/i),
+    ).toBeTruthy();
     expect(screen.queryByText(/last 2000 lines/i)).toBeNull();
   });
 
   it("stays silent for a trail that DOES begin at 1", async () => {
     device({
-      sessions: [{ id: "short", state: { kind: "status", ts: T0, status: "closed" } }],
+      sessions: [
+        { id: "short", state: { kind: "status", ts: T0, status: "closed" } },
+      ],
       firstSeqFor: { short: 1 },
     });
     render(<ArchivePage sessions={[]} />);
@@ -269,13 +324,17 @@ describe("ArchivePage — a TRIMMED trail is not presented as complete", () => {
 describe("ArchivePage — (d) an unreadable trail is not an empty history", () => {
   it("says the trail could not be read, and does NOT draw the renderer's empty state", async () => {
     device({
-      sessions: [{ id: "ghost", state: { kind: "status", ts: T0, status: "closed" } }],
+      sessions: [
+        { id: "ghost", state: { kind: "status", ts: T0, status: "closed" } },
+      ],
       failEventsFor: ["ghost"],
     });
     render(<ArchivePage sessions={[]} />);
     await open("ghost");
 
-    expect(await screen.findByText(/could not be read from the device/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/could not be read from the device/i),
+    ).toBeTruthy();
     // The renderer's own empty line is a CLAIM about the session ("no commands
     // in this session yet") and must not stand in for a failed read.
     expect(screen.queryByText(/No commands in this session yet/i)).toBeNull();
@@ -284,7 +343,12 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
 
   it("distinguishes 'the device returned no events' from a failed read", async () => {
     device({
-      sessions: [{ id: "empty-trail", state: { kind: "status", ts: T0, status: "closed" } }],
+      sessions: [
+        {
+          id: "empty-trail",
+          state: { kind: "status", ts: T0, status: "closed" },
+        },
+      ],
       events: { "empty-trail": [] },
     });
     render(<ArchivePage sessions={[]} />);
@@ -294,7 +358,11 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
     // record" (`found:false`, the branch ABOVE) from "recorded nothing", so this
     // line may only claim the latter. The assertion keeps its original job —
     // telling the two apart — with the text the device actually justifies.
-    expect(await screen.findByText(/has a record for this session and it holds no events/i)).toBeTruthy();
+    expect(
+      await screen.findByText(
+        /has a record for this session and it holds no events/i,
+      ),
+    ).toBeTruthy();
     // A read that SUCCEEDED and a read that FAILED are different sentences.
     expect(screen.queryByText(/could not be read from the device/i)).toBeNull();
     expect(screen.queryByText(/No commands in this session yet/i)).toBeNull();
@@ -304,7 +372,9 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
     device({ listFails: true });
     render(<ArchivePage sessions={[]} />);
 
-    expect(await screen.findByText(/session archive could not be read/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/session archive could not be read/i),
+    ).toBeTruthy();
     expect(screen.queryByText(/has recorded no sessions yet/i)).toBeNull();
     expect(document.querySelector(".archive-rows")).toBeNull();
   });
@@ -313,7 +383,9 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
     device({ listPending: true });
     render(<ArchivePage sessions={[]} />);
 
-    expect(screen.getByText(/Reading the device's session archive/i)).toBeTruthy();
+    expect(
+      screen.getByText(/Reading the device's session archive/i),
+    ).toBeTruthy();
     expect(screen.queryByText(/has recorded no sessions yet/i)).toBeNull();
     expect(screen.queryByText(/could not be read/i)).toBeNull();
   });
@@ -322,7 +394,9 @@ describe("ArchivePage — (d) an unreadable trail is not an empty history", () =
     device({ sessions: [] });
     const { container } = render(<ArchivePage sessions={[]} />);
 
-    expect(await screen.findByText(/has recorded no sessions yet/i)).toBeTruthy();
+    expect(
+      await screen.findByText(/has recorded no sessions yet/i),
+    ).toBeTruthy();
     // No titled empty list that reads as a broken feature.
     expect(container.querySelector(".archive-rows")).toBeNull();
   });
@@ -338,7 +412,9 @@ describe("ArchivePage — the bounded list", () => {
     const { container } = render(<ArchivePage sessions={[]} />);
 
     await screen.findByText("s-000");
-    expect(container.querySelectorAll(".archive-row").length).toBe(ARCHIVE_PAGE);
+    expect(container.querySelectorAll(".archive-row").length).toBe(
+      ARCHIVE_PAGE,
+    );
     expect(screen.getByText(`showing ${ARCHIVE_PAGE} of 167`)).toBeTruthy();
     // The device may hold hundreds of files: the page never renders them all.
     expect(screen.getByText(/117 held back/)).toBeTruthy();
@@ -354,11 +430,15 @@ describe("ArchivePage — the bounded list", () => {
     await screen.findByText("s-000");
 
     fireEvent.click(screen.getByRole("button", { name: /Show .* more/ }));
-    expect(container.querySelectorAll(".archive-row").length).toBe(ARCHIVE_PAGE * 2);
+    expect(container.querySelectorAll(".archive-row").length).toBe(
+      ARCHIVE_PAGE * 2,
+    );
     expect(screen.getByText(`showing ${ARCHIVE_PAGE * 2} of 167`)).toBeTruthy();
 
     fireEvent.click(screen.getByRole("button", { name: /Show .* more/ }));
-    expect(container.querySelectorAll(".archive-row").length).toBe(ARCHIVE_PAGE * 3);
+    expect(container.querySelectorAll(".archive-row").length).toBe(
+      ARCHIVE_PAGE * 3,
+    );
     fireEvent.click(screen.getByRole("button", { name: /Show .* more/ }));
     // The last page is short: the window is bounded by the archive, not by the
     // page size, and nothing is invented to fill it.
@@ -373,7 +453,10 @@ describe("ArchivePage — honest absences on a row", () => {
   it("draws nothing where the device recorded nothing", async () => {
     device({
       // No folded state at all, and a state with no timestamp.
-      sessions: [{ id: "bare" }, { id: "no-stamp", state: { kind: "status", status: "closed" } }],
+      sessions: [
+        { id: "bare" },
+        { id: "no-stamp", state: { kind: "status", status: "closed" } },
+      ],
     });
     render(<ArchivePage sessions={[]} />);
 
@@ -386,11 +469,17 @@ describe("ArchivePage — honest absences on a row", () => {
     const noStamp = screen.getByText("no-stamp").closest("button")!;
     expect(noStamp.querySelector(".archive-row-when")).toBeNull();
     // The status VALUE the device did write is still drawn.
-    expect(noStamp.querySelector(".archive-row-last")?.textContent).toBe("closed");
+    expect(noStamp.querySelector(".archive-row-last")?.textContent).toBe(
+      "closed",
+    );
   });
 
   it("keeps exit 0 a value on the row", async () => {
-    device({ sessions: [{ id: "done", state: { kind: "command/end", ts: T0, exit_code: 0 } }] });
+    device({
+      sessions: [
+        { id: "done", state: { kind: "command/end", ts: T0, exit_code: 0 } },
+      ],
+    });
     render(<ArchivePage sessions={[]} />);
     const row = (await screen.findByText("done")).closest("button")!;
     expect(row.querySelector(".archive-row-last")?.textContent).toBe("exit 0");
@@ -399,7 +488,14 @@ describe("ArchivePage — honest absences on a row", () => {
 
 describe("the archive is reachable from the rail", () => {
   it("mounts on the panel density's Archive page — the one surface that works with NO session", async () => {
-    device({ sessions: [{ id: "from-before-the-reload", state: { kind: "status", ts: T0, status: "closed" } }] });
+    device({
+      sessions: [
+        {
+          id: "from-before-the-reload",
+          state: { kind: "status", ts: T0, status: "closed" },
+        },
+      ],
+    });
     // The panel density, with ZERO sessions: this is the state a reload or an
     // agent restart leaves an operator in, and exactly where the archive has to
     // be reachable or the past is unreachable entirely.
@@ -411,6 +507,7 @@ describe("the archive is reachable from the rail", () => {
         onClose={vi.fn()}
         onExport={vi.fn()}
         onViewChange={vi.fn()}
+        sessionViews={{}}
         onSetControl={vi.fn(() => Promise.resolve(false))}
         onSetApproval={vi.fn(() => Promise.resolve(false))}
         onDecideApproval={vi.fn(() => Promise.resolve(true))}
@@ -421,7 +518,17 @@ describe("the archive is reachable from the rail", () => {
         status=""
         sseState="connected"
         token="t"
-        plugins={{ rows: [], specLoaded: true, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any}
+        plugins={
+          {
+            rows: [],
+            specLoaded: true,
+            loadError: "",
+            busy: null,
+            log: [],
+            start: vi.fn(),
+            stop: vi.fn(),
+          } as any
+        }
         cmdEvents={{ cards: [], events: [], readState: "ok", firstSeq: 1 }}
         connModal={null}
         onConnClose={vi.fn()}

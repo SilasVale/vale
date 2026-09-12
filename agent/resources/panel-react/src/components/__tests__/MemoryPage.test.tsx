@@ -31,24 +31,41 @@ describe("MemoryPage", () => {
   it("loads the list on mount and renders entries", async () => {
     render(<MemoryPage />);
     expect(await screen.findByText("Deploy notes")).toBeTruthy();
-    expect(callTool).toHaveBeenCalledWith("memory_list", expect.objectContaining({ limit: 50 }));
+    expect(callTool).toHaveBeenCalledWith(
+      "memory_list",
+      expect.objectContaining({ limit: 50 }),
+    );
     expect(screen.getByText("ops")).toBeTruthy();
   });
 
   it("search passes query+tag; empty query falls back to list", async () => {
     vi.mocked(callTool).mockResolvedValue({ results: [] });
     render(<MemoryPage />);
-    await screen.findByText("No memory entries yet — use + New, or let AI clients save knowledge via memory_save.");
-    fireEvent.change(screen.getByPlaceholderText("Search title/content/tags… (Enter)"), { target: { value: "deploy" } });
-    fireEvent.change(screen.getByPlaceholderText("tag"), { target: { value: "ops" } });
+    await screen.findByText(
+      "No memory entries yet — use + New, or let AI clients save knowledge via memory_save.",
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("Search title/content/tags… (Enter)"),
+      { target: { value: "deploy" } },
+    );
+    fireEvent.change(screen.getByPlaceholderText("tag"), {
+      target: { value: "ops" },
+    });
     fireEvent.click(screen.getByText("Search"));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith(
-      "memory_search",
-      expect.objectContaining({ query: "deploy", tag: "ops" }),
-    ));
-    fireEvent.change(screen.getByPlaceholderText("Search title/content/tags… (Enter)"), { target: { value: "  " } });
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith(
+        "memory_search",
+        expect.objectContaining({ query: "deploy", tag: "ops" }),
+      ),
+    );
+    fireEvent.change(
+      screen.getByPlaceholderText("Search title/content/tags… (Enter)"),
+      { target: { value: "  " } },
+    );
     fireEvent.click(screen.getByText("Search"));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith("memory_list", expect.anything()));
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith("memory_list", expect.anything()),
+    );
   });
 
   it("two-step delete calls memory_delete and toasts", async () => {
@@ -57,7 +74,9 @@ describe("MemoryPage", () => {
     fireEvent.click(screen.getByTitle("Delete entry"));
     expect(screen.getByText("delete?")).toBeTruthy();
     fireEvent.click(screen.getByText("Delete"));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith("memory_delete", { id: "m1" }));
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith("memory_delete", { id: "m1" }),
+    );
     expect(await screen.findByText("deleted")).toBeTruthy();
   });
 
@@ -66,12 +85,16 @@ describe("MemoryPage", () => {
     await screen.findByText("Deploy notes");
     fireEvent.click(screen.getByTitle("Edit entry"));
     expect(screen.getByDisplayValue("Deploy notes")).toBeTruthy();
-    fireEvent.change(screen.getByDisplayValue("restart after update"), { target: { value: "new body" } });
+    fireEvent.change(screen.getByDisplayValue("restart after update"), {
+      target: { value: "new body" },
+    });
     fireEvent.click(screen.getByText("Save"));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith(
-      "memory_update",
-      expect.objectContaining({ id: "m1", content: "new body" }),
-    ));
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith(
+        "memory_update",
+        expect.objectContaining({ id: "m1", content: "new body" }),
+      ),
+    );
     expect(await screen.findByText("saved")).toBeTruthy();
   });
 
@@ -80,15 +103,23 @@ describe("MemoryPage", () => {
     await screen.findByText("Deploy notes");
     fireEvent.click(screen.getByText("+ New"));
     fireEvent.click(screen.getByText("Create"));
-    expect(await screen.findByText("title and content are required")).toBeTruthy();
+    expect(
+      await screen.findByText("title and content are required"),
+    ).toBeTruthy();
     expect(callTool).not.toHaveBeenCalledWith("memory_save", expect.anything());
-    fireEvent.change(screen.getByPlaceholderText("Title (required)"), { target: { value: "T" } });
-    fireEvent.change(screen.getByPlaceholderText("Content (required)"), { target: { value: "C" } });
+    fireEvent.change(screen.getByPlaceholderText("Title (required)"), {
+      target: { value: "T" },
+    });
+    fireEvent.change(screen.getByPlaceholderText("Content (required)"), {
+      target: { value: "C" },
+    });
     fireEvent.click(screen.getByText("Create"));
-    await waitFor(() => expect(callTool).toHaveBeenCalledWith(
-      "memory_save",
-      expect.objectContaining({ title: "T", content: "C" }),
-    ));
+    await waitFor(() =>
+      expect(callTool).toHaveBeenCalledWith(
+        "memory_save",
+        expect.objectContaining({ title: "T", content: "C" }),
+      ),
+    );
   });
 
   it("export shows text with line count; copy toasts", async () => {
@@ -96,7 +127,9 @@ describe("MemoryPage", () => {
       if (tool === "memory_export") return { export: "a\nb" };
       return { results: [entry()] };
     });
-    vi.stubGlobal("navigator", { clipboard: { writeText: vi.fn(() => Promise.resolve()) } });
+    vi.stubGlobal("navigator", {
+      clipboard: { writeText: vi.fn(() => Promise.resolve()) },
+    });
     render(<MemoryPage />);
     await screen.findByText("Deploy notes");
     fireEvent.click(screen.getByText("Export"));

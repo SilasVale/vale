@@ -61,18 +61,25 @@ describe("IconRail", () => {
     // state. Before it, only browser events did — and only inside the browser
     // pane, so `terminal_execute` work showed nowhere at the device level.
     const { container } = render(<IconRail {...props()} />);
-    const dot = () => container.querySelector(".rail-dot")!.getAttribute("data-state");
+    const dot = () =>
+      container.querySelector(".rail-dot")!.getAttribute("data-state");
     expect(dot()).toBe("idle");
     act(() => {
-      window.dispatchEvent(new CustomEvent("vale-term-output", { detail: { sid: "s1" } }));
+      window.dispatchEvent(
+        new CustomEvent("vale-term-output", { detail: { sid: "s1" } }),
+      );
     });
     expect(dot()).toBe("working");
   });
 
   it("desktop density uses desktop classes", () => {
-    const { container } = render(<IconRail {...props({ desktop: true, page: "browser" })} />);
+    const { container } = render(
+      <IconRail {...props({ desktop: true, page: "browser" })} />,
+    );
     expect(container.querySelector(".desktop-rail-brand")).toBeTruthy();
-    expect(screen.getByTitle("Browser").className).toContain("desktop-rail-btn");
+    expect(screen.getByTitle("Browser").className).toContain(
+      "desktop-rail-btn",
+    );
     expect(screen.getByTitle("device is idle")).toBeTruthy();
   });
 });
@@ -81,13 +88,18 @@ describe("IconRail — a decision waiting outranks device activity", () => {
   it("shows waiting, and it wins over working", () => {
     // A question EXPIRES if it goes unnoticed, so of the two true things the
     // dot could say, it says the one that decays.
-    const { container, rerender } = render(<IconRail {...props({ pendingCount: 1 })} />);
-    const dot = () => container.querySelector(".rail-dot")!.getAttribute("data-state");
+    const { container, rerender } = render(
+      <IconRail {...props({ pendingCount: 1 })} />,
+    );
+    const dot = () =>
+      container.querySelector(".rail-dot")!.getAttribute("data-state");
     expect(dot()).toBe("waiting");
     expect(screen.getByTitle("1 command waiting for your answer")).toBeTruthy();
 
     act(() => {
-      window.dispatchEvent(new CustomEvent("vale-term-output", { detail: { sid: "s1" } }));
+      window.dispatchEvent(
+        new CustomEvent("vale-term-output", { detail: { sid: "s1" } }),
+      );
     });
     // Both are true at once — the question still wins.
     expect(dot()).toBe("waiting");
@@ -104,15 +116,23 @@ describe("IconRail — a decision waiting outranks device activity", () => {
 
   it("counts in the label, singular and plural — and says nothing at zero", () => {
     const { rerender } = render(<IconRail {...props({ pendingCount: 2 })} />);
-    expect(screen.getByTitle("2 commands waiting for your answer")).toBeTruthy();
+    expect(
+      screen.getByTitle("2 commands waiting for your answer"),
+    ).toBeTruthy();
     rerender(<IconRail {...props({ pendingCount: 0 })} />);
     expect(screen.queryByTitle(/waiting for your answer/)).toBeNull();
     expect(screen.getByTitle("device is idle")).toBeTruthy();
   });
 
   it("carries the same waiting state in the desktop density", () => {
-    const { container } = render(<IconRail {...props({ desktop: true, pendingCount: 1 })} />);
-    expect(container.querySelector(".desktop-rail-status")!.getAttribute("data-state")).toBe("waiting");
+    const { container } = render(
+      <IconRail {...props({ desktop: true, pendingCount: 1 })} />,
+    );
+    expect(
+      container
+        .querySelector(".desktop-rail-status")!
+        .getAttribute("data-state"),
+    ).toBe("waiting");
     expect(screen.getByTitle("1 command waiting for your answer")).toBeTruthy();
   });
 });

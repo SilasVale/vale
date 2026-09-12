@@ -4,7 +4,12 @@
 // non-secure LAN contexts.
 import { describe, it, expect, vi, afterEach } from "vitest";
 import { render, screen, fireEvent, act } from "@testing-library/react";
-import { fmtDuration, cardState, CommandCard, CommandStream } from "../CommandCard";
+import {
+  fmtDuration,
+  cardState,
+  CommandCard,
+  CommandStream,
+} from "../CommandCard";
 import type { CommandCard as CardData } from "../../hooks/useCommandEvents";
 
 const card = (over: Partial<CardData> = {}): CardData => ({
@@ -38,17 +43,36 @@ describe("fmtDuration", () => {
 
 describe("cardState", () => {
   it("maps running/exit/reason to dot state + labels", () => {
-    expect(cardState(card())).toEqual({ state: "running", label: "Running", compact: "running" });
-    expect(cardState(card({ ended: true, exitCode: 0 }))).toMatchObject({ state: "ok", compact: "0" });
-    expect(cardState(card({ ended: true, exitCode: 2 }))).toMatchObject({ state: "fail", compact: "exit 2" });
+    expect(cardState(card())).toEqual({
+      state: "running",
+      label: "Running",
+      compact: "running",
+    });
+    expect(cardState(card({ ended: true, exitCode: 0 }))).toMatchObject({
+      state: "ok",
+      compact: "0",
+    });
+    expect(cardState(card({ ended: true, exitCode: 2 }))).toMatchObject({
+      state: "fail",
+      compact: "exit 2",
+    });
     // `bg`, NOT `warn` — and this line used to assert `warn`, which pinned the
     // defect. The path summary's word for `warn` is "interrupted", so a command
     // handed off to keep running was read out to the operator as one that had
     // stopped. The two reasons are different states and are now different.
-    expect(cardState(card({ ended: true, reason: "backgrounded" }))).toMatchObject({ state: "bg" });
-    expect(cardState(card({ ended: true, reason: "interrupted" }))).toMatchObject({ state: "warn" });
-    expect(cardState(card({ ended: true, reason: "closed" }))).toMatchObject({ state: "muted" });
-    expect(cardState(card({ ended: true, reason: "mystery" }))).toMatchObject({ state: "muted", compact: "mystery" });
+    expect(
+      cardState(card({ ended: true, reason: "backgrounded" })),
+    ).toMatchObject({ state: "bg" });
+    expect(
+      cardState(card({ ended: true, reason: "interrupted" })),
+    ).toMatchObject({ state: "warn" });
+    expect(cardState(card({ ended: true, reason: "closed" }))).toMatchObject({
+      state: "muted",
+    });
+    expect(cardState(card({ ended: true, reason: "mystery" }))).toMatchObject({
+      state: "muted",
+      compact: "mystery",
+    });
   });
 });
 
@@ -60,7 +84,18 @@ describe("CommandCard", () => {
   });
 
   it("renders an ended card collapsed; toggle expands it", () => {
-    render(<CommandCard card={card({ ended: true, exitCode: 0, output: "done", durationMs: 1500 })} selected={false} onSelect={() => {}} />);
+    render(
+      <CommandCard
+        card={card({
+          ended: true,
+          exitCode: 0,
+          output: "done",
+          durationMs: 1500,
+        })}
+        selected={false}
+        onSelect={() => {}}
+      />,
+    );
     expect(screen.queryByText("done")).toBeNull();
     expect(screen.getByText("0")).toBeTruthy();
     fireEvent.click(screen.getByTitle("Expand"));
@@ -71,7 +106,13 @@ describe("CommandCard", () => {
 
   it("head click selects; toggle click does not select", () => {
     const onSelect = vi.fn();
-    render(<CommandCard card={card({ ended: true, exitCode: 0 })} selected={false} onSelect={onSelect} />);
+    render(
+      <CommandCard
+        card={card({ ended: true, exitCode: 0 })}
+        selected={false}
+        onSelect={onSelect}
+      />,
+    );
     fireEvent.click(screen.getByTitle("Show details"));
     expect(onSelect).toHaveBeenCalledWith("c-1");
     onSelect.mockClear();
@@ -80,7 +121,9 @@ describe("CommandCard", () => {
   });
 
   it("selected card carries the selected class and close-details title", () => {
-    const { container } = render(<CommandCard card={card()} selected={true} onSelect={() => {}} />);
+    const { container } = render(
+      <CommandCard card={card()} selected={true} onSelect={() => {}} />,
+    );
     expect(container.querySelector(".cmd-card.selected")).toBeTruthy();
     expect(screen.getByTitle("Close details")).toBeTruthy();
   });
@@ -111,9 +154,19 @@ describe("CommandCard", () => {
 describe("CommandStream", () => {
   it("empty stream shows the hint; count tracks cards", () => {
     const onSelect = vi.fn();
-    const { rerender } = render(<CommandStream cards={[]} selectedId={null} onSelect={onSelect} />);
-    expect(screen.getByText("Commands run in this session appear here.")).toBeTruthy();
-    rerender(<CommandStream cards={[card(), card({ id: "c-2", command: "pwd" })]} selectedId="c-2" onSelect={onSelect} />);
+    const { rerender } = render(
+      <CommandStream cards={[]} selectedId={null} onSelect={onSelect} />,
+    );
+    expect(
+      screen.getByText("Commands run in this session appear here."),
+    ).toBeTruthy();
+    rerender(
+      <CommandStream
+        cards={[card(), card({ id: "c-2", command: "pwd" })]}
+        selectedId="c-2"
+        onSelect={onSelect}
+      />,
+    );
     expect(screen.getByText("2")).toBeTruthy();
     fireEvent.click(screen.getByTitle("pwd"));
     expect(onSelect).toHaveBeenCalledWith("c-2");

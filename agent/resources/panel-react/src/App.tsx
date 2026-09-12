@@ -30,7 +30,13 @@ function isDesktopPath() {
 
 export function App() {
   const authFailed = useRef(false);
-  const boot = useMemo(() => computeBoot(() => { authFailed.current = true; }), []);
+  const boot = useMemo(
+    () =>
+      computeBoot(() => {
+        authFailed.current = true;
+      }),
+    [],
+  );
   const [host, setHost] = useState(boot.host);
   const [token, setToken] = useState(boot.tok);
   const [connError, setConnError] = useState("");
@@ -55,14 +61,23 @@ export function App() {
   const openBrowserSession = async () => {
     const bridge = (window as any).valeBrowser;
     if (bridge?.open) {
-      try { await bridge.open("about:blank"); return; } catch { /* fall through */ }
+      try {
+        await bridge.open("about:blank");
+        return;
+      } catch {
+        /* fall through */
+      }
     }
     try {
-      const r = await fetch("http://127.0.0.1:9444/api/browser-session/open", { method: "POST" });
+      const r = await fetch("http://127.0.0.1:9444/api/browser-session/open", {
+        method: "POST",
+      });
       const data = await r.json();
       if (!data.ok) throw new Error(data.error || "open failed");
     } catch {
-      setConnError("Browser sessions need the Vale desktop app (Electron shell on this machine).");
+      setConnError(
+        "Browser sessions need the Vale desktop app (Electron shell on this machine).",
+      );
     }
   };
 
@@ -79,7 +94,9 @@ export function App() {
 
   // Per-session main-area view (terminal | trajectory) — keyed per sid.
   // State lives here (App) so both shells share the same view per session.
-  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
+  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>(
+    {},
+  );
   const changeView = (sid: string, v: SessionView) => {
     setSessionViews((m) => ({ ...m, [sid]: v }));
   };
@@ -88,7 +105,9 @@ export function App() {
   // effect skips while display:none, so a window resize while in another
   // view leaves a stale grid on switch-back. The dispatch must run
   // POST-commit (the R131 render-body version fired while still hidden).
-  const termVisible = !(sessions.activeSid && sessionViews[sessions.activeSid] === "trajectory");
+  const termVisible = !(
+    sessions.activeSid && sessionViews[sessions.activeSid] === "trajectory"
+  );
   const prevTermVisible = useRef(termVisible);
   useEffect(() => {
     if (!prevTermVisible.current && termVisible) {
@@ -99,27 +118,50 @@ export function App() {
 
   // Command card stream (round-admin-ui Task 4): poll the ACTIVE session's
   // audit log; the cards/events are shared by the Logs drawer + trajectory.
-  const cmdEvents = useCommandEvents(connected && sessions.activeSid ? sessions.activeSid : null);
+  const cmdEvents = useCommandEvents(
+    connected && sessions.activeSid ? sessions.activeSid : null,
+  );
   // Switching sessions resets the details column — handled inside
   // TerminalWorkspace via selectedCmdId keyed to the session.
 
   // SSE: per-session xterm write callbacks registered by TerminalPane.
-  const writeCallbacks = useRef(new Map<string, { write: (bytes: Uint8Array, start?: number) => void; getRendered: () => number; setRendered?: (n: number) => void }>());
+  const writeCallbacks = useRef(
+    new Map<
+      string,
+      {
+        write: (bytes: Uint8Array, start?: number) => void;
+        getRendered: () => number;
+        setRendered?: (n: number) => void;
+      }
+    >(),
+  );
   const registerWrite = useMemo(() => {
     // round-99: a removable registration — without unregister, closed
     // session callbacks lived in the map forever and the sync loop polled
     // them every 5s (unbounded no-op polling as sessions accumulate).
-    const reg = (sid: string, fn: (bytes: Uint8Array, start?: number) => void, getRendered: () => number, setRendered?: (n: number) => void) => {
+    const reg = (
+      sid: string,
+      fn: (bytes: Uint8Array, start?: number) => void,
+      getRendered: () => number,
+      setRendered?: (n: number) => void,
+    ) => {
       writeCallbacks.current.set(sid, { write: fn, getRendered, setRendered });
-      return () => { writeCallbacks.current.delete(sid); };
+      return () => {
+        writeCallbacks.current.delete(sid);
+      };
     };
-    reg.unregister = (sid: string) => { writeCallbacks.current.delete(sid); };
+    reg.unregister = (sid: string) => {
+      writeCallbacks.current.delete(sid);
+    };
     return reg;
   }, []);
   // round-86: stable getLiveSids ref — an inline arrow recreated the SSE
   // effect every 3s poll (stream teardown/re-establish, dropped frames).
-  const getLiveSidsRef = useRef(() => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid));
-  getLiveSidsRef.current = () => sessions.sessions.filter((s) => !s.closed).map((s) => s.sid);
+  const getLiveSidsRef = useRef(() =>
+    sessions.sessions.filter((s) => !s.closed).map((s) => s.sid),
+  );
+  getLiveSidsRef.current = () =>
+    sessions.sessions.filter((s) => !s.closed).map((s) => s.sid);
   const sseState = useSSE(connected, writeCallbacks, getLiveSidsRef);
 
   // Native menu + keyboard shortcut bridge (stage-l desktop refactor): maps
@@ -137,30 +179,57 @@ export function App() {
         else if (kind === "browser") openBrowserSession();
         else if (kind === "ssh" || kind === "serial") setModalKind(kind);
       },
-      onClose: (sid) => { sessions.closeSession(sid); },
-      onActivate: (sid) => { sessions.activate(sid); },
-      onExport: (sid) => { sessions.exportSession(sid); },
-      onSetView: (sid, v) => { changeView(sid, v); },
+      onClose: (sid) => {
+        sessions.closeSession(sid);
+      },
+      onActivate: (sid) => {
+        sessions.activate(sid);
+      },
+      onExport: (sid) => {
+        sessions.exportSession(sid);
+      },
+      onSetView: (sid, v) => {
+        changeView(sid, v);
+      },
     },
   );
 
   function connect() {
     // round-83: normalize the host — pasting 'https://d1…' or a trailing
     // slash built 'https://https://d1…' fetches (silent empty panel).
-    const h = host.trim().replace(/^https?:\/\//, "").replace(/\/+$/, "");
+    const h = host
+      .trim()
+      .replace(/^https?:\/\//, "")
+      .replace(/\/+$/, "");
     // panel audit #1: host got trimmed, the TOKEN never did — a pasted
     // token with trailing whitespace/newline 401'd forever AND was
     // persisted (the bad value survived reloads).
     const tk = token.trim();
-    if (!h || !tk) { setConnError("host + token required"); return; }
-    try { localStorage.setItem(LS_HOST, h); } catch { /* private mode: session-only */ }
+    if (!h || !tk) {
+      setConnError("host + token required");
+      return;
+    }
+    try {
+      localStorage.setItem(LS_HOST, h);
+    } catch {
+      /* private mode: session-only */
+    }
     // round-124: in proxy mode never persist the token — the vale_pt cookie
     // is the credential there; persisting the plugin token to console-origin
     // localStorage is a plaintext 30-day device-control credential readable
     // by any console-origin script. Same-origin (LAN) mode keeps it.
     const isProxy = /\/proxy\/panel/.test(location.pathname);
-    if (!isProxy) { try { localStorage.setItem(LS_TOKEN, tk); } catch { /* session-only */ } }
-    initTransport(h, tk, () => { setConnected(false); setConnError("session expired — re-enter token"); });
+    if (!isProxy) {
+      try {
+        localStorage.setItem(LS_TOKEN, tk);
+      } catch {
+        /* session-only */
+      }
+    }
+    initTransport(h, tk, () => {
+      setConnected(false);
+      setConnError("session expired — re-enter token");
+    });
     setConnected(true);
     setConnError("");
   }
@@ -168,15 +237,37 @@ export function App() {
   if (!connected) {
     return (
       <div id="conn-form">
-        <div className="conn-brand"><BrandMark size={44} /></div>
+        <div className="conn-brand">
+          <BrandMark size={44} />
+        </div>
         <h1>Vale Agent</h1>
         <label htmlFor="host">Device hostname</label>
-        <input id="host" value={host} onChange={(e) => setHost(e.target.value)} placeholder="device.example.com" autoComplete="off" />
+        <input
+          id="host"
+          value={host}
+          onChange={(e) => setHost(e.target.value)}
+          placeholder="device.example.com"
+          autoComplete="off"
+        />
         <label htmlFor="token">Auth token</label>
-        <input id="token" type="password" value={token} onChange={(e) => setToken(e.target.value)} placeholder="Bearer token from config.yaml" autoComplete="off" />
+        <input
+          id="token"
+          type="password"
+          value={token}
+          onChange={(e) => setToken(e.target.value)}
+          placeholder="Bearer token from config.yaml"
+          autoComplete="off"
+        />
         <button onClick={connect}>Connect</button>
-        <div className="hint">Credentials stay in this browser (localStorage); they are never sent elsewhere.</div>
-        {connError && <div id="conn-status" className="error">{connError}</div>}
+        <div className="hint">
+          Credentials stay in this browser (localStorage); they are never sent
+          elsewhere.
+        </div>
+        {connError && (
+          <div id="conn-status" className="error">
+            {connError}
+          </div>
+        )}
       </div>
     );
   }
@@ -188,6 +279,7 @@ export function App() {
     onClose: sessions.closeSession,
     onExport: sessions.exportSession,
     onViewChange: changeView,
+    sessionViews,
     onSetControl: sessions.setControl,
     onSetApproval: sessions.setApproval,
     onDecideApproval: sessions.decideApproval,
@@ -218,12 +310,18 @@ export function App() {
     return (
       <DesktopShell
         {...shared}
+        /* App OWNS the view map and the shortcut that toggles it; the shell renders
+           from it. Passing it is what makes Ctrl+Shift+Y do something. */
+        sessionViews={sessionViews}
         onNewSession={(kind, target, extra) => {
-          if (kind === "pty") sessions.openSession("pty", target ?? "").catch(() => {});
+          if (kind === "pty")
+            sessions.openSession("pty", target ?? "").catch(() => {});
           else if (kind === "browser") openBrowserSession();
           else if (kind === "ssh" || kind === "serial") setModalKind(kind);
         }}
-        onConnConnect={(kind, target, extra) => sessions.openSession(kind, target, extra)}
+        onConnConnect={(kind, target, extra) =>
+          sessions.openSession(kind, target, extra)
+        }
         connModal={modalKind}
         onConnClose={() => setModalKind(null)}
         status={sessions.status}
@@ -244,7 +342,9 @@ export function App() {
       sseState={sseState}
       connModal={modalKind}
       onConnClose={() => setModalKind(null)}
-      onConnConnect={(kind, target, extra) => sessions.openSession(kind, target, extra)}
+      onConnConnect={(kind, target, extra) =>
+        sessions.openSession(kind, target, extra)
+      }
     />
   );
 }

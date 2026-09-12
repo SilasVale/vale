@@ -17,9 +17,24 @@ vi.mock("../../lib/api", async (importOriginal) => ({
 }));
 
 function sessions(): Session[] {
-  return [{
-    sid: "s1", label: "shell", kind: "pty", closed: false, savedOnly: false,
-    active: true, firstSeenAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, plan: [], }];
+  return [
+    {
+      sid: "s1",
+      label: "shell",
+      kind: "pty",
+      closed: false,
+      savedOnly: false,
+      active: true,
+      firstSeenAt: Date.now(),
+      closedAt: null,
+      heldByHuman: false,
+      approvalRequired: false,
+      pendingApproval: null,
+      approvalGrants: [],
+      goal: null,
+      plan: [],
+    },
+  ];
 }
 
 const baseProps = {
@@ -29,13 +44,22 @@ const baseProps = {
   onClose: vi.fn(),
   onExport: vi.fn(),
   onViewChange: vi.fn(),
+  sessionViews: {} as Record<string, "terminal" | "trajectory">,
   onSetControl: vi.fn(() => Promise.resolve(false)),
   onSetApproval: vi.fn(() => Promise.resolve(false)),
   onDecideApproval: vi.fn(() => Promise.resolve(true)),
   onRevokeGrants: vi.fn(() => Promise.resolve([])),
   onSetGoal: vi.fn(() => Promise.resolve(null)),
   registerWrite: vi.fn(() => vi.fn()),
-  plugins: { rows: [], specLoaded: false, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any,
+  plugins: {
+    rows: [],
+    specLoaded: false,
+    loadError: "",
+    busy: null,
+    log: [],
+    start: vi.fn(),
+    stop: vi.fn(),
+  } as any,
   onNewSession: vi.fn(),
   onConnConnect: vi.fn(() => Promise.resolve("s1")),
   connModal: null,
@@ -49,7 +73,13 @@ const baseProps = {
 describe("Shell", () => {
   it("renders three columns for panel density", () => {
     const { container } = render(
-      <Shell density="panel" iconRail={<div>rail</div>} contextRail={<div>ctx</div>} canvas={<div>canvas</div>} statusBar={<div>status</div>} />,
+      <Shell
+        density="panel"
+        iconRail={<div>rail</div>}
+        contextRail={<div>ctx</div>}
+        canvas={<div>canvas</div>}
+        statusBar={<div>status</div>}
+      />,
     );
     expect(container.querySelector("#app-shell")).toBeTruthy();
     expect(container.querySelector("#icon-rail")).toBeTruthy();
@@ -59,7 +89,11 @@ describe("Shell", () => {
 
   it("renders desktop-shell layout for desktop density without context rail", () => {
     const { container } = render(
-      <Shell density="desktop" iconRail={<div>rail</div>} canvas={<div>canvas</div>} />,
+      <Shell
+        density="desktop"
+        iconRail={<div>rail</div>}
+        canvas={<div>canvas</div>}
+      />,
     );
     expect(container.querySelector(".desktop-shell")).toBeTruthy();
     expect(container.querySelector("#context-rail")).toBeNull();
@@ -71,14 +105,25 @@ describe("DesktopShell", () => {
   it("switches between all seven pages via the rail", () => {
     render(<DesktopShell {...baseProps} />);
     // Default page: Terminal (the header title marks the current page).
-    expect(document.querySelector(".desktop-header-title")?.textContent).toContain("Terminal");
+    expect(
+      document.querySelector(".desktop-header-title")?.textContent,
+    ).toContain("Terminal");
     // Every page, archive and activity included: the desktop density must
     // expose the same page set as the panel's rail (Shell.PAGES is the shared
     // contract), and the archive page must mount here — the device's recorded
     // sessions are the one thing reachable with no live session at all.
-    for (const label of ["Archive", "Activity", "Browser", "Memory", "Plugins", "Settings"]) {
+    for (const label of [
+      "Archive",
+      "Activity",
+      "Browser",
+      "Memory",
+      "Plugins",
+      "Settings",
+    ]) {
       fireEvent.click(screen.getByTitle(label));
-      expect(document.querySelector(".desktop-header-title")?.textContent).toContain(label);
+      expect(
+        document.querySelector(".desktop-header-title")?.textContent,
+      ).toContain(label);
     }
   });
 
@@ -89,30 +134,70 @@ describe("DesktopShell", () => {
     expect(document.querySelectorAll(".desktop-new .btn-ghost").length).toBe(0);
   });
 
+  it("RENDERS the view App owns — the shadow copy is what made Ctrl+Shift+Y a no-op", () => {
+    // `sessionViews` is a PROP, not local state. When this shell kept its own copy,
+    // App's copy was write-only: the shortcut and PathView's "jump to step" both wrote
+    // it and NOTHING rendered from it. This test fails the moment a local copy returns,
+    // because a local copy cannot see this prop.
+    const { container } = render(
+      <DesktopShell {...baseProps} sessionViews={{ s1: "trajectory" }} />,
+    );
+    // `sessionView === "trajectory"` hides the terminal container and mounts the
+    // trajectory body — that is the observable effect of the prop being READ.
+    expect(
+      container.querySelector("#desktop-term-container")?.className,
+      "the terminal container must be hidden while the trajectory view is active",
+    ).toBe("hidden");
+    // And the header switch reflects the SAME value rather than the shell's own idea
+    // of the view (`role="tab"` + `aria-selected`, per ViewSwitch).
+    const selected = [
+      ...container.querySelectorAll('.desktop-view-switch [role="tab"]'),
+    ]
+      .filter((b) => b.getAttribute("aria-selected") === "true")
+      .map((b) => b.textContent?.trim());
+    expect(selected).toEqual(["Trajectory"]);
+  });
+
   it("shows the device state from sseState (and never a false IDLE)", () => {
     // The dot carries the DEVICE state now (off / idle / working), not just
     // connectivity — see useDeviceActivity. A dropped stream must not read as a
     // healthy idle machine, so "down" has its own state rather than merely
     // lacking the ok class.
     const { container } = render(<DesktopShell {...baseProps} />);
-    const dot = () => container.querySelector(".desktop-rail-status")!.getAttribute("data-state");
+    const dot = () =>
+      container
+        .querySelector(".desktop-rail-status")!
+        .getAttribute("data-state");
     expect(dot()).toBe("idle");
-    const { container: c2 } = render(<DesktopShell {...baseProps} sseState="down" />);
-    const dot2 = () => c2.querySelector(".desktop-rail-status")!.getAttribute("data-state");
+    const { container: c2 } = render(
+      <DesktopShell {...baseProps} sseState="down" />,
+    );
+    const dot2 = () =>
+      c2.querySelector(".desktop-rail-status")!.getAttribute("data-state");
     expect(dot2()).toBe("off");
   });
 
   it("renders the SSH connection modal when connModal is set (regression: desktop shell had no ConnModal mount — SSH/Serial buttons were dead)", () => {
-    const { container } = render(<DesktopShell {...baseProps} connModal="ssh" />);
+    const { container } = render(
+      <DesktopShell {...baseProps} connModal="ssh" />,
+    );
     expect(container.querySelector("#conn-modal")).toBeTruthy();
-    expect(container.querySelector(".modal-card h2")?.textContent).toBe("New SSH");
-    const { container: c2 } = render(<DesktopShell {...baseProps} connModal="serial" />);
+    expect(container.querySelector(".modal-card h2")?.textContent).toBe(
+      "New SSH",
+    );
+    const { container: c2 } = render(
+      <DesktopShell {...baseProps} connModal="serial" />,
+    );
     expect(c2.querySelector(".modal-card h2")?.textContent).toBe("New Serial");
   });
 
   it("status strip shows vitals from /api/status polling (stage-n vitals)", async () => {
     (callApi as any).mockResolvedValueOnce({
-      version: "1.0.145", uptime_secs: 95, live_sessions: 1, cpu_pct: 12.4, mem_pct: 48.9,
+      version: "1.0.145",
+      uptime_secs: 95,
+      live_sessions: 1,
+      cpu_pct: 12.4,
+      mem_pct: 48.9,
     });
     render(<DesktopShell {...baseProps} />);
     const el = await waitFor(() => {
@@ -128,17 +213,34 @@ describe("DesktopShell", () => {
   });
 
   it("status strip prefers the npm release field over the Cargo protocol version", async () => {
-    (callApi as any).mockResolvedValueOnce({ version: "1.0.145", release: "1.2.304" });
+    (callApi as any).mockResolvedValueOnce({
+      version: "1.0.145",
+      release: "1.2.304",
+    });
     render(<DesktopShell {...baseProps} />);
-    await waitFor(() => expect(document.querySelector(".desktop-status-msg")?.textContent).toContain("v1.2.304"));
-    expect(document.querySelector(".desktop-status-msg")?.textContent).not.toContain("v1.0.145");
+    await waitFor(() =>
+      expect(
+        document.querySelector(".desktop-status-msg")?.textContent,
+      ).toContain("v1.2.304"),
+    );
+    expect(
+      document.querySelector(".desktop-status-msg")?.textContent,
+    ).not.toContain("v1.0.145");
   });
 
   it("status strip omits vitals when the fields are absent (graceful degradation)", async () => {
     (callApi as any).mockResolvedValueOnce({ version: "1.0.145" });
     render(<DesktopShell {...baseProps} />);
-    await waitFor(() => expect(document.querySelector(".desktop-status-msg")?.textContent).toContain("v1.0.145"));
-    expect(document.querySelector(".desktop-status-msg")?.textContent).not.toContain("CPU");
-    expect(document.querySelector(".desktop-status-msg")?.textContent).not.toContain("MEM");
+    await waitFor(() =>
+      expect(
+        document.querySelector(".desktop-status-msg")?.textContent,
+      ).toContain("v1.0.145"),
+    );
+    expect(
+      document.querySelector(".desktop-status-msg")?.textContent,
+    ).not.toContain("CPU");
+    expect(
+      document.querySelector(".desktop-status-msg")?.textContent,
+    ).not.toContain("MEM");
   });
 });

@@ -21,16 +21,22 @@ describe("SessionControl", () => {
   it("offers to take control when the AI holds the session", () => {
     render(<SessionControl held={false} onSet={vi.fn()} />);
     expect(screen.getByText("Take control")).toBeTruthy();
-    expect(screen.getByRole("button").getAttribute("aria-pressed")).toBe("false");
+    expect(screen.getByRole("button").getAttribute("aria-pressed")).toBe(
+      "false",
+    );
   });
 
   it("offers to hand back when a person holds it, and says so", () => {
     render(<SessionControl held={true} onSet={vi.fn()} />);
     expect(screen.getByText("Hand back")).toBeTruthy();
-    expect(screen.getByRole("button").getAttribute("aria-pressed")).toBe("true");
+    expect(screen.getByRole("button").getAttribute("aria-pressed")).toBe(
+      "true",
+    );
     // The tooltip is where the CONSEQUENCE is stated — a held session makes the
     // agent refuse the AI's commands, which is the part a user needs to know.
-    expect(screen.getByRole("button").getAttribute("title")).toMatch(/refused/i);
+    expect(screen.getByRole("button").getAttribute("title")).toMatch(
+      /refused/i,
+    );
   });
 
   it("asks for the OPPOSITE of the current state", async () => {
@@ -62,7 +68,12 @@ describe("SessionControl", () => {
 
   it("will not fire twice while a change is in flight", async () => {
     let release: (v: boolean) => void = () => {};
-    const onSet = vi.fn(() => new Promise<boolean>((res) => { release = res; }));
+    const onSet = vi.fn(
+      () =>
+        new Promise<boolean>((res) => {
+          release = res;
+        }),
+    );
     render(<SessionControl held={false} onSet={onSet} />);
     const btn = screen.getByRole("button");
     fireEvent.click(btn);
@@ -70,13 +81,17 @@ describe("SessionControl", () => {
     fireEvent.click(btn);
     expect(onSet).toHaveBeenCalledTimes(1);
     release(true);
-    await waitFor(() => expect((btn as HTMLButtonElement).disabled).toBe(false));
+    await waitFor(() =>
+      expect((btn as HTMLButtonElement).disabled).toBe(false),
+    );
   });
 
   it("carries the hold as a SHAPE, not only a colour", () => {
     // prefers-reduced-motion removes transitions, and colour alone is a single
     // channel — the same reasoning as the discrete state palette.
-    const { container, rerender } = render(<SessionControl held={false} onSet={vi.fn()} />);
+    const { container, rerender } = render(
+      <SessionControl held={false} onSet={vi.fn()} />,
+    );
     const dot = () => container.querySelector(".sc-dot")!;
     expect(dot().getAttribute("data-state")).toBe("ai");
     rerender(<SessionControl held={true} onSet={vi.fn()} />);
@@ -88,11 +103,22 @@ describe("SessionControl", () => {
     // as small text on --accent-soft — under AA. The held state is the most
     // consequential one on this control, so it must not be the least readable.
     const built = readFileSync(
-      path.join(path.dirname(fileURLToPath(import.meta.url)), "..", "..", "..", "..", "panel", "panel.css"),
+      path.join(
+        path.dirname(fileURLToPath(import.meta.url)),
+        "..",
+        "..",
+        "..",
+        "..",
+        "panel",
+        "panel.css",
+      ),
       "utf8",
     );
     const block = built.match(/#session-control\.held\s*\{([^}]*)\}/);
-    expect(block, "#session-control.held missing from the built stylesheet").not.toBeNull();
+    expect(
+      block,
+      "#session-control.held missing from the built stylesheet",
+    ).not.toBeNull();
     expect(block![1]).toMatch(/color\s*:\s*var\(--accent-on-soft\)/);
     expect(block![1]).not.toMatch(/color\s*:\s*var\(--accent-ink\)/);
   });

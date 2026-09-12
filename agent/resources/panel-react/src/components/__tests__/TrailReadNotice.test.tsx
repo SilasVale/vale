@@ -26,9 +26,10 @@ describe("an empty trail says only what the read supports", () => {
     ] as const) {
       const { container, unmount } = render(el);
       const text = container.textContent!;
-      expect(text, `${name} must not claim the session ran nothing`).not.toContain(
-        "has not run a command",
-      );
+      expect(
+        text,
+        `${name} must not claim the session ran nothing`,
+      ).not.toContain("has not run a command");
       expect(text).not.toContain("No commands in this session yet");
       expect(text.toLowerCase(), `${name} must say the read failed`).toMatch(
         /could not be read/,
@@ -45,11 +46,14 @@ describe("an empty trail says only what the read supports", () => {
     ] as const) {
       const { container, unmount } = render(el);
       const text = container.textContent!;
-      expect(text, `${name} must not claim the session ran nothing`).not.toContain(
-        "has not run a command",
-      );
+      expect(
+        text,
+        `${name} must not claim the session ran nothing`,
+      ).not.toContain("has not run a command");
       expect(text).not.toContain("No commands in this session yet");
-      expect(text.toLowerCase(), `${name} must say it is reading`).toMatch(/reading/);
+      expect(text.toLowerCase(), `${name} must say it is reading`).toMatch(
+        /reading/,
+      );
       unmount();
     }
   });
@@ -58,9 +62,13 @@ describe("an empty trail says only what the read supports", () => {
     // The distinction must not swallow the real case — an empty session whose
     // read worked is exactly what the original line is for.
     const { container } = render(<PathView events={none} readState="ok" />);
-    expect(container.textContent).toContain("This session has not run a command");
+    expect(container.textContent).toContain(
+      "This session has not run a command",
+    );
     const t = render(<TrajectoryView events={none} readState="ok" />);
-    expect(t.container.textContent).toContain("No commands in this session yet");
+    expect(t.container.textContent).toContain(
+      "No commands in this session yet",
+    );
   });
 
   it("ONE wording, not three", () => {
@@ -68,7 +76,9 @@ describe("an empty trail says only what the read supports", () => {
     // repo's surfaces come to disagree about what they are saying, so the words
     // live in lib/trailRead.ts and every view asks for them.
     expect(trailReadNotice("ok")).toBeNull();
-    expect(trailReadNotice("reading")!.text).toBe("Reading this session's audit trail…");
+    expect(trailReadNotice("reading")!.text).toBe(
+      "Reading this session's audit trail…",
+    );
     const failed = trailReadNotice("unreadable")!;
     expect(failed.failed).toBe(true);
     expect(failed.text).toContain("could not be read");

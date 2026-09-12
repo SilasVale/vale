@@ -18,7 +18,11 @@ const sess = (over: Record<string, unknown> = {}) => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
+  pendingApproval: null,
+  approvalGrants: [],
+  goal: null,
+  plan: [],
+  ...over,
 });
 
 afterEach(() => {
@@ -28,20 +32,40 @@ afterEach(() => {
 describe("StatusBar", () => {
   it("counts live sessions with singular/plural, hides at zero", () => {
     const { rerender } = render(
-      <StatusBar sessions={[sess(), sess({ sid: "s2" }), sess({ sid: "s3", closed: true })]} status="ok" sseState="connected" />,
+      <StatusBar
+        sessions={[
+          sess(),
+          sess({ sid: "s2" }),
+          sess({ sid: "s3", closed: true }),
+        ]}
+        status="ok"
+        sseState="connected"
+      />,
     );
     expect(screen.getByText("2 sessions")).toBeTruthy();
-    rerender(<StatusBar sessions={[sess()]} status="ok" sseState="connected" />);
+    rerender(
+      <StatusBar sessions={[sess()]} status="ok" sseState="connected" />,
+    );
     expect(screen.getByText("1 session")).toBeTruthy();
-    rerender(<StatusBar sessions={[sess({ closed: true })]} status="ok" sseState="connected" />);
+    rerender(
+      <StatusBar
+        sessions={[sess({ closed: true })]}
+        status="ok"
+        sseState="connected"
+      />,
+    );
     expect(screen.getByText("0 sessions").className).toContain("hidden");
   });
 
   it("marks error statuses; shows the reconnect chip only when down", () => {
-    const { rerender } = render(<StatusBar sessions={[]} status="error: boom" sseState="down" />);
+    const { rerender } = render(
+      <StatusBar sessions={[]} status="error: boom" sseState="down" />,
+    );
     expect(screen.getByText("error: boom").className).toContain("error");
     expect(screen.getByText("reconnecting…")).toBeTruthy();
-    rerender(<StatusBar sessions={[]} status="open failed: x" sseState="connected" />);
+    rerender(
+      <StatusBar sessions={[]} status="open failed: x" sseState="connected" />,
+    );
     expect(screen.getByText("open failed: x").className).toContain("error");
     rerender(<StatusBar sessions={[]} status="ok" sseState="connecting" />);
     expect(screen.queryByText("reconnecting…")).toBeNull();
@@ -62,33 +86,55 @@ describe("BrowserPage", () => {
       onNav: () => () => {},
       onGone: () => () => {},
     });
-    vi.stubGlobal("fetch", vi.fn(() => Promise.reject(new Error("offline"))));
+    vi.stubGlobal(
+      "fetch",
+      vi.fn(() => Promise.reject(new Error("offline"))),
+    );
     render(<BrowserPage token="t" />);
     expect(screen.getByPlaceholderText(/Enter a URL/)).toBeTruthy();
   });
 
   it("explains the desktop-app requirement without a bridge", () => {
     render(<BrowserPage token="t" />);
-    expect(screen.getByText("The browser needs the Vale desktop app")).toBeTruthy();
+    expect(
+      screen.getByText("The browser needs the Vale desktop app"),
+    ).toBeTruthy();
   });
 });
 
 describe("StatusBar — the device-level waiting chip", () => {
-  const question = { id: "g1", command: "reload", expiresAtMs: Date.now() + 60_000 };
+  const question = {
+    id: "g1",
+    command: "reload",
+    expiresAtMs: Date.now() + 60_000,
+  };
 
   it("counts what is waiting, and renders NOTHING at zero", () => {
     const { rerender } = render(
-      <StatusBar sessions={[sess({ approvalRequired: true })]} status="ok" sseState="connected" />,
+      <StatusBar
+        sessions={[sess({ approvalRequired: true })]}
+        status="ok"
+        sseState="connected"
+      />,
     );
     // Armed is a posture, not a question: a chip here would be permanent noise.
     expect(screen.queryByText(/waiting/)).toBeNull();
 
-    rerender(<StatusBar sessions={[sess({ pendingApproval: question })]} status="ok" sseState="connected" />);
+    rerender(
+      <StatusBar
+        sessions={[sess({ pendingApproval: question })]}
+        status="ok"
+        sseState="connected"
+      />,
+    );
     expect(screen.getByText("1 waiting")).toBeTruthy();
 
     rerender(
       <StatusBar
-        sessions={[sess({ pendingApproval: question }), sess({ sid: "s2", pendingApproval: question })]}
+        sessions={[
+          sess({ pendingApproval: question }),
+          sess({ sid: "s2", pendingApproval: question }),
+        ]}
         status="ok"
         sseState="connected"
       />,
@@ -96,13 +142,19 @@ describe("StatusBar — the device-level waiting chip", () => {
     expect(screen.getByText("2 waiting")).toBeTruthy();
 
     // Never "0 waiting": a permanent zero is chrome people stop reading.
-    rerender(<StatusBar sessions={[sess()]} status="ok" sseState="connected" />);
+    rerender(
+      <StatusBar sessions={[sess()]} status="ok" sseState="connected" />,
+    );
     expect(screen.queryByText(/waiting/)).toBeNull();
   });
 
   it("does not count a closed tombstone's question", () => {
     render(
-      <StatusBar sessions={[sess({ closed: true, pendingApproval: question })]} status="ok" sseState="connected" />,
+      <StatusBar
+        sessions={[sess({ closed: true, pendingApproval: question })]}
+        status="ok"
+        sseState="connected"
+      />,
     );
     expect(screen.queryByText(/waiting/)).toBeNull();
   });

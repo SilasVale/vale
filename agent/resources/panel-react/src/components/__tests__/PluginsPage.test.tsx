@@ -9,7 +9,9 @@ import type { usePlugins } from "../../hooks/usePlugins";
 
 type Plugins = ReturnType<typeof usePlugins>;
 
-const row = (over: Partial<Plugins["rows"][number]> = {}): Plugins["rows"][number] => ({
+const row = (
+  over: Partial<Plugins["rows"][number]> = {},
+): Plugins["rows"][number] => ({
   name: "terminal",
   displayName: "Terminal",
   description: "PTY/SSH/serial sessions",
@@ -42,22 +44,42 @@ describe("PluginsPage", () => {
   it("search filters rows AND the count pill (round-161)", () => {
     render(
       <PluginsPage
-        plugins={plugins({ rows: [row(), row({ name: "memory", displayName: "Memory", description: "KB" })] })}
+        plugins={plugins({
+          rows: [
+            row(),
+            row({ name: "memory", displayName: "Memory", description: "KB" }),
+          ],
+        })}
       />,
     );
     expect(screen.getByText("2")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Search plugins"), { target: { value: "mem" } });
+    fireEvent.change(screen.getByLabelText("Search plugins"), {
+      target: { value: "mem" },
+    });
     expect(screen.queryByText("Terminal")).toBeNull();
     expect(screen.getByText("Memory")).toBeTruthy();
     expect(screen.getByText("1")).toBeTruthy();
-    fireEvent.change(screen.getByLabelText("Search plugins"), { target: { value: "zzz" } });
+    fireEvent.change(screen.getByLabelText("Search plugins"), {
+      target: { value: "zzz" },
+    });
     expect(screen.getByText("No plugins match “zzz”")).toBeTruthy();
   });
 
   it("tool-count singular/plural + enabled pill", () => {
     render(
       <PluginsPage
-        plugins={plugins({ rows: [row({ toolCount: 1 }), row({ name: "x", displayName: "X", description: "", toolCount: 2, enabled: false })] })}
+        plugins={plugins({
+          rows: [
+            row({ toolCount: 1 }),
+            row({
+              name: "x",
+              displayName: "X",
+              description: "",
+              toolCount: 2,
+              enabled: false,
+            }),
+          ],
+        })}
       />,
     );
     expect(screen.getByText("1 tool")).toBeTruthy();
@@ -73,12 +95,21 @@ describe("PluginsPage", () => {
   it("playwright card: pending muted, stopped enables Start, running enables Stop + port", () => {
     const stopped = plugins({
       playwrightRow: {
-        name: "playwright", displayName: "Playwright", description: "",
-        enabled: true, state: "warn", stateLabel: "Stopped", playwright: { running: false },
+        name: "playwright",
+        displayName: "Playwright",
+        description: "",
+        enabled: true,
+        state: "warn",
+        stateLabel: "Stopped",
+        playwright: { running: false },
       },
     });
-    const { rerender } = render(<PluginsPage plugins={plugins({ playwrightRow: null })} />);
-    expect(screen.getByText("bundled playwright-mcp · Chromium (task-hosted)")).toBeTruthy();
+    const { rerender } = render(
+      <PluginsPage plugins={plugins({ playwrightRow: null })} />,
+    );
+    expect(
+      screen.getByText("bundled playwright-mcp · Chromium (task-hosted)"),
+    ).toBeTruthy();
     expect(screen.getByText("Start").closest("button")!.disabled).toBe(true);
     rerender(<PluginsPage plugins={stopped} />);
     expect(screen.getByText("Start").closest("button")!.disabled).toBe(false);
@@ -88,9 +119,17 @@ describe("PluginsPage", () => {
       <PluginsPage
         plugins={plugins({
           playwrightRow: {
-            name: "playwright", displayName: "Playwright", description: "",
-            enabled: true, state: "ongoing", stateLabel: "Running",
-            playwright: { running: true, port: 9229, started_at: Date.now() - 65_000 },
+            name: "playwright",
+            displayName: "Playwright",
+            description: "",
+            enabled: true,
+            state: "ongoing",
+            stateLabel: "Running",
+            playwright: {
+              running: true,
+              port: 9229,
+              started_at: Date.now() - 65_000,
+            },
           },
         })}
       />,
@@ -102,7 +141,9 @@ describe("PluginsPage", () => {
   });
 
   it("busy labels + log lines with verbatim errors", () => {
-    const { rerender } = render(<PluginsPage plugins={plugins({ busy: "start" })} />);
+    const { rerender } = render(
+      <PluginsPage plugins={plugins({ busy: "start" })} />,
+    );
     expect(screen.getByText("Starting…")).toBeTruthy();
     rerender(
       <PluginsPage
@@ -116,7 +157,9 @@ describe("PluginsPage", () => {
       />,
     );
     expect(screen.getByText("spawn ENOENT")).toBeTruthy();
-    expect(screen.getByText("spawn ENOENT").closest("p")!.className).toContain("error");
+    expect(screen.getByText("spawn ENOENT").closest("p")!.className).toContain(
+      "error",
+    );
   });
 });
 
@@ -140,7 +183,13 @@ describe("PluginsPage — the production instance reports no start time", () => 
     enabled: true,
     state: "ongoing" as const,
     stateLabel: "Running",
-    playwright: { running: true, port: 9229, external: true, healthy: true, ...over },
+    playwright: {
+      running: true,
+      port: 9229,
+      external: true,
+      healthy: true,
+      ...over,
+    },
   });
 
   it("says the uptime was not reported, and never 'up 0s'", () => {
@@ -148,13 +197,21 @@ describe("PluginsPage — the production instance reports no start time", () => 
       <PluginsPage
         plugins={plugins({
           playwrightRow: pw() as Plugins["playwrightRow"],
-          playwright: { running: true, port: 9229, external: true, healthy: true },
+          playwright: {
+            running: true,
+            port: 9229,
+            external: true,
+            healthy: true,
+          },
         })}
       />,
     );
     const text = document.body.textContent!;
     expect(text).toContain("port 9229");
-    expect(text, "the panel's own clock is not the instance's uptime").not.toContain("up 0s");
+    expect(
+      text,
+      "the panel's own clock is not the instance's uptime",
+    ).not.toContain("up 0s");
     expect(text).toContain("task-hosted (uptime not reported)");
   });
 
@@ -163,8 +220,15 @@ describe("PluginsPage — the production instance reports no start time", () => 
     render(
       <PluginsPage
         plugins={plugins({
-          playwrightRow: pw({ external: false, started_at: Date.now() - 3 * 60 * 60 * 1000 }) as Plugins["playwrightRow"],
-          playwright: { running: true, port: 9229, started_at: Date.now() - 3 * 60 * 60 * 1000 },
+          playwrightRow: pw({
+            external: false,
+            started_at: Date.now() - 3 * 60 * 60 * 1000,
+          }) as Plugins["playwrightRow"],
+          playwright: {
+            running: true,
+            port: 9229,
+            started_at: Date.now() - 3 * 60 * 60 * 1000,
+          },
         })}
       />,
     );

@@ -26,17 +26,28 @@ interface Props {
   onClose: (sid: string) => void;
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
+  /** App owns the view map; this shell only renders from it (see TerminalWorkspace). */
+  sessionViews: Record<string, SessionView>;
   /** Hand the session's keyboard to a person / back to the AI. */
   onSetControl: (sid: string, human: boolean) => Promise<unknown>;
   /** Arm/disarm the approval gate for a session. */
   onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
   /** Answer a pending approval request (`grant` also remembers it). */
-  onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
+  onDecideApproval: (
+    sid: string,
+    id: string,
+    approve: boolean,
+    grant?: boolean,
+  ) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
   /** State the session's goal, or clear it with an empty string. */
   onSetGoal: (sid: string, goal: string) => Promise<unknown>;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
+  registerWrite: (
+    sid: string,
+    fn: (bytes: Uint8Array) => void,
+    getRendered: () => number,
+  ) => (() => void) & { unregister?: (sid: string) => void };
   onNewSession: (kind: "pty" | "ssh" | "serial" | "browser") => void;
   status: string;
   sseState: string;
@@ -45,7 +56,11 @@ interface Props {
   cmdEvents: CommandEvents;
   connModal: "ssh" | "serial" | null;
   onConnClose: () => void;
-  onConnConnect: (kind: "ssh" | "serial", target: string, extra: Record<string, unknown>) => Promise<unknown>;
+  onConnConnect: (
+    kind: "ssh" | "serial",
+    target: string,
+    extra: Record<string, unknown>,
+  ) => Promise<unknown>;
 }
 
 export function PanelApp(props: Props) {
@@ -64,16 +79,18 @@ export function PanelApp(props: Props) {
             pendingCount={pendingApprovalCount(props.sessions)}
           />
         }
-        contextRail={page === "terminal" || page === "plugins" ? (
-          <ContextRail
-            page={page}
-            sessions={props.sessions}
-            activeSid={props.activeSid}
-            onActivate={props.onActivate}
-            onNewSession={props.onNewSession}
-            plugins={props.plugins}
-          />
-        ) : undefined}
+        contextRail={
+          page === "terminal" || page === "plugins" ? (
+            <ContextRail
+              page={page}
+              sessions={props.sessions}
+              activeSid={props.activeSid}
+              onActivate={props.onActivate}
+              onNewSession={props.onNewSession}
+              plugins={props.plugins}
+            />
+          ) : undefined
+        }
         statusBar={
           <StatusBar
             sessions={props.sessions}
@@ -87,7 +104,9 @@ export function PanelApp(props: Props) {
               <ConnModal
                 kind={props.connModal}
                 onClose={props.onConnClose}
-                onConnect={(target, extra) => props.onConnConnect(props.connModal!, target, extra)}
+                onConnect={(target, extra) =>
+                  props.onConnConnect(props.connModal!, target, extra)
+                }
               />
             )}
             {page === "terminal" && (
@@ -98,6 +117,7 @@ export function PanelApp(props: Props) {
                 onClose={props.onClose}
                 onExport={props.onExport}
                 onViewChange={props.onViewChange}
+                sessionViews={props.sessionViews}
                 onSetControl={props.onSetControl}
                 onSetApproval={props.onSetApproval}
                 onDecideApproval={props.onDecideApproval}
@@ -115,7 +135,9 @@ export function PanelApp(props: Props) {
             {page === "browser" && <BrowserPage token={props.token} />}
             {page === "memory" && <MemoryPage />}
             {page === "plugins" && <PluginsPage plugins={props.plugins} />}
-            {page === "settings" && <SettingsPage onOpenMemory={() => setPage("memory")} />}
+            {page === "settings" && (
+              <SettingsPage onOpenMemory={() => setPage("memory")} />
+            )}
           </div>
         }
       />

@@ -18,9 +18,15 @@ beforeEach(() => {
 });
 
 function fill(host: string, user: string) {
-  fireEvent.change(screen.getByPlaceholderText("host.example.com"), { target: { value: host } });
-  fireEvent.change(screen.getByPlaceholderText("22"), { target: { value: "22" } });
-  fireEvent.change(screen.getByPlaceholderText("user"), { target: { value: user } });
+  fireEvent.change(screen.getByPlaceholderText("host.example.com"), {
+    target: { value: host },
+  });
+  fireEvent.change(screen.getByPlaceholderText("22"), {
+    target: { value: "22" },
+  });
+  fireEvent.change(screen.getByPlaceholderText("user"), {
+    target: { value: user },
+  });
 }
 
 describe("ConnModal (ssh)", () => {
@@ -28,9 +34,12 @@ describe("ConnModal (ssh)", () => {
     const onConnect = vi.fn().mockResolvedValue({});
     render(<ConnModal kind="ssh" onClose={() => {}} onConnect={onConnect} />);
     fill("box.example.com", "me");
-    fireEvent.change(screen.getByPlaceholderText("C:\\Users\\me\\.ssh\\id_ed25519"), {
-      target: { value: "C:\\keys\\id_ed25519" },
-    });
+    fireEvent.change(
+      screen.getByPlaceholderText("C:\\Users\\me\\.ssh\\id_ed25519"),
+      {
+        target: { value: "C:\\keys\\id_ed25519" },
+      },
+    );
     fireEvent.click(screen.getByText("Connect"));
     await waitFor(() => expect(onConnect).toHaveBeenCalledTimes(1));
     expect(onConnect).toHaveBeenCalledWith("me@box.example.com:22", {
@@ -52,7 +61,9 @@ describe("ConnModal (ssh)", () => {
     const onConnect = vi.fn().mockResolvedValue({});
     render(<ConnModal kind="ssh" onClose={() => {}} onConnect={onConnect} />);
     fill("box.example.com", "root");
-    const passInput = screen.getByPlaceholderText("leave empty for keychain") as HTMLInputElement;
+    const passInput = screen.getByPlaceholderText(
+      "leave empty for keychain",
+    ) as HTMLInputElement;
     fireEvent.change(passInput, { target: { value: "s3cret" } });
     expect(passInput.value).toBe("s3cret");
     fireEvent.click(screen.getByText("Connect"));

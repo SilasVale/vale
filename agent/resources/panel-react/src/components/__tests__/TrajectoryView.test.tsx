@@ -68,18 +68,32 @@ describe("TrajectoryView", () => {
       end(6, 0, "marker"),
     ]);
     render(<TrajectoryView events={evs} />);
-    await waitFor(() => expect(screen.getByText("ping apple.com")).toBeTruthy());
-    fireEvent.change(screen.getByPlaceholderText("Filter output…"), { target: { value: "banana" } });
-    await waitFor(() => expect(screen.queryByText("ping apple.com")).toBeNull());
+    await waitFor(() =>
+      expect(screen.getByText("ping apple.com")).toBeTruthy(),
+    );
+    fireEvent.change(screen.getByPlaceholderText("Filter output…"), {
+      target: { value: "banana" },
+    });
+    await waitFor(() =>
+      expect(screen.queryByText("ping apple.com")).toBeNull(),
+    );
     expect(screen.getByText("cat banana.txt")).toBeTruthy();
     expect(screen.getByText(/banana content/)).toBeTruthy();
     // The non-matching round's rows are filtered out of its round too.
-    fireEvent.change(screen.getByPlaceholderText("Filter output…"), { target: { value: "PING" } });
-    await waitFor(() => expect(screen.getByText("ping apple.com")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText("Filter output…"), {
+      target: { value: "PING" },
+    });
+    await waitFor(() =>
+      expect(screen.getByText("ping apple.com")).toBeTruthy(),
+    );
     expect(screen.queryByText(/banana content/)).toBeNull();
     // Clearing restores everything.
-    fireEvent.change(screen.getByPlaceholderText("Filter output…"), { target: { value: "" } });
-    await waitFor(() => expect(screen.getByText("cat banana.txt")).toBeTruthy());
+    fireEvent.change(screen.getByPlaceholderText("Filter output…"), {
+      target: { value: "" },
+    });
+    await waitFor(() =>
+      expect(screen.getByText("cat banana.txt")).toBeTruthy(),
+    );
   });
 
   it("collapse all folds every round; a round head toggles it back", async () => {
@@ -122,7 +136,9 @@ describe("TrajectoryView", () => {
   it("shows the empty state before any events arrive", async () => {
     const evs = mockSession([]);
     render(<TrajectoryView events={evs} />);
-    await waitFor(() => expect(screen.getByText("No commands in this session yet.")).toBeTruthy());
+    await waitFor(() =>
+      expect(screen.getByText("No commands in this session yet.")).toBeTruthy(),
+    );
   });
 });
 
@@ -130,7 +146,12 @@ describe("governance events in the timeline", () => {
   // These carry their whole meaning in `status` (the action) and `text` (what it
   // acted on). The generic fallback prints the bare KIND, which reduced "granted
   // echo" to the word "approval" and dropped the one thing a reader needs.
-  const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
+  const ev = (o: Partial<CommandEvent>): CommandEvent => ({
+    seq: 1,
+    ts: 1000,
+    kind: "output",
+    ...o,
+  });
 
   it("shows an approval action WITH its subject", () => {
     render(
@@ -138,7 +159,13 @@ describe("governance events in the timeline", () => {
         events={[
           ev({ seq: 1, ts: 100, kind: "command/start", command: "echo a" }),
           ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0 }),
-          ev({ seq: 3, ts: 102, kind: "approval", status: "granted", text: "echo" }),
+          ev({
+            seq: 3,
+            ts: 102,
+            kind: "approval",
+            status: "granted",
+            text: "echo",
+          }),
         ]}
       />,
     );
@@ -156,11 +183,19 @@ describe("governance events in the timeline", () => {
       <TrajectoryView
         events={[
           ev({ seq: 1, ts: 100, kind: "approval", status: "armed" }),
-          ev({ seq: 2, ts: 200, kind: "approval", status: "revoked", text: "display" }),
+          ev({
+            seq: 2,
+            ts: 200,
+            kind: "approval",
+            status: "revoked",
+            text: "display",
+          }),
         ]}
       />,
     );
-    const acts = [...document.querySelectorAll(".traj-ev-gov")].map((e) => e.getAttribute("data-action"));
+    const acts = [...document.querySelectorAll(".traj-ev-gov")].map((e) =>
+      e.getAttribute("data-action"),
+    );
     expect(acts).toEqual(["armed", "revoked"]);
   });
 
@@ -173,7 +208,9 @@ describe("governance events in the timeline", () => {
         ]}
       />,
     );
-    const goals = [...document.querySelectorAll(".traj-ev-goal")].map((e) => e.textContent);
+    const goals = [...document.querySelectorAll(".traj-ev-goal")].map(
+      (e) => e.textContent,
+    );
     expect(goals[0]).toContain("provision the ONU");
     // An empty goal is a CLEAR, not a blank row: the field is absent for a clear
     // and a reader must not think the goal is simply missing.
@@ -207,7 +244,9 @@ describe("TrajectoryView — a trimmed trail is not presented as complete", () =
     // not the same as "not trimmed", so the view claims nothing rather than
     // claiming completeness.
     for (const props of [{ firstSeq: 1 }, {}]) {
-      const { container, unmount } = render(<TrajectoryView events={evs} {...props} />);
+      const { container, unmount } = render(
+        <TrajectoryView events={evs} {...props} />,
+      );
       expect(container.querySelector(".traj-trimmed")).toBeNull();
       unmount();
     }

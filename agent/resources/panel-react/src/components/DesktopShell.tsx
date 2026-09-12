@@ -36,6 +36,16 @@ interface Props {
   onClose: (sid: string) => void;
   onExport: (sid: string) => void;
   onViewChange: (sid: string, v: SessionView) => void;
+  /**
+   * The per-session view, OWNED BY App.
+   *
+   * This shell used to keep its own `useState` copy, which made App's copy
+   * write-only: `Ctrl+Shift+Y` (and PathView's "jump to step") wrote App's state and
+   * NOTHING rendered from it, so the shortcut was a no-op with every test green.
+   * There is one owner now — App, because the shortcut hook lives there — and this is
+   * a READ of it.
+   */
+  sessionViews: Record<string, SessionView>;
   /** Hand the session's keyboard to a person / back to the AI. */
   onSetControl: (sid: string, human: boolean) => Promise<unknown>;
   /** Arm/disarm the approval gate for a session. */
@@ -92,6 +102,7 @@ export function DesktopShell({
   onClose,
   onExport,
   onViewChange,
+  sessionViews,
   onSetControl,
   onSetApproval,
   onDecideApproval,
@@ -174,13 +185,10 @@ export function DesktopShell({
     });
     return unsub;
   }, []);
-  // Per-session terminal|trajectory view — mirrored from TerminalWorkspace
-  // (which owns the panel-density copy) so the header toggle stays in sync.
-  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>(
-    {},
-  );
+  // The view comes from App (see the Props comment). The header's own switch still
+  // writes through `onViewChange`, so it keeps working — App's setState re-renders this
+  // shell in the same batch.
   const changeView = (sid: string, v: SessionView) => {
-    setSessionViews((m) => ({ ...m, [sid]: v }));
     onViewChange(sid, v);
   };
   const activeView: SessionView =

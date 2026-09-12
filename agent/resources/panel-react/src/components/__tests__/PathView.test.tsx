@@ -22,11 +22,21 @@
 import { describe, it, expect } from "vitest";
 import { render, screen } from "@testing-library/react";
 import { PathView } from "../PathView";
-import { derivePath, summarizePath, attentionSteps, type PathStep } from "../../lib/path";
+import {
+  derivePath,
+  summarizePath,
+  attentionSteps,
+  type PathStep,
+} from "../../lib/path";
 import { groupRounds } from "../../hooks/useTrajectory";
 import type { CommandEvent } from "../../hooks/useCommandEvents";
 
-const ev = (o: Partial<CommandEvent>): CommandEvent => ({ seq: 1, ts: 1000, kind: "output", ...o });
+const ev = (o: Partial<CommandEvent>): CommandEvent => ({
+  seq: 1,
+  ts: 1000,
+  kind: "output",
+  ...o,
+});
 
 /** A session whose single command carries per-step reasoning. Module-scope so
  *  more than one describe block can use it (the note pin needs it too). */
@@ -41,7 +51,13 @@ function withIntent(extra: Partial<CommandEvent> = {}): CommandEvent[] {
       ...extra,
     }),
     ev({ seq: 3, ts: 201, kind: "output", text: "ONT 0/1 online" }),
-    ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+    ev({
+      seq: 4,
+      ts: 202,
+      kind: "command/end",
+      exit_code: 0,
+      duration_ms: 900,
+    }),
   ];
 }
 
@@ -51,9 +67,21 @@ function session(): CommandEvent[] {
     ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
     ev({ seq: 2, ts: 200, kind: "command/start", command: "display version" }),
     ev({ seq: 3, ts: 201, kind: "output", text: "VERSION 1.2" }),
-    ev({ seq: 4, ts: 202, kind: "command/end", exit_code: 0, duration_ms: 900 }),
+    ev({
+      seq: 4,
+      ts: 202,
+      kind: "command/end",
+      exit_code: 0,
+      duration_ms: 900,
+    }),
     ev({ seq: 5, ts: 300, kind: "command/start", command: "vlan 100" }),
-    ev({ seq: 6, ts: 301, kind: "command/end", exit_code: 1, duration_ms: 200 }),
+    ev({
+      seq: 6,
+      ts: 301,
+      kind: "command/end",
+      exit_code: 1,
+      duration_ms: 200,
+    }),
     ev({ seq: 7, ts: 400, kind: "command/start", command: "display ont info" }),
     ev({ seq: 8, ts: 401, kind: "command/end", reason: "interrupted" }),
     ev({ seq: 9, ts: 500, kind: "command/start", command: "sleep 900" }),
@@ -65,12 +93,45 @@ describe("derivePath", () => {
     const p = derivePath(
       // groupRounds is exercised through the hook elsewhere; feed rounds here.
       [
-        { id: "r-pre", startSeq: null, command: "(session)", startTs: 100, events: [], ended: false, exitCode: null, reason: null, durationMs: null },
-        { id: "r-2", startSeq: 2, command: "display version", startTs: 200, events: [], ended: true, exitCode: 0, reason: null, durationMs: 900 },
-        { id: "r-5", startSeq: 5, command: "vlan 100", startTs: 300, events: [], ended: true, exitCode: 1, reason: null, durationMs: 200 },
+        {
+          id: "r-pre",
+          startSeq: null,
+          command: "(session)",
+          startTs: 100,
+          events: [],
+          ended: false,
+          exitCode: null,
+          reason: null,
+          durationMs: null,
+        },
+        {
+          id: "r-2",
+          startSeq: 2,
+          command: "display version",
+          startTs: 200,
+          events: [],
+          ended: true,
+          exitCode: 0,
+          reason: null,
+          durationMs: 900,
+        },
+        {
+          id: "r-5",
+          startSeq: 5,
+          command: "vlan 100",
+          startTs: 300,
+          events: [],
+          ended: true,
+          exitCode: 1,
+          reason: null,
+          durationMs: 200,
+        },
       ],
     );
-    expect(p.steps.map((s) => s.command)).toEqual(["display version", "vlan 100"]);
+    expect(p.steps.map((s) => s.command)).toEqual([
+      "display version",
+      "vlan 100",
+    ]);
     expect(p.steps[0].index).toBe(1);
     expect(p.steps[1].index).toBe(2);
     // The session-level preamble is context, not a step along the path.
@@ -79,11 +140,61 @@ describe("derivePath", () => {
 
   it("uses the SAME state derivation as the command cards", () => {
     const p = derivePath([
-      { id: "r-1", startSeq: 1, command: "ok", startTs: 1, events: [], ended: true, exitCode: 0, reason: null, durationMs: 1 },
-      { id: "r-2", startSeq: 2, command: "bad", startTs: 2, events: [], ended: true, exitCode: 3, reason: null, durationMs: 1 },
-      { id: "r-3", startSeq: 3, command: "bg", startTs: 3, events: [], ended: true, exitCode: null, reason: "backgrounded", durationMs: null },
-      { id: "r-4", startSeq: 4, command: "cut", startTs: 4, events: [], ended: true, exitCode: null, reason: "interrupted", durationMs: null },
-      { id: "r-5", startSeq: 5, command: "live", startTs: 5, events: [], ended: false, exitCode: null, reason: null, durationMs: null },
+      {
+        id: "r-1",
+        startSeq: 1,
+        command: "ok",
+        startTs: 1,
+        events: [],
+        ended: true,
+        exitCode: 0,
+        reason: null,
+        durationMs: 1,
+      },
+      {
+        id: "r-2",
+        startSeq: 2,
+        command: "bad",
+        startTs: 2,
+        events: [],
+        ended: true,
+        exitCode: 3,
+        reason: null,
+        durationMs: 1,
+      },
+      {
+        id: "r-3",
+        startSeq: 3,
+        command: "bg",
+        startTs: 3,
+        events: [],
+        ended: true,
+        exitCode: null,
+        reason: "backgrounded",
+        durationMs: null,
+      },
+      {
+        id: "r-4",
+        startSeq: 4,
+        command: "cut",
+        startTs: 4,
+        events: [],
+        ended: true,
+        exitCode: null,
+        reason: "interrupted",
+        durationMs: null,
+      },
+      {
+        id: "r-5",
+        startSeq: 5,
+        command: "live",
+        startTs: 5,
+        events: [],
+        ended: false,
+        exitCode: null,
+        reason: null,
+        durationMs: null,
+      },
     ]);
     // r-3 is "backgrounded" and its state is `bg`, NOT `warn`. THIS ASSERTION
     // USED TO READ `warn` HERE — it was pinning the defect: the summary's word for
@@ -91,22 +202,49 @@ describe("derivePath", () => {
     // reported to the operator as one that had stopped, and it lit the session's
     // "bad" marker. The card's own label was always "Backgrounded", which is how
     // the two surfaces came to disagree.
-    expect(p.steps.map((s) => s.state)).toEqual(["ok", "fail", "bg", "warn", "running"]);
+    expect(p.steps.map((s) => s.state)).toEqual([
+      "ok",
+      "fail",
+      "bg",
+      "warn",
+      "running",
+    ]);
     expect(p.steps[1].stateLabel).toBe("exit 3");
   });
 
   it("counts output characters per step without shipping the text", () => {
     const p = derivePath([
-      { id: "r-1", startSeq: 1, command: "c", startTs: 1,
-        events: [ev({ kind: "output", text: "abcde" }), ev({ kind: "output", text: "fg" })],
-        ended: true, exitCode: 0, reason: null, durationMs: 1 },
+      {
+        id: "r-1",
+        startSeq: 1,
+        command: "c",
+        startTs: 1,
+        events: [
+          ev({ kind: "output", text: "abcde" }),
+          ev({ kind: "output", text: "fg" }),
+        ],
+        ended: true,
+        exitCode: 0,
+        reason: null,
+        durationMs: 1,
+      },
     ]);
     expect(p.steps[0].outputChars).toBe(7);
   });
 
   it("indexes steps by round id so a step can be traced back", () => {
     const p = derivePath([
-      { id: "r-9", startSeq: 9, command: "c", startTs: 1, events: [], ended: true, exitCode: 0, reason: null, durationMs: 1 },
+      {
+        id: "r-9",
+        startSeq: 9,
+        command: "c",
+        startTs: 1,
+        events: [],
+        ended: true,
+        exitCode: 0,
+        reason: null,
+        durationMs: 1,
+      },
     ]);
     expect(p.indexOf["r-9"]).toBe(0);
   });
@@ -114,9 +252,22 @@ describe("derivePath", () => {
 
 describe("summarizePath", () => {
   const step = (o: Partial<PathStep>): PathStep => ({
-    id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
-    startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0,
-    intent: null, considered: [], planStep: null, runId: null, ...o,
+    id: "x",
+    index: 1,
+    command: "c",
+    state: "ok",
+    owner: "ai",
+    stateLabel: "0",
+    startedAt: 0,
+    durationMs: 1000,
+    exitCode: 0,
+    reason: null,
+    outputChars: 0,
+    intent: null,
+    considered: [],
+    planStep: null,
+    runId: null,
+    ...o,
   });
 
   it("reports the total as a FLOOR when some steps have no duration", () => {
@@ -137,7 +288,13 @@ describe("summarizePath", () => {
       step({ id: "c", state: "fail" }),
       step({ id: "d", state: "running", durationMs: null }),
     ]);
-    expect(s.counts).toMatchObject({ ok: 1, fail: 2, running: 1, warn: 0, muted: 0 });
+    expect(s.counts).toMatchObject({
+      ok: 1,
+      fail: 2,
+      running: 1,
+      warn: 0,
+      muted: 0,
+    });
     expect(s.live).toBe(true);
   });
 
@@ -154,10 +311,26 @@ describe("summarizePath", () => {
 
 describe("attentionSteps", () => {
   it("surfaces failures first, then interruptions, then live work", () => {
-    const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
-      id, index, command: id, state, owner: "ai", stateLabel: "", startedAt: 0,
-      durationMs: null, exitCode: null, reason: null, outputChars: 0,
-      intent: null, considered: [], planStep: null, runId: null,
+    const step = (
+      id: string,
+      state: PathStep["state"],
+      index: number,
+    ): PathStep => ({
+      id,
+      index,
+      command: id,
+      state,
+      owner: "ai",
+      stateLabel: "",
+      startedAt: 0,
+      durationMs: null,
+      exitCode: null,
+      reason: null,
+      outputChars: 0,
+      intent: null,
+      considered: [],
+      planStep: null,
+      runId: null,
     });
     const out = attentionSteps([
       step("ok1", "ok", 1),
@@ -182,7 +355,10 @@ describe("PathView", () => {
     const dots = document.querySelectorAll(".path-step-dot.cmd-dot");
     expect(dots.length).toBe(4);
     expect([...dots].map((d) => d.getAttribute("data-state"))).toEqual([
-      "ok", "fail", "warn", "running",
+      "ok",
+      "fail",
+      "warn",
+      "running",
     ]);
   });
 
@@ -255,7 +431,9 @@ describe("PathView", () => {
   });
 
   it("shows an honest empty state before any command", () => {
-    const { container } = render(<PathView events={[ev({ kind: "status", status: "opened" })]} />);
+    const { container } = render(
+      <PathView events={[ev({ kind: "status", status: "opened" })]} />,
+    );
     expect(screen.getByText("No path yet")).toBeTruthy();
     expect(container.querySelectorAll(".path-step").length).toBe(0);
     // The empty state explains what will appear, so "nothing here" does not
@@ -267,9 +445,13 @@ describe("PathView", () => {
 
   it("puts failures in a 'worth a look' list that calls back with the step", () => {
     const seen: string[] = [];
-    render(<PathView events={session()} onJumpToStep={(s) => seen.push(s.id)} />);
+    render(
+      <PathView events={session()} onJumpToStep={(s) => seen.push(s.id)} />,
+    );
     expect(screen.getByText(/Worth a look/)).toBeTruthy();
-    const first = document.querySelector(".path-attention-row") as HTMLButtonElement;
+    const first = document.querySelector(
+      ".path-attention-row",
+    ) as HTMLButtonElement;
     first.click();
     // The list is ordered worst-first, so the first row is the FAILURE.
     expect(seen).toEqual(["r-5"]);
@@ -293,10 +475,7 @@ describe("ownership (who was driving)", () => {
   ];
 
   it("attributes each step to whoever held the keyboard when it STARTED", () => {
-    const p = derivePath(
-      groupRounds(withHandoff()),
-      withHandoff(),
-    );
+    const p = derivePath(groupRounds(withHandoff()), withHandoff());
     expect(p.steps.map((s) => [s.command, s.owner])).toEqual([
       ["ai one", "ai"],
       ["human one", "human"],
@@ -325,7 +504,13 @@ describe("ownership (who was driving)", () => {
     const events: CommandEvent[] = [
       ev({ seq: 1, ts: 100, kind: "command/start", command: "long" }),
       ctl(150, "human"),
-      ev({ seq: 2, ts: 200, kind: "command/end", exit_code: 0, duration_ms: 100 }),
+      ev({
+        seq: 2,
+        ts: 200,
+        kind: "command/end",
+        exit_code: 0,
+        duration_ms: 100,
+      }),
     ];
     const p = derivePath(groupRounds(events), events);
     expect(p.steps[0].owner).toBe("ai");
@@ -333,8 +518,11 @@ describe("ownership (who was driving)", () => {
 
   it("ignores a control event with an unknown holder", () => {
     // A future/unknown holder must not silently become "human".
-    const events = [ctl(0, "human"), ev({ seq: 9, ts: 10, kind: "control", status: "robot" }),
-                    ev({ seq: 1, ts: 20, kind: "command/start", command: "c" })];
+    const events = [
+      ctl(0, "human"),
+      ev({ seq: 9, ts: 10, kind: "control", status: "robot" }),
+      ev({ seq: 1, ts: 20, kind: "command/start", command: "c" }),
+    ];
     const p = derivePath(groupRounds(events), events);
     expect(p.steps[0].owner).toBe("human");
   });
@@ -369,7 +557,9 @@ describe("the intent layer in the path", () => {
     expect(document.querySelector(".path-step-why")!.textContent).toContain(
       "check whether the ONU is actually online",
     );
-    const alts = [...document.querySelectorAll(".path-step-alt-item")].map((e) => e.textContent);
+    const alts = [...document.querySelectorAll(".path-step-alt-item")].map(
+      (e) => e.textContent,
+    );
     expect(alts).toEqual(["reset the ONU", "check the OLT uplink"]);
   });
 
@@ -381,7 +571,10 @@ describe("the intent layer in the path", () => {
     // live inside the same column as the body it explains.
     render(
       <PathView
-        events={withIntent({ intent: "why this ran", considered: ["another way"] })}
+        events={withIntent({
+          intent: "why this ran",
+          considered: ["another way"],
+        })}
       />,
     );
     const main = document.querySelector(".path-step-main");
@@ -422,7 +615,9 @@ describe("the intent layer in the path", () => {
     // ABOVE the summary in document order, so "2 failed" reads directly under
     // what the run was for — the whole point of showing them together.
     const summary = document.querySelector(".path-summary")!;
-    expect(goal!.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING).toBeTruthy();
+    expect(
+      goal!.compareDocumentPosition(summary) & Node.DOCUMENT_POSITION_FOLLOWING,
+    ).toBeTruthy();
   });
 });
 
@@ -431,11 +626,29 @@ describe("the plan in the path", () => {
   // advances. Driven through the REAL component so the whole path is covered —
   // event shape, derivation and render.
   function withPlan(steps: number[]): CommandEvent[] {
-    const evs: CommandEvent[] = [ev({ seq: 1, ts: 100, kind: "status", status: "opened" })];
+    const evs: CommandEvent[] = [
+      ev({ seq: 1, ts: 100, kind: "status", status: "opened" }),
+    ];
     let seq = 2;
     for (const step of steps) {
-      evs.push(ev({ seq: seq++, ts: 200, kind: "command/start", command: `cmd ${step}`, plan_step: step }));
-      evs.push(ev({ seq: seq++, ts: 201, kind: "command/end", exit_code: 0, duration_ms: 10 }));
+      evs.push(
+        ev({
+          seq: seq++,
+          ts: 200,
+          kind: "command/start",
+          command: `cmd ${step}`,
+          plan_step: step,
+        }),
+      );
+      evs.push(
+        ev({
+          seq: seq++,
+          ts: 201,
+          kind: "command/end",
+          exit_code: 0,
+          duration_ms: 10,
+        }),
+      );
     }
     return evs;
   }
@@ -466,7 +679,9 @@ describe("the plan in the path", () => {
     render(<PathView events={withPlan([1])} plan={["did this", "did not"]} />);
     const open = document.querySelectorAll(".path-plan-step.open");
     expect(open.length).toBe(1);
-    expect(open[0].querySelector(".path-plan-text")!.textContent).toBe("did not");
+    expect(open[0].querySelector(".path-plan-text")!.textContent).toBe(
+      "did not",
+    );
     // Distinguishable by SHAPE, not colour alone.
     expect(open[0].className).toContain("open");
   });
@@ -478,14 +693,21 @@ describe("the plan in the path", () => {
     // DECLARED steps put those in no bucket at all: they were counted on the
     // Activity row and NOWHERE in the plan view, which is exactly the "work that
     // was never announced" this block promises to surface.
-    render(<PathView events={withPlan([1, 5])} plan={["one", "two", "three"]} />);
+    render(
+      <PathView events={withPlan([1, 5])} plan={["one", "two", "three"]} />,
+    );
     const off = document.querySelector(".path-plan-offplan");
-    expect(off, "an out-of-range claim must be visible, not dropped").not.toBeNull();
+    expect(
+      off,
+      "an out-of-range claim must be visible, not dropped",
+    ).not.toBeNull();
     expect(off!.getAttribute("data-count")).toBe("1");
     expect(off!.textContent).toContain("5");
     // It is NOT credited to any real step: attributing it to step 3 would invent
     // a fact about which step the command served.
-    const counts = [...document.querySelectorAll(".path-plan-count")].map((e) => e.textContent);
+    const counts = [...document.querySelectorAll(".path-plan-count")].map(
+      (e) => e.textContent,
+    );
     expect(counts).toEqual(["1", "0", "0"]);
   });
 
@@ -503,11 +725,19 @@ describe("the plan in the path", () => {
     // position would invent a linkage the agent never stated.
     const evs = [
       ev({ seq: 1, ts: 100, kind: "command/start", command: "unplanned" }),
-      ev({ seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 5 }),
+      ev({
+        seq: 2,
+        ts: 101,
+        kind: "command/end",
+        exit_code: 0,
+        duration_ms: 5,
+      }),
     ];
     render(<PathView events={evs} plan={["the only step"]} />);
     expect(document.querySelector(".path-plan-count")!.textContent).toBe("0");
-    expect(document.querySelector(".path-plan-count")!.getAttribute("data-zero")).toBe("yes");
+    expect(
+      document.querySelector(".path-plan-count")!.getAttribute("data-zero"),
+    ).toBe("yes");
   });
 });
 
@@ -520,7 +750,10 @@ describe("PathView — the run a command claims to belong to", () => {
   // explained its own second poll away and stopped anyone looking.
   const withRun = (runId: string | null) => [
     {
-      seq: 1, ts: 100, kind: "command/start", command: "echo hi",
+      seq: 1,
+      ts: 100,
+      kind: "command/start",
+      command: "echo hi",
       ...(runId == null ? {} : { run_id: runId }),
     },
     { seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 5 },
@@ -539,7 +772,9 @@ describe("PathView — the run a command claims to belong to", () => {
   });
 
   it("renders it as a CLAIM, and groups nothing", () => {
-    const { container } = render(<PathView events={withRun("run-1789-b50f43")} />);
+    const { container } = render(
+      <PathView events={withRun("run-1789-b50f43")} />,
+    );
     const el = container.querySelector(".path-step-run")!;
     expect(el).not.toBeNull();
     expect(el.textContent).toContain("run-1789-b50f43");
@@ -563,7 +798,13 @@ describe("PathView — a backgrounded command is not an interrupted one", () => 
   // was wrong, which is why the two surfaces disagreed.
   const bg = [
     { seq: 1, ts: 100, kind: "command/start", command: "npm run build" },
-    { seq: 2, ts: 101, kind: "command/end", reason: "backgrounded", duration_ms: 5 },
+    {
+      seq: 2,
+      ts: 101,
+      kind: "command/end",
+      reason: "backgrounded",
+      duration_ms: 5,
+    },
   ];
 
   it("derives its own state, not `warn`", () => {
@@ -590,7 +831,13 @@ describe("PathView — a backgrounded command is not an interrupted one", () => 
     // The distinction must not swallow the real case.
     const real = [
       { seq: 1, ts: 100, kind: "command/start", command: "npm run build" },
-      { seq: 2, ts: 101, kind: "command/end", reason: "interrupted", duration_ms: 5 },
+      {
+        seq: 2,
+        ts: 101,
+        kind: "command/end",
+        reason: "interrupted",
+        duration_ms: 5,
+      },
     ];
     const { container } = render(<PathView events={real} />);
     expect(container.textContent).toContain("1 interrupted");

@@ -13,7 +13,13 @@
 //       exit code of zero renders as the VALUE it is, differently;
 //   (d) the page renders with ZERO sessions, which is the entire point.
 import { describe, it, expect, vi, beforeEach } from "vitest";
-import { render, screen, waitFor, fireEvent, within } from "@testing-library/react";
+import {
+  render,
+  screen,
+  waitFor,
+  fireEvent,
+  within,
+} from "@testing-library/react";
 import { ActivityPage } from "../ActivityPage";
 import { PanelApp } from "../PanelApp";
 import { callApi } from "../../lib/api";
@@ -38,11 +44,25 @@ const ev = (o: Partial<OperationEvent>): OperationEvent => ({
   kind: "command/start",
   ...o,
 });
-const begin = (run_id: string, ts_ms: number, extra: Partial<RunBoundary> = {}): RunBoundary => ({
-  kind: "run/begin", run_id, ts_ms, ...extra,
+const begin = (
+  run_id: string,
+  ts_ms: number,
+  extra: Partial<RunBoundary> = {},
+): RunBoundary => ({
+  kind: "run/begin",
+  run_id,
+  ts_ms,
+  ...extra,
 });
-const end = (run_id: string, ts_ms: number, extra: Partial<RunBoundary> = {}): RunBoundary => ({
-  kind: "run/end", run_id, ts_ms, ...extra,
+const end = (
+  run_id: string,
+  ts_ms: number,
+  extra: Partial<RunBoundary> = {},
+): RunBoundary => ({
+  kind: "run/end",
+  run_id,
+  ts_ms,
+  ...extra,
 });
 
 /** Answer every /api/operation poll with the same payload. */
@@ -76,7 +96,13 @@ describe("ActivityPage — (a) WHAT ran is on screen", () => {
           intent: "check the firmware before the upgrade",
           considered: ["reboot the ONU first", "read the log instead"],
         }),
-        ev({ ts_ms: T0 + 20, run_id: "r-a", kind: "command/end", exit_code: 0, duration_ms: 1_250 }),
+        ev({
+          ts_ms: T0 + 20,
+          run_id: "r-a",
+          kind: "command/end",
+          exit_code: 0,
+          duration_ms: 1_250,
+        }),
         ev({
           ts_ms: T0 + 30,
           run_id: "r-a",
@@ -88,14 +114,19 @@ describe("ActivityPage — (a) WHAT ran is on screen", () => {
           screenshots: ["run-1-before.png", "run-1-after.png"],
         }),
       ],
-      [begin("r-a", T0, { label: "provision the ONU" }), end("r-a", T0 + 60_000, { outcome: "done" })],
+      [
+        begin("r-a", T0, { label: "provision the ONU" }),
+        end("r-a", T0 + 60_000, { outcome: "done" }),
+      ],
     );
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
 
     // The three records are on screen under the run they declared.
     const rows = [...container.querySelectorAll(".activity-row")];
     expect(rows).toHaveLength(3);
-    const texts = [...container.querySelectorAll(".activity-row-what")].map((n) => n.textContent);
+    const texts = [...container.querySelectorAll(".activity-row-what")].map(
+      (n) => n.textContent,
+    );
     expect(texts).toEqual([
       "display version",
       // A command/end carries no command text of its own, so no body line is
@@ -104,31 +135,39 @@ describe("ActivityPage — (a) WHAT ran is on screen", () => {
     ]);
 
     // The intent is rendered — the thing that was previously thrown away.
-    expect(container.querySelector(".activity-row-intent")!.textContent).toContain(
-      "check the firmware before the upgrade",
-    );
+    expect(
+      container.querySelector(".activity-row-intent")!.textContent,
+    ).toContain("check the firmware before the upgrade");
     // ...as are the alternatives it says it passed over.
-    expect([...container.querySelectorAll(".activity-row-alt-item")].map((n) => n.textContent)).toEqual([
-      "reboot the ONU first",
-      "read the log instead",
-    ]);
+    expect(
+      [...container.querySelectorAll(".activity-row-alt-item")].map(
+        (n) => n.textContent,
+      ),
+    ).toEqual(["reboot the ONU first", "read the log instead"]);
     // ...and the screenshots, by NAME (the evidence drawer owns the picture).
-    expect([...container.querySelectorAll(".activity-row-shot")].map((n) => n.textContent)).toEqual([
-      "run-1-before.png",
-      "run-1-after.png",
-    ]);
+    expect(
+      [...container.querySelectorAll(".activity-row-shot")].map(
+        (n) => n.textContent,
+      ),
+    ).toEqual(["run-1-before.png", "run-1-after.png"]);
     // Outcomes and durations, per record.
-    expect([...container.querySelectorAll(".activity-row-exit")].map((n) => n.textContent)).toEqual([
-      "exit 0",
-      "exit 2",
-    ]);
-    expect([...container.querySelectorAll(".activity-row-dur")].map((n) => n.textContent)).toEqual([
-      "1.3s",
-      "40ms",
-    ]);
+    expect(
+      [...container.querySelectorAll(".activity-row-exit")].map(
+        (n) => n.textContent,
+      ),
+    ).toEqual(["exit 0", "exit 2"]);
+    expect(
+      [...container.querySelectorAll(".activity-row-dur")].map(
+        (n) => n.textContent,
+      ),
+    ).toEqual(["1.3s", "40ms"]);
     // The group header is the SHARED one, so it reads exactly as the strip's.
-    expect(container.querySelector(".activity-group .run-row-label")!.textContent).toBe("provision the ONU");
-    expect(container.querySelector(".run-row-outcome")!.textContent).toContain("done");
+    expect(
+      container.querySelector(".activity-group .run-row-label")!.textContent,
+    ).toBe("provision the ONU");
+    expect(container.querySelector(".run-row-outcome")!.textContent).toContain(
+      "done",
+    );
   });
 
   it("marks a browser record as the browser's, and a terminal one with its session", async () => {
@@ -137,11 +176,15 @@ describe("ActivityPage — (a) WHAT ran is on screen", () => {
       ev({ ts_ms: T0 + 1, source: "browser", kind: "action", script: "click" }),
     ]);
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
-    const sources = [...container.querySelectorAll(".activity-row-source")].map((n) => n.textContent);
+    const sources = [...container.querySelectorAll(".activity-row-source")].map(
+      (n) => n.textContent,
+    );
     expect(sources).toEqual(["terminal", "browser"]);
     // The session id is shown where it is known, and the browser row — which
     // has no session by construction — does not borrow one.
-    expect(container.querySelector(".activity-row-session")!.textContent).toBe("s-1");
+    expect(container.querySelector(".activity-row-session")!.textContent).toBe(
+      "s-1",
+    );
     expect(container.querySelectorAll(".activity-row-session")).toHaveLength(1);
   });
 
@@ -152,9 +195,13 @@ describe("ActivityPage — (a) WHAT ran is on screen", () => {
       ev({ ts_ms: T0 + 2, kind: "approval", status: "armed", text: "reboot*" }),
     ]);
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
-    const notes = [...container.querySelectorAll(".activity-row-kindnote")].map((n) => n.textContent);
+    const notes = [...container.querySelectorAll(".activity-row-kindnote")].map(
+      (n) => n.textContent,
+    );
     expect(notes).toEqual(["keyboard: human", "approval armed"]);
-    const bodies = [...container.querySelectorAll(".activity-row-what")].map((n) => n.textContent);
+    const bodies = [...container.querySelectorAll(".activity-row-what")].map(
+      (n) => n.textContent,
+    );
     expect(bodies).toEqual(["get the ONU online", "reboot*"]);
   });
 });
@@ -166,7 +213,12 @@ describe("ActivityPage — (b) the unattributed bucket stays SEPARATE", () => {
         ev({ ts_ms: T0 + 10, run_id: "r-a", command: "inside the run" }),
         ev({ ts_ms: T0 + 20, run_id: "r-a", command: "also inside" }),
         ev({ ts_ms: T0 + 30, command: "nobody's command" }),
-        ev({ ts_ms: T0 + 40, source: "browser", kind: "action", script: "click" }),
+        ev({
+          ts_ms: T0 + 40,
+          source: "browser",
+          kind: "action",
+          script: "click",
+        }),
       ],
       [begin("r-a", T0, { label: "the run" }), end("r-a", T0 + 25)],
     );
@@ -187,9 +239,9 @@ describe("ActivityPage — (b) the unattributed bucket stays SEPARATE", () => {
     expect(groups[1].textContent).toContain("click");
     // The header's count says how many records are in the separate bucket, so
     // the split is visible before scrolling.
-    expect(container.querySelector(".activity-stat-unattributed")!.textContent).toBe(
-      "2 records with no run",
-    );
+    expect(
+      container.querySelector(".activity-stat-unattributed")!.textContent,
+    ).toBe("2 records with no run");
   });
 
   it("says WHY the bucket is apart, in the same words the run strip uses", async () => {
@@ -204,15 +256,22 @@ describe("ActivityPage — (b) the unattributed bucket stays SEPARATE", () => {
     );
   });
 
-  it("shows the bucket ALONE when the device recorded no runs at all", async () => {    // The browser-only case: actions with no run declared and no terminal
+  it("shows the bucket ALONE when the device recorded no runs at all", async () => {
+    // The browser-only case: actions with no run declared and no terminal
     // session anywhere on the device.
-    device([ev({ ts_ms: T0, source: "browser", kind: "action", script: "navigate" })]);
+    device([
+      ev({ ts_ms: T0, source: "browser", kind: "action", script: "navigate" }),
+    ]);
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
     expect(container.querySelectorAll(".activity-group")).toHaveLength(1);
-    expect(container.querySelector(".activity-group")!.getAttribute("data-state")).toBe("unattributed");
+    expect(
+      container.querySelector(".activity-group")!.getAttribute("data-state"),
+    ).toBe("unattributed");
     expect(container.textContent).toContain("navigate");
     // No count is drawn for runs that do not exist.
-    expect(container.querySelector(".activity-stat")!.textContent).toBe("0 runs");
+    expect(container.querySelector(".activity-stat")!.textContent).toBe(
+      "0 runs",
+    );
   });
 });
 
@@ -232,7 +291,10 @@ describe("ActivityPage — (c) absence is rendered as ABSENCE", () => {
       ".activity-row-dur",
       ".activity-row-timeout",
     ]) {
-      expect(container.querySelector(cls), `${cls} must not be drawn for an absent value`).toBeNull();
+      expect(
+        container.querySelector(cls),
+        `${cls} must not be drawn for an absent value`,
+      ).toBeNull();
     }
     // ...and no stand-in word was put in their place. A "—" or a "failed" in
     // that slot reads as a value the device never sent. Checked per ROW: the
@@ -243,7 +305,9 @@ describe("ActivityPage — (c) absence is rendered as ABSENCE", () => {
       expect(text).not.toContain("—");
       expect(text).not.toMatch(/failed|unknown|n\/a|no intent|not recorded/i);
     }
-    expect(container.querySelector(".activity-rows")!.textContent).not.toContain("—");
+    expect(
+      container.querySelector(".activity-rows")!.textContent,
+    ).not.toContain("—");
   });
 
   it("draws exit 0 as the VALUE it is, differently from an absent code", async () => {
@@ -273,13 +337,22 @@ describe("ActivityPage — (c) absence is rendered as ABSENCE", () => {
     // The two carry different state attributes, which the stylesheet uses to
     // give them different SHAPES as well as different ink (pinned in
     // src/styles/__tests__/activityPage.test.ts).
-    expect(exits.map((n) => n.getAttribute("data-exit"))).toEqual(["zero", "nonzero"]);
+    expect(exits.map((n) => n.getAttribute("data-exit"))).toEqual([
+      "zero",
+      "nonzero",
+    ]);
   });
 
   it("says a run has no records rather than drawing an empty list", async () => {
     // A run whose begin and end were recorded with nothing in between: an empty
     // <ul> there would read as a rendering failure.
-    device([], [begin("r-a", T0, { label: "declared, then nothing" }), end("r-a", T0 + 5)]);
+    device(
+      [],
+      [
+        begin("r-a", T0, { label: "declared, then nothing" }),
+        end("r-a", T0 + 5),
+      ],
+    );
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
     expect(container.querySelector(".activity-rows")).toBeNull();
     expect(container.querySelector(".activity-group-empty")!.textContent).toBe(
@@ -300,10 +373,17 @@ describe("ActivityPage — (c) absence is rendered as ABSENCE", () => {
   it("never claims the AI is still running", async () => {
     // The one claim this panel refuses to make (see RunStrip's header and
     // lib/runs.ts): an open run means "no end was recorded", nothing more.
-    device([ev({ ts_ms: T0, run_id: "r-a", command: "long job" })], [begin("r-a", T0)]);
+    device(
+      [ev({ ts_ms: T0, run_id: "r-a", command: "long job" })],
+      [begin("r-a", T0)],
+    );
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
-    expect(container.querySelector(".run-row-note")!.textContent).toBe("no end recorded");
-    expect(container.textContent).not.toMatch(/still running|in progress|is running|live\b/i);
+    expect(container.querySelector(".run-row-note")!.textContent).toBe(
+      "no end recorded",
+    );
+    expect(container.textContent).not.toMatch(
+      /still running|in progress|is running|live\b/i,
+    );
   });
 });
 
@@ -311,7 +391,10 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
   it("renders the device's timeline without any session, active or otherwise", async () => {
     // The whole point of the page. ActivityPage takes no session at all — there
     // is nothing it could require one from.
-    device([ev({ ts_ms: T0, run_id: "r-a", command: "browser-only work" })], [begin("r-a", T0)]);
+    device(
+      [ev({ ts_ms: T0, run_id: "r-a", command: "browser-only work" })],
+      [begin("r-a", T0)],
+    );
     const { container } = await mount(<ActivityPage pollMs={60_000} />);
     expect(container.querySelector(".activity-page")).not.toBeNull();
     expect(container.textContent).toContain("browser-only work");
@@ -320,7 +403,10 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
   it("is reachable from the rail with NO sessions open, and shows what ran", async () => {
     // The reachability half: the page must be on the rail and it must mount
     // through the real shell, or the feature is implemented and invisible.
-    device([ev({ ts_ms: T0, run_id: "r-a", command: "the AI drove the browser" })], [begin("r-a", T0)]);
+    device(
+      [ev({ ts_ms: T0, run_id: "r-a", command: "the AI drove the browser" })],
+      [begin("r-a", T0)],
+    );
     render(
       <PanelApp
         sessions={[]}
@@ -329,6 +415,7 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
         onClose={vi.fn()}
         onExport={vi.fn()}
         onViewChange={vi.fn()}
+        sessionViews={{}}
         onSetControl={vi.fn(() => Promise.resolve(false))}
         onSetApproval={vi.fn(() => Promise.resolve(false))}
         onDecideApproval={vi.fn(() => Promise.resolve(true))}
@@ -339,7 +426,17 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
         status=""
         sseState="connected"
         token="t"
-        plugins={{ rows: [], specLoaded: true, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any}
+        plugins={
+          {
+            rows: [],
+            specLoaded: true,
+            loadError: "",
+            busy: null,
+            log: [],
+            start: vi.fn(),
+            stop: vi.fn(),
+          } as any
+        }
         cmdEvents={{ cards: [], events: [], readState: "ok", firstSeq: 1 }}
         connModal={null}
         onConnClose={vi.fn()}
@@ -350,12 +447,16 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
     // (scoped to the canvas: the session rail says the same thing, and the
     // point here is which PAGE is mounted).
     const canvas = document.querySelector("#panel-main")!;
-    expect(within(canvas as HTMLElement).getByText("No sessions yet")).toBeTruthy();
+    expect(
+      within(canvas as HTMLElement).getByText("No sessions yet"),
+    ).toBeTruthy();
     // …and the rail offers Activity anyway.
     const railBtn = screen.getByTitle("Activity");
     expect(railBtn.getAttribute("aria-current")).toBeNull();
     fireEvent.click(railBtn);
-    await waitFor(() => expect(document.querySelector(".activity-page")).not.toBeNull());
+    await waitFor(() =>
+      expect(document.querySelector(".activity-page")).not.toBeNull(),
+    );
     await waitFor(() =>
       expect(document.querySelector(".activity-page")!.textContent).toContain(
         "the AI drove the browser",
@@ -363,6 +464,8 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
     );
     expect(railBtn.getAttribute("aria-current")).toBe("page");
     // The session list is still empty — nothing was invented to make this work.
-    expect(within(canvas as HTMLElement).queryByText("No sessions yet")).toBeNull();
+    expect(
+      within(canvas as HTMLElement).queryByText("No sessions yet"),
+    ).toBeNull();
   });
 });

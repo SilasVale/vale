@@ -8,9 +8,27 @@ import { Shell, PAGES, PAGE_LABELS, type Page } from "../Shell";
 
 describe("Shell page contract", () => {
   it("PAGES lists all 7 pages with labels — including the one that needs no session", () => {
-    expect(PAGES).toEqual(["terminal", "archive", "activity", "browser", "memory", "plugins", "settings"]);
-    const labels = (Object.keys(PAGE_LABELS) as Page[]).map((p) => PAGE_LABELS[p]);
-    expect(labels).toEqual(["Terminal", "Archive", "Activity", "Browser", "Memory", "Plugins", "Settings"]);
+    expect(PAGES).toEqual([
+      "terminal",
+      "archive",
+      "activity",
+      "browser",
+      "memory",
+      "plugins",
+      "settings",
+    ]);
+    const labels = (Object.keys(PAGE_LABELS) as Page[]).map(
+      (p) => PAGE_LABELS[p],
+    );
+    expect(labels).toEqual([
+      "Terminal",
+      "Archive",
+      "Activity",
+      "Browser",
+      "Memory",
+      "Plugins",
+      "Settings",
+    ]);
     // Activity is the only page that answers "what has this device been doing"
     // with zero sessions open, so it has to be on the rail. IconRail's
     // PAGE_ICONS is a Record over Page — a page without an icon does not build.
@@ -44,7 +62,11 @@ describe("Shell panel density", () => {
 
   it("optional rails omit their hosts", () => {
     const { container } = render(
-      <Shell density="panel" iconRail={<span>rail</span>} canvas={<span>canvas</span>} />,
+      <Shell
+        density="panel"
+        iconRail={<span>rail</span>}
+        canvas={<span>canvas</span>}
+      />,
     );
     expect(container.querySelector("#context-rail")).toBeNull();
   });

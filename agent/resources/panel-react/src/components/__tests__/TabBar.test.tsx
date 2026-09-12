@@ -18,7 +18,11 @@ const session = (over: Partial<Session> = {}): Session => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
+  pendingApproval: null,
+  approvalGrants: [],
+  goal: null,
+  plan: [],
+  ...over,
 });
 
 const props = (over: Partial<React.ComponentProps<typeof TabBar>> = {}) => ({
@@ -34,7 +38,12 @@ const props = (over: Partial<React.ComponentProps<typeof TabBar>> = {}) => ({
 
 describe("TabBar", () => {
   it("clicking a live tab activates it; closed tabs are a silent no-op", () => {
-    const p = props({ sessions: [session(), session({ sid: "s2", label: "dead", closed: true })] });
+    const p = props({
+      sessions: [
+        session(),
+        session({ sid: "s2", label: "dead", closed: true }),
+      ],
+    });
     render(<TabBar {...p} />);
     fireEvent.click(screen.getByText("shell"));
     expect(p.onActivate).toHaveBeenCalledWith("s1");
@@ -44,7 +53,9 @@ describe("TabBar", () => {
     // "Trajectory/Logs" — there is no Logs view, and Trajectory shows the
     // active session, so the promise could not be kept (ArchivePage is the
     // surface that reads this device's recorded sessions).
-    expect(screen.getByTitle("dead — closed (its recorded trail is in Archive)")).toBeTruthy();
+    expect(
+      screen.getByTitle("dead — closed (its recorded trail is in Archive)"),
+    ).toBeTruthy();
   });
 
   it("export does not activate the tab", () => {
@@ -93,7 +104,11 @@ describe("TabBar", () => {
 });
 
 describe("TabBar — a question waiting for a person", () => {
-  const question = { id: "g1", command: "reload", expiresAtMs: Date.now() + 60_000 };
+  const question = {
+    id: "g1",
+    command: "reload",
+    expiresAtMs: Date.now() + 60_000,
+  };
 
   it("marks the session that is holding a question, with a shape AND a word", () => {
     const p = props({
@@ -109,7 +124,9 @@ describe("TabBar — a question waiting for a person", () => {
     const tab = screen.getByTitle("gated — waiting for your approval");
     expect(tab.querySelector(".tab-wait")).toBeTruthy();
     // ...and the word, for anyone who cannot see the mark.
-    expect(tab.getAttribute("aria-label")).toBe("gated — waiting for your approval");
+    expect(tab.getAttribute("aria-label")).toBe(
+      "gated — waiting for your approval",
+    );
     // The unmarked session keeps its ordinary title.
     expect(screen.getByTitle("s1")).toBeTruthy();
   });
@@ -118,30 +135,53 @@ describe("TabBar — a question waiting for a person", () => {
     // Keying the badge off `approvalRequired` would make every armed session
     // shout forever, which is how a badge becomes wallpaper.
     const { container } = render(
-      <TabBar {...props({ sessions: [session({ sid: "s3", label: "armed", approvalRequired: true })] })} />,
+      <TabBar
+        {...props({
+          sessions: [
+            session({ sid: "s3", label: "armed", approvalRequired: true }),
+          ],
+        })}
+      />,
     );
     expect(container.querySelector(".tab-wait")).toBeNull();
     expect(screen.queryByTitle("armed — waiting for your approval")).toBeNull();
     expect(screen.getByTitle("s3")).toBeTruthy();
-    expect(screen.queryByLabelText("armed — waiting for your approval")).toBeNull();
+    expect(
+      screen.queryByLabelText("armed — waiting for your approval"),
+    ).toBeNull();
   });
 
   it("never marks a CLOSED tombstone, even if it still carries a question", () => {
     const { container } = render(
       <TabBar
         {...props({
-          sessions: [session({ sid: "s9", label: "gone", closed: true, pendingApproval: question })],
+          sessions: [
+            session({
+              sid: "s9",
+              label: "gone",
+              closed: true,
+              pendingApproval: question,
+            }),
+          ],
           activeSid: null,
         })}
       />,
     );
     expect(container.querySelector(".tab-wait")).toBeNull();
-    expect(screen.getByTitle("gone — closed (its recorded trail is in Archive)")).toBeTruthy();
+    expect(
+      screen.getByTitle("gone — closed (its recorded trail is in Archive)"),
+    ).toBeTruthy();
   });
 
   it("shows no COUNT — one session holds at most one question", () => {
     const { container } = render(
-      <TabBar {...props({ sessions: [session({ sid: "s2", label: "gated", pendingApproval: question })] })} />,
+      <TabBar
+        {...props({
+          sessions: [
+            session({ sid: "s2", label: "gated", pendingApproval: question }),
+          ],
+        })}
+      />,
     );
     expect(container.querySelector(".tab-wait")!.textContent).toBe("");
   });

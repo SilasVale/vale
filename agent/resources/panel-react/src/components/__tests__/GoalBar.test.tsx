@@ -45,14 +45,18 @@ describe("GoalBar", () => {
       target: { value: "roll back the VLAN" },
     });
     fireEvent.click(screen.getByText("Save"));
-    await waitFor(() => expect(onSet).toHaveBeenCalledWith("roll back the VLAN"));
+    await waitFor(() =>
+      expect(onSet).toHaveBeenCalledWith("roll back the VLAN"),
+    );
   });
 
   it("does NOT carry a draft across a SESSION SWITCH", async () => {
     // The bar stays mounted while the operator moves between sessions. A draft
     // that survived would let Save stamp one session's objective onto another.
     const onSet = vi.fn(() => Promise.resolve("x"));
-    const { rerender } = render(<GoalBar {...props({ goal: "first objective", onSet })} />);
+    const { rerender } = render(
+      <GoalBar {...props({ goal: "first objective", onSet })} />,
+    );
     fireEvent.click(screen.getByTitle(/click to change/));
     fireEvent.change(document.querySelector(".goal-input")!, {
       target: { value: "half-typed edit" },
@@ -62,16 +66,22 @@ describe("GoalBar", () => {
     rerender(<GoalBar {...props({ goal: "second objective", onSet })} />);
     // The edit is abandoned, and the new session's objective is what shows.
     expect(document.querySelector(".goal-input")).toBeNull();
-    expect(document.querySelector(".goal-text")!.textContent).toBe("second objective");
+    expect(document.querySelector(".goal-text")!.textContent).toBe(
+      "second objective",
+    );
   });
 
   it("resets the draft when the goal changes under it", () => {
     const { rerender } = render(<GoalBar {...props({ goal: "a" })} />);
     fireEvent.click(screen.getByTitle(/click to change/));
-    expect((document.querySelector(".goal-input") as HTMLInputElement).value).toBe("a");
+    expect(
+      (document.querySelector(".goal-input") as HTMLInputElement).value,
+    ).toBe("a");
     rerender(<GoalBar {...props({ goal: "b" })} />);
     fireEvent.click(screen.getByTitle(/click to change/));
-    expect((document.querySelector(".goal-input") as HTMLInputElement).value).toBe("b");
+    expect(
+      (document.querySelector(".goal-input") as HTMLInputElement).value,
+    ).toBe("b");
   });
 
   it("offers Clear only when there is something to clear", () => {
@@ -95,8 +105,12 @@ describe("GoalBar", () => {
     const onSet = vi.fn();
     render(<GoalBar {...props({ goal: "keep me", onSet })} />);
     fireEvent.click(screen.getByTitle(/click to change/));
-    fireEvent.change(document.querySelector(".goal-input")!, { target: { value: "discard" } });
-    fireEvent.keyDown(document.querySelector(".goal-input")!, { key: "Escape" });
+    fireEvent.change(document.querySelector(".goal-input")!, {
+      target: { value: "discard" },
+    });
+    fireEvent.keyDown(document.querySelector(".goal-input")!, {
+      key: "Escape",
+    });
     expect(onSet).not.toHaveBeenCalled();
     expect(document.querySelector(".goal-text")!.textContent).toBe("keep me");
   });
@@ -105,10 +119,14 @@ describe("GoalBar", () => {
     const onSet = vi.fn(() => Promise.reject(new Error("HTTP 400")));
     render(<GoalBar {...props({ onSet })} />);
     fireEvent.click(screen.getByText(/Set a goal/));
-    fireEvent.change(document.querySelector(".goal-input")!, { target: { value: "important" } });
+    fireEvent.change(document.querySelector(".goal-input")!, {
+      target: { value: "important" },
+    });
     fireEvent.click(screen.getByText("Save"));
     await waitFor(() => expect(onSet).toHaveBeenCalled());
-    expect((document.querySelector(".goal-input") as HTMLInputElement).value).toBe("important");
+    expect(
+      (document.querySelector(".goal-input") as HTMLInputElement).value,
+    ).toBe("important");
   });
 
   it("says what the goal is FOR, not what the button does", () => {
