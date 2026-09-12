@@ -1,7 +1,26 @@
 # Workers Static Assets header rules.
-# index.html must never be cached by browsers — a cached shell keeps
-# referencing the previous hashed bundle and a deploy "doesn't show up"
-# until a hard refresh (the exact report that prompted this file).
+#
+# THE SHELL MUST NEVER BE CACHED, AND THIS FILE USED TO MISS THE ONE URL THAT
+# MATTERS. The rule below was written for `/index.html` — and the comment above it
+# already described the exact symptom it exists to prevent: "a cached shell keeps
+# referencing the previous hashed bundle and a deploy 'doesn't show up' until a
+# hard refresh". But NOBODY VISITS /index.html; they visit `/`. Measured on the
+# live worker:
+#
+#   /index.html  ->  cache-control: no-cache, must-revalidate      (rule matched)
+#   /            ->  cache-control: public, max-age=0, must-revalidate
+#                    cf-cache-status: HIT                          (rule MISSED)
+#
+# So the root document could be served from Cloudflare's cache, the browser kept
+# loading a stale shell pointing at a superseded hashed bundle, and a deploy "did
+# not show up" — the very report that prompted this file. A fix that covers the
+# path nobody requests is not a fix.
+#
+# BOTH spellings are listed because `/` and `/index.html` are distinct request
+# paths even though they resolve to the same object.
+/
+  Cache-Control: no-cache, must-revalidate
+
 /index.html
   Cache-Control: no-cache, must-revalidate
 
