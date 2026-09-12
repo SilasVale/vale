@@ -433,7 +433,8 @@ const TERMINAL_TOOLS: McpTool[] = [
         },
         wait_secs: {
           type: "integer",
-          description: "Max seconds to wait for completion when job_id is given. Default 0 (instant snapshot).",
+          description:
+            "Max seconds to wait for completion when job_id is given. Default 0 (instant snapshot).",
         },
       },
       required: [],

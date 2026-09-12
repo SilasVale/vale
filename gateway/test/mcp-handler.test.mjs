@@ -30,12 +30,19 @@ function makeEnv() {
 }
 
 const post = (body, auth = "Bearer admintoken") =>
-  new Request("https://x/mcp", { method: "POST", headers: { authorization: auth, "content-type": "application/json" }, body: JSON.stringify(body) });
+  new Request("https://x/mcp", {
+    method: "POST",
+    headers: { authorization: auth, "content-type": "application/json" },
+    body: JSON.stringify(body),
+  });
 
 // ── Auth gate ─────────────────────────────────────────────────
 
 test("mcp: bad token → 401 JSON-RPC error", async () => {
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "ping", id: 1 }, "Bearer bad"), makeEnv());
+  const res = await handleMcp(
+    post({ jsonrpc: "2.0", method: "ping", id: 1 }, "Bearer bad"),
+    makeEnv(),
+  );
   assert.equal(res.status, 401);
   const data = await res.json();
   assert.equal(data.jsonrpc, "2.0");
@@ -44,12 +51,18 @@ test("mcp: bad token → 401 JSON-RPC error", async () => {
 });
 
 test("mcp: missing authorization header → 401", async () => {
-  const res = await handleMcp(new Request("https://x/mcp", { method: "POST", body: "{}" }), makeEnv());
+  const res = await handleMcp(
+    new Request("https://x/mcp", { method: "POST", body: "{}" }),
+    makeEnv(),
+  );
   assert.equal(res.status, 401);
 });
 
 test("mcp: valid token but non-admin role → 401", async () => {
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "ping", id: 1 }, "Bearer usertoken"), makeEnv());
+  const res = await handleMcp(
+    post({ jsonrpc: "2.0", method: "ping", id: 1 }, "Bearer usertoken"),
+    makeEnv(),
+  );
   assert.equal(res.status, 401);
 });
 
@@ -58,7 +71,13 @@ test("mcp: disabled admin token → 401 (enabled check, cf. translate/session ga
     devices: [DEVICE],
     users: {
       // Distinct id/token: store.ts caches token→user module-wide.
-      dadmin: { id: "dadmin", username: "dadmin", role: "admin", enabled: false, token: "disablet-admin-tok" },
+      dadmin: {
+        id: "dadmin",
+        username: "dadmin",
+        role: "admin",
+        enabled: false,
+        token: "disablet-admin-tok",
+      },
     },
     kv: { "token:disablet-admin-tok": "dadmin" },
   });
@@ -74,7 +93,15 @@ test("mcp: disabled admin token → 401 (enabled check, cf. translate/session ga
 // ── initialize ─────────────────────────────────────────────────
 
 test("mcp: initialize echoes protocolVersion + vale-gate serverInfo", async () => {
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "initialize", params: { protocolVersion: "2025-06-18", capabilities: {} }, id: 1 }), makeEnv());
+  const res = await handleMcp(
+    post({
+      jsonrpc: "2.0",
+      method: "initialize",
+      params: { protocolVersion: "2025-06-18", capabilities: {} },
+      id: 1,
+    }),
+    makeEnv(),
+  );
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "application/json");
   const data = await res.json();
@@ -104,16 +131,41 @@ test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute wi
   globalThis.fetch = async (url, init) => {
     calls.push({ url: String(url), init });
     const cmd = JSON.parse(init.body).command; // echo the command like a real device terminal
-    return new Response(JSON.stringify({ ok: true, output: `ran: ${cmd}` }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, output: `ran: ${cmd}` }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   try {
     // explicit quiet_ms
-    let res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls -la", quiet_ms: 400 } }, id: 2 }), env);
+    let res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_execute",
+          arguments: { device: "d1", session_id: "s-1", input: "ls -la", quiet_ms: 400 },
+        },
+        id: 2,
+      }),
+      env,
+    );
     assert.equal(res.status, 200);
     let data = await res.json();
     assert.equal(data.result.content[0].type, "text");
     // quiet_ms defaults to 400 when omitted
-    res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "pwd" } }, id: 3 }), env);
+    res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_execute",
+          arguments: { device: "d1", session_id: "s-1", input: "pwd" },
+        },
+        id: 3,
+      }),
+      env,
+    );
     assert.equal(res.status, 200);
     data = await res.json();
     assert.ok(data.result.content[0].text.includes("pwd"));
@@ -122,10 +174,18 @@ test("mcp: tools/call terminal_execute → device /api/tools/terminal_execute wi
     // pings the session itself, so each execute is exactly ONE device fetch.
     assert.equal(calls.length, 2);
     assert.equal(calls[0].url, "https://d1.agent.saisi.online/api/tools/terminal_execute");
-    assert.deepEqual(JSON.parse(calls[0].init.body), { command: "ls -la", session_id: "s-1", quiet_ms: 400 }); // device + input stripped, input→command, explicit quiet_ms passed through
-    assert.deepEqual(JSON.parse(calls[1].init.body), { command: "pwd", session_id: "s-1", quiet_ms: 200 });   // default quiet_ms matches the agent
+    assert.deepEqual(JSON.parse(calls[0].init.body), {
+      command: "ls -la",
+      session_id: "s-1",
+      quiet_ms: 400,
+    }); // device + input stripped, input→command, explicit quiet_ms passed through
+    assert.deepEqual(JSON.parse(calls[1].init.body), {
+      command: "pwd",
+      session_id: "s-1",
+      quiet_ms: 200,
+    }); // default quiet_ms matches the agent
     assert.equal(calls[0].init.headers.get("authorization"), "Bearer devtok"); // device token injected server-side
-    assert.equal(calls[0].init.headers.get("host"), null);   // host/cookie stripped
+    assert.equal(calls[0].init.headers.get("host"), null); // host/cookie stripped
     assert.equal(calls[0].init.headers.get("cookie"), null);
   } finally {
     globalThis.fetch = realFetch;
@@ -142,10 +202,20 @@ test("mcp: tools/call unknown device → -32602 listing registered devices (roun
       { name: "d1", hostname: "d1.agent.saisi.online", token: "t1" },
       { name: "d2", hostname: "d2.agent.saisi.online", token: "t2" },
     ],
-    users: { admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" } },
+    users: {
+      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: "admintoken" },
+    },
     kv: { "token:admintoken": "admin" },
   });
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "nope" } }, id: 4 }), env);
+  const res = await handleMcp(
+    post({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: "terminal_list", arguments: { device: "nope" } },
+      id: 4,
+    }),
+    env,
+  );
   assert.equal(res.status, 200);
   const data = await res.json();
   assert.equal(data.error.code, -32602);
@@ -156,7 +226,10 @@ test("mcp: tools/call unknown device → -32602 listing registered devices (roun
 // ── SSE GET ────────────────────────────────────────────────────
 
 test("mcp: GET → 200 text/event-stream keepalive stream; cancel() clears the timer", async () => {
-  const res = await handleMcp(new Request("https://x/mcp", { headers: { authorization: "Bearer admintoken" } }), makeEnv());
+  const res = await handleMcp(
+    new Request("https://x/mcp", { headers: { authorization: "Bearer admintoken" } }),
+    makeEnv(),
+  );
   assert.equal(res.status, 200);
   assert.equal(res.headers.get("content-type"), "text/event-stream");
   assert.equal(res.headers.get("cache-control"), "no-cache");
@@ -204,9 +277,11 @@ const NOT_EXPOSED = {
   // The playwright-mcp bridge plumbing mcp-browser.ts drives internally;
   // exposing it lets a client route around the browser_* tools entirely.
   mcp_client_connect: "internal bridge plumbing (mcp-browser.ts calls it)",
-  mcp_client_list: "session introspection is device-local; the console bridge (mcp-browser.ts) calls only mcp_client_connect and mcp_client_call",
+  mcp_client_list:
+    "session introspection is device-local; the console bridge (mcp-browser.ts) calls only mcp_client_connect and mcp_client_call",
   mcp_client_call: "internal bridge plumbing",
-  mcp_client_disconnect: "teardown is device-local; the console bridge never disconnects a client it did not open",
+  mcp_client_disconnect:
+    "teardown is device-local; the console bridge never disconnects a client it did not open",
   // Swaps the device binary and restarts the agent (drops every session).
   agent_update: "self-modifying — a CLI action (`vale update`), not an MCP call",
   page_view: "legacy remote-page helper (design plugin)",
@@ -223,15 +298,25 @@ const NOT_EXPOSED = {
 /** The gateway-synthesized browser_* tools: implemented over the device's
  *  playwright-mcp bridge, with no device-side /api/tools/<name> counterpart. */
 const BRIDGE_SYNTHETIC = [
-  "browser_open", "browser_snapshot", "browser_screenshot",
-  "browser_click", "browser_type", "browser_wait", "browser_close",
+  "browser_open",
+  "browser_snapshot",
+  "browser_screenshot",
+  "browser_click",
+  "browser_type",
+  "browser_wait",
+  "browser_close",
 ];
 
 function deviceTools() {
   const raw = readFileSync(new URL("../../agent/spec-tools.json", import.meta.url), "utf8");
   // The generated file carries // header lines so it reads in-repo; JSON has
   // no comments, so drop them before parsing.
-  return JSON.parse(raw.split("\n").filter((l) => !l.startsWith("//")).join("\n"));
+  return JSON.parse(
+    raw
+      .split("\n")
+      .filter((l) => !l.startsWith("//"))
+      .join("\n"),
+  );
 }
 
 test("contract: every device tool is registered or explicitly not exposed", async () => {
@@ -407,8 +492,13 @@ test("contract: device-direct partition matches the bridge-vs-device dispatch", 
   const { allMcpTools } = await import("../src/mcp-tools.ts");
   const { isDeviceDirectTool } = await import("../src/mcp.ts");
   const BRIDGE_ROUTED = new Set([
-    "browser_open", "browser_snapshot", "browser_screenshot",
-    "browser_click", "browser_type", "browser_wait", "browser_close",
+    "browser_open",
+    "browser_snapshot",
+    "browser_screenshot",
+    "browser_click",
+    "browser_type",
+    "browser_wait",
+    "browser_close",
   ]);
   for (const t of allMcpTools()) {
     const n = t.name;
@@ -418,17 +508,17 @@ test("contract: device-direct partition matches the bridge-vs-device dispatch", 
       // predicate now (it used to re-implement it inline, which is how a
       // registered tool could still fall through to the bridge and die there).
       assert.ok(
-        n.startsWith("terminal_") || n.startsWith("secret_") ||
-          n.startsWith("system_") || n.startsWith("run_") ||
-          n === "browser_pw_info" || n === "browser_run_script",
+        n.startsWith("terminal_") ||
+          n.startsWith("secret_") ||
+          n.startsWith("system_") ||
+          n.startsWith("run_") ||
+          n === "browser_pw_info" ||
+          n === "browser_run_script",
         `device-direct misclassification: ${n}`,
       );
     } else {
       // Bridge-routed: every other browser_* tool.
-      assert.ok(
-        BRIDGE_ROUTED.has(n),
-        `non-device-direct tool without a bridge route: ${n}`,
-      );
+      assert.ok(BRIDGE_ROUTED.has(n), `non-device-direct tool without a bridge route: ${n}`);
     }
   }
 });
@@ -439,10 +529,24 @@ test("mcp: agent error (200 + ok:false) → SESSION_NOT_FOUND code", async () =>
   const env = makeEnv();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    return new Response(JSON.stringify({ ok: false, error: "Session not found: s-1" }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: "Session not found: s-1" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   try {
-    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 9 }), env);
+    const res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_execute",
+          arguments: { device: "d1", session_id: "s-1", input: "ls" },
+        },
+        id: 9,
+      }),
+      env,
+    );
     assert.equal(res.status, 200);
     const data = await res.json();
     assert.equal(data.error.code, -32603);
@@ -456,10 +560,24 @@ test("mcp: agent error (200 + ok:false) → SESSION_BUSY code", async () => {
   const env = makeEnv();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    return new Response(JSON.stringify({ ok: false, error: "Session busy (another execute in progress): s-1" }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({ ok: false, error: "Session busy (another execute in progress): s-1" }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
   };
   try {
-    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 10 }), env);
+    const res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_execute",
+          arguments: { device: "d1", session_id: "s-1", input: "ls" },
+        },
+        id: 10,
+      }),
+      env,
+    );
     const data = await res.json();
     assert.equal(data.error.data.code, "SESSION_BUSY");
   } finally {
@@ -473,10 +591,24 @@ test("mcp: agent error (200 + ok:false) → TIMEOUT code on 'timed out' text", a
   const env = makeEnv();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url) => {
-    return new Response(JSON.stringify({ ok: false, error: "SSH command timed out after 30s" }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: false, error: "SSH command timed out after 30s" }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   try {
-    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: 12 }), env);
+    const res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_execute",
+          arguments: { device: "d1", session_id: "s-1", input: "ls" },
+        },
+        id: 12,
+      }),
+      env,
+    );
     const data = await res.json();
     assert.equal(data.error.data.code, "TIMEOUT");
   } finally {
@@ -488,10 +620,28 @@ test("mcp: agent typed error (200 + ok:false + code) → TOOL_ERROR not DEVICE_U
   const env = makeEnv();
   const realFetch = globalThis.fetch;
   globalThis.fetch = async () => {
-    return new Response(JSON.stringify({ ok: false, error: "Serial port not found: COM9", code: "serial_port_not_found" }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(
+      JSON.stringify({
+        ok: false,
+        error: "Serial port not found: COM9",
+        code: "serial_port_not_found",
+      }),
+      { status: 200, headers: { "content-type": "application/json" } },
+    );
   };
   try {
-    const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_open", arguments: { device: "d1", kind: "serial", target: "COM9" } }, id: 11 }), env);
+    const res = await handleMcp(
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: {
+          name: "terminal_open",
+          arguments: { device: "d1", kind: "serial", target: "COM9" },
+        },
+        id: 11,
+      }),
+      env,
+    );
     const data = await res.json();
     assert.equal(data.error.data.code, "TOOL_ERROR");
     assert.notEqual(data.error.data.code, "DEVICE_UNREACHABLE");
@@ -517,9 +667,23 @@ test("mcp: typed codes map without message guessing", async () => {
     let id = 60;
     for (const [body, want] of cases) {
       globalThis.fetch = async () => {
-        return new Response(JSON.stringify(body), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify(body), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       };
-      const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_execute", arguments: { device: "d1", session_id: "s-1", input: "ls" } }, id: id++ }), env);
+      const res = await handleMcp(
+        post({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: {
+            name: "terminal_execute",
+            arguments: { device: "d1", session_id: "s-1", input: "ls" },
+          },
+          id: id++,
+        }),
+        env,
+      );
       const data = await res.json();
       assert.equal(data.error.data.code, want, `typed ${body.code} (guess-proof text)`);
     }
@@ -533,11 +697,28 @@ test("mcp: every other typed agent code → TOOL_ERROR (round-64 backstop)", asy
   const realFetch = globalThis.fetch;
   try {
     let id = 70;
-    for (const code of ["keychain", "invalid_params", "internal", "serial_port_not_open", "ssh_connect_failed"]) {
+    for (const code of [
+      "keychain",
+      "invalid_params",
+      "internal",
+      "serial_port_not_open",
+      "ssh_connect_failed",
+    ]) {
       globalThis.fetch = async () => {
-        return new Response(JSON.stringify({ ok: false, error: "plain failure", code }), { status: 200, headers: { "content-type": "application/json" } });
+        return new Response(JSON.stringify({ ok: false, error: "plain failure", code }), {
+          status: 200,
+          headers: { "content-type": "application/json" },
+        });
       };
-      const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_open", arguments: { device: "d1" } }, id: id++ }), env);
+      const res = await handleMcp(
+        post({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "terminal_open", arguments: { device: "d1" } },
+          id: id++,
+        }),
+        env,
+      );
       const data = await res.json();
       assert.equal(data.error.data.code, "TOOL_ERROR", `typed ${code} is device-UP`);
     }
@@ -557,7 +738,10 @@ test("mcp: ping → empty result echoing the id", async () => {
 });
 
 test("mcp: unknown method → -32601 with the id echoed", async () => {
-  const res = await handleMcp(post({ jsonrpc: "2.0", method: "tools/brew-coffee", id: 7 }), makeEnv());
+  const res = await handleMcp(
+    post({ jsonrpc: "2.0", method: "tools/brew-coffee", id: 7 }),
+    makeEnv(),
+  );
   const data = await res.json();
   assert.equal(data.error.code, -32601);
   assert.match(data.error.message, /brew-coffee/);
@@ -571,7 +755,12 @@ test("mcp: tools/call unknown tool → -32602 without touching the network", asy
   };
   try {
     const res = await handleMcp(
-      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "teleport", arguments: {} }, id: 9 }),
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "teleport", arguments: {} },
+        id: 9,
+      }),
       makeEnv(),
     );
     const data = await res.json();
@@ -597,7 +786,12 @@ test("mcp: tools/call with no devices registered → -32602 guidance (not a dial
   };
   try {
     const res = await handleMcp(
-      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 3 }),
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "terminal_list", arguments: {} },
+        id: 3,
+      }),
       env,
     );
     const data = await res.json();
@@ -623,7 +817,10 @@ test("mcp: unparseable body → -32700 parse error", async () => {
 
 test("mcp: non-GET/POST method → 405", async () => {
   const res = await handleMcp(
-    new Request("https://x/mcp", { method: "PUT", headers: { authorization: "Bearer admintoken" } }),
+    new Request("https://x/mcp", {
+      method: "PUT",
+      headers: { authorization: "Bearer admintoken" },
+    }),
     makeEnv(),
   );
   assert.equal(res.status, 405);
@@ -638,11 +835,19 @@ test("mcp: omitted device with exactly one registered executes on it (round-160 
   const realFetch = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     dialed = String(url);
-    return new Response(JSON.stringify({ ok: true, sessions: [] }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true, sessions: [] }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   try {
     const res = await handleMcp(
-      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 11 }),
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "terminal_list", arguments: {} },
+        id: 11,
+      }),
       env,
     );
     assert.equal(res.status, 200);
@@ -660,7 +865,12 @@ test("mcp: typo'd device with one registered → Unknown device, never executes 
   };
   try {
     const res = await handleMcp(
-      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "d2" } }, id: 12 }),
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "terminal_list", arguments: { device: "d2" } },
+        id: 12,
+      }),
       env,
     );
     const data = await res.json();
@@ -680,7 +890,12 @@ test("mcp: omitted device with several registered names them (round-398)", async
     kv: { "token:admintoken": "admin" },
   });
   const res = await handleMcp(
-    post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: {} }, id: 13 }),
+    post({
+      jsonrpc: "2.0",
+      method: "tools/call",
+      params: { name: "terminal_list", arguments: {} },
+      id: 13,
+    }),
     env,
   );
   const data = await res.json();
@@ -705,7 +920,12 @@ test("mcp: device dial failure → -32603 with DEVICE_UNREACHABLE in data", asyn
   };
   try {
     const res = await handleMcp(
-      post({ jsonrpc: "2.0", method: "tools/call", params: { name: "terminal_list", arguments: { device: "d1" } }, id: 15 }),
+      post({
+        jsonrpc: "2.0",
+        method: "tools/call",
+        params: { name: "terminal_list", arguments: { device: "d1" } },
+        id: 15,
+      }),
       env,
     );
     const data = await res.json();
@@ -748,7 +968,8 @@ test("contract: terminal_read does not re-state the disproven 're-reads from the
   assert.ok(
     /1 MiB|1 MB/i.test(d),
     "terminal_read's description must state the per-read cap, because a client that " +
-      "does not know it will read a truncated window as the whole stream: " + d,
+      "does not know it will read a truncated window as the whole stream: " +
+      d,
   );
 });
 
@@ -792,7 +1013,8 @@ test("contract: the console's `required` matches the device's, after renames", a
       if (!advertised.has(p)) problems.push(`${t.name}.${p} required by device, not advertised`);
     }
     for (const p of advertised) {
-      if (!expectRequired.has(p)) problems.push(`${t.name}.${p} advertised required, device optional`);
+      if (!expectRequired.has(p))
+        problems.push(`${t.name}.${p} advertised required, device optional`);
     }
   }
   assert.deepEqual(

@@ -1,7 +1,14 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import { allMcpTools } from "../src/mcp-tools.ts";
-import { DEVICE_UNREACHABLE, TIMEOUT, SESSION_NOT_FOUND, SESSION_BUSY, TOOL_ERROR, ToolErr } from "../src/mcp-errors.ts";
+import {
+  DEVICE_UNREACHABLE,
+  TIMEOUT,
+  SESSION_NOT_FOUND,
+  SESSION_BUSY,
+  TOOL_ERROR,
+  ToolErr,
+} from "../src/mcp-errors.ts";
 
 test("mcp tools: all tools take a device param", () => {
   const tools = allMcpTools();
@@ -32,7 +39,20 @@ test("mcp tools: all tools take a device param", () => {
 
 test("mcp tools: browser + terminal sets", () => {
   const names = allMcpTools().map((t) => t.name);
-  for (const n of ["browser_open","browser_snapshot","browser_screenshot","browser_click","browser_type","browser_wait","browser_close","terminal_open","terminal_screen","terminal_execute","terminal_list","terminal_close"]) {
+  for (const n of [
+    "browser_open",
+    "browser_snapshot",
+    "browser_screenshot",
+    "browser_click",
+    "browser_type",
+    "browser_wait",
+    "browser_close",
+    "terminal_open",
+    "terminal_screen",
+    "terminal_execute",
+    "terminal_list",
+    "terminal_close",
+  ]) {
     assert.ok(names.includes(n), `missing ${n}`);
   }
 });
