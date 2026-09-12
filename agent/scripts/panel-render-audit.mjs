@@ -174,9 +174,25 @@ async function main() {
     console.log("  lib/contrast-probe.mjs and the OVERFLOW snippet in this file.");
     console.log("  (The PROBE moved out of this file so its math can be UNIT TESTED —");
     console.log("   scripts/test/contrast-probe-check.mjs exercises the exact text the");
-    console.log("   browser evaluates. It also exits 0 here, so a caller watching only");
-    console.log("   the exit code reads this skip as a pass.)");
-    process.exit(0);
+    console.log("   browser evaluates.)");
+    // A SKIP IS NOT A PASS, AND THE EXIT CODE SAYS WHICH.
+    //
+    // This used to exit 0, and the message above used to admit it: "a caller
+    // watching only the exit code reads this skip as a pass". Writing the defect
+    // down and leaving it is how it survived — the sentence read as a caveat
+    // rather than as a bug.
+    //
+    // The convention, now explicit and pinned by scripts/test/panel-audit-skip-check.mjs:
+    //   0  the audit RAN and found nothing
+    //   1  the audit RAN and found failures
+    //   2  the audit DID NOT RUN (no Playwright runtime in this environment)
+    //
+    // 2 is deliberately NOT 0. Emitting the harness instead of failing is still
+    // right — a check that can only run in one environment quietly stops running —
+    // but "I could not look" must be distinguishable from "I looked and it is
+    // clean", and the exit code is the only channel a caller is guaranteed to read.
+    console.log("EXIT 2: THE AUDIT DID NOT RUN — this is a SKIP, not a pass.");
+    process.exit(2);
   }
   const { acquireBrowser } = await import(helper);
   const { page, close } = await acquireBrowser();

@@ -250,6 +250,16 @@ jobs:
       # via Function.prototype.toString() — so this is not a copy that can drift.
       - name: contrast-probe regression checks
         run: node scripts/test/contrast-probe-check.mjs
+      # A SKIP MUST NOT LOOK LIKE A PASS — the third time this repo has had to say
+      # so. `panel-render-audit.mjs` needs a Playwright runtime; where there is none
+      # it emits its harness (deliberately) but it used to exit 0, and its own
+      # message admitted that "a caller watching only the exit code reads this skip
+      # as a pass". It now exits 2 = DID NOT RUN, distinct from 1 = ran and failed
+      # and 0 = ran and clean, and this asserts the codes rather than the prose.
+      # (Round 33: "a check that reads nothing must not report success". Round 46:
+      # a harness that could not tell an unmocked request from an empty page.)
+      - name: panel-audit skip-vs-pass checks
+        run: node scripts/test/panel-audit-skip-check.mjs
       # ONE design vocabulary across the two frontends. They shared 16 token
       # NAMES and 12 of them held different VALUES — the console's frame was
       # Bootstrap's gray scale while the panel's was zinc/Apple — and the
