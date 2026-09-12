@@ -3,6 +3,7 @@ import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, type HealthChannel } from "../api/client.ts";
+import { clientBase } from "../lib/baseUrl.ts";
 import { Card, PageHeader, Badge, CopyButton } from "../components/ui.tsx";
 
 function laneClass(prefix: string): string {
@@ -94,7 +95,7 @@ export default function RoutesView() {
     "ANTHROPIC_DEFAULT_MODEL",
     "CLAUDE_CODE_SUBAGENT_MODEL",
   ];
-  const base = apiHost ? `https://${apiHost}` : "https://api.saisi.online";
+  const base = clientBase(apiHost);
   const token = user?.token || "<your gateway token>";
   const envConfig: Record<string, string> = { ANTHROPIC_BASE_URL: base, ANTHROPIC_API_KEY: token };
   for (const k of modelKeys) envConfig[k] = "auto[1m]";
