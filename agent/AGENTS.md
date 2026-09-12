@@ -515,7 +515,46 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 49 (the user said they saw NO CHANGE on the console —
+Last updated: 2026-09-11 round 50 (the user reported seeing NO CHANGE, twice; the
+deploy WAS live, and the reason a working deploy would not show up was a cache rule
+that covered the path nobody visits). Commits: eb9ee2b2, 8736988d. Worker deployed.
+  (1) FIRST, WHETHER THE WORK WAS ACTUALLY LIVE — because "the user is wrong" is not
+  a diagnosis. Verified three ways: the live bundle CONTAINS the new page
+  (`模型目录`, `models-card`, `model-chip`); the live CSS contains the login redesign
+  (`auth-aside`, `auth-pitch`); and a COLD browser session (cookies cleared,
+  localStorage cleared, reloaded) renders the redesigned split login with the
+  duplicated wordmark gone. The work was deployed.
+  (2) SO WHY WOULD IT NOT SHOW UP? `gateway/public/_headers`, whose own comment
+  describes this EXACT report: "a cached shell keeps referencing the previous hashed
+  bundle and a deploy 'doesn't show up' until a hard refresh (the exact report that
+  prompted this file)". Measured on the live worker:
+      /index.html  ->  cache-control: no-cache, must-revalidate      (rule matched)
+      /            ->  cache-control: public, max-age=0, must-revalidate
+                       cf-cache-status: HIT                          (rule MISSED)
+  `_headers` matches on the REQUEST PATH. NOBODY VISITS /index.html; they visit `/`.
+  The rule fired for a URL nobody uses and left the root document — the shell that
+  names the hashed bundle — cacheable. A fix that does not cover the case it exists
+  for: round 40's family, in a file that had already written the symptom down.
+  Both spellings are now listed. Verified after deploy: `/` returns `no-cache,
+  must-revalidate`.
+  (3) WHAT I AM NOT CLAIMING. `max-age=0, must-revalidate` ALSO asks for
+  revalidation, so a browser obeying it should have refetched; I cannot prove this
+  fully explains the symptom. It is the one inconsistency I could MEASURE, it is now
+  correct, and `/` and `/index.html` finally agree. The honest next step for the user
+  is one hard refresh.
+  (4) THE SAME ROUND ALSO SHIPPED THE FIRST GENUINELY NEW PAGE, after the user's
+  first report made the real problem clear: everything else I had done to the console
+  was INVISIBLE BY CONSTRUCTION (token values, contrast, dead code). `#/models`
+  renders `ROUTE_INFO`, which the Routes page has always fetched and used one field
+  of (`apiHost`). See round 49's entry for that work's details.
+  (5) A USER-VISIBLE LESSON WORTH KEEPING: "I see no change" is a REPORT, not an
+  error, and the first job is to establish whether the change is live before
+  explaining anything. Here it was live, and the explanation was a cache rule; in
+  round 46 the same report would have been a stale local build. Both were found by
+  MEASURING the deployed artifact rather than re-reading the source.
+  Gates: gateway 766 + format; gateway-ui 1; token contract green; CI green on main.
+
+Previous round: 2026-09-11 round 49 (the user said they saw NO CHANGE on the console —
 and they were right, because almost everything I had done there was invisible; this
 round ships the first page that is NEW). Commit: eb9ee2b2. Worker deployed. d1 on
 1.2.354 and current.
