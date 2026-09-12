@@ -515,7 +515,44 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 52 (I went looking for the console's remaining weak
+Last updated: 2026-09-11 round 53 (the console had TWO pages answering "which
+model?" — and the overlap was MINE, created when I added the Models page two rounds
+earlier; this round gives each page one job and makes the nav say so).
+Commit: a58f301d. Worker deployed twice (the page, then its copy).
+  (1) THE DEFECT WAS SELF-INFLICTED, and naming that matters: round 49's Models page
+  made the Routes page half redundant. Both let you choose a channel, and ROUTES DID
+  IT WORSE — it listed one row per channel using each channel's HEALTH-PROBE model,
+  so a channel offering eight models appeared to offer one. Two pages answering the
+  same question is not a design; it is the residue of adding one without looking at
+  what was already there.
+  (2) THE ROLES ARE NOW DISTINCT AND THE NAV SAYS SO:
+    Models (模型目录) — the catalogue: every channel, every model, health, switch.
+    Routes (接入设置) — what is selected and how to connect. RETITLED, because
+                       "模型路由" stopped describing it.
+  Concretely: the per-channel switchboard became ONE line (the current route) plus a
+  link to Models ("在模型目录中选择 →"). The US-egress toggle and the copy-paste
+  client config stay — they exist nowhere else.
+  (3) THE COPY HAD TO MOVE WITH THE CONTROL, which is this log's most common defect:
+  the card still said "在这里点一下即可切换" / "flip channels here — no restart needed"
+  after the switcher left. A description that outlives its control is exactly the
+  family recorded in rounds 26, 35 and 47; both languages now say where switching
+  happens.
+  (4) THE BUILD'S TYPE-CHECK FOUND WHAT NOTHING ELSE WOULD HAVE: `laneClass`,
+  `handleSwitch`, the `switching` state and the `grouped` grouping all became dead,
+  and `loadChannels` was STILL FETCHING `/api/health` for a card that no longer
+  rendered it — a request kept alive by nothing but the line that set its state. The
+  call is gone with its reader.
+  (5) VERIFIED against the real response shape: Routes renders three cards
+  (美国出口 / 当前渠道 / 客户端接入示例), the current route reads "og/mimo-v2.5" with a
+  working link, Models still renders its catalogue. Deployed and CI green.
+  (6) STILL OPEN: the panel's governance-pill prominence (the product's core story
+    rendered at the lowest emphasis on the page), the `--dsw-alias-*` namespace
+    rename on the landing page, and whether the console's remaining four views want
+    anything beyond what they have — the Overview was checked in round 52 and is
+    already a real dashboard.
+  Gates: gateway 770 + format; gateway-ui 5; token contract green; CI green on main.
+
+Previous round: 2026-09-11 round 52 (I went looking for the console's remaining weak
 pages and found the Overview already good — but the CLIENT CONFIG it hands a user
 doubled its scheme for one of the two ways an operator writes `API_HOST`).
 Commit: 4c0597d8. Worker deployed; all three spellings verified live.
