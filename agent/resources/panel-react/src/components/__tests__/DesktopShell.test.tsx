@@ -43,7 +43,7 @@ const baseProps = {
   status: "",
   sseState: "connected" as "connected" | "down" | "connecting",
   token: "t",
-  cmdEvents: { cards: [], events: [] } as any,
+  cmdEvents: { cards: [], events: [], firstSeq: 1 } as any,
 };
 
 describe("Shell", () => {

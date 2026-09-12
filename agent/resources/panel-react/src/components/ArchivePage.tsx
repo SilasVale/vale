@@ -126,17 +126,6 @@ function ArchiveTrail({ entry, live, onBack }: { entry: ArchiveEntry; live: bool
         {words && <span className="archive-row-last">{words.label}</span>}
         {when && <span className="archive-trail-when">last recorded {when}</span>}
       </div>
-      {firstSeq > 1 && (
-        // THE TRAIL IS NOT THE WHOLE STORY. `close_session` trims a session's
-        // file to ~2000 lines, so a long session's head is discarded by design
-        // and the survivors cannot say so on their own. Without this line the
-        // viewer would present a trimmed trail as complete — the quiet version
-        // of telling the operator something false.
-        <p className="archive-note archive-note-trimmed">
-          Earlier events are not recorded: this trail begins at event {firstSeq}, and
-          the device keeps roughly the last 2000 lines of a closed session.
-        </p>
-      )}
       <div className="archive-trail-body">
         {readState === "reading" ? (
           <p className="archive-note">Reading this session's audit trail…</p>
@@ -162,7 +151,7 @@ function ArchiveTrail({ entry, live, onBack }: { entry: ArchiveEntry; live: bool
         ) : (
           // The SAME renderer the live Trajectory view mounts, fed by the same
           // reader. No second timeline exists in this file.
-          <TrajectoryView key={entry.sid} events={events} />
+          <TrajectoryView key={entry.sid} events={events} firstSeq={firstSeq} />
         )}
       </div>
     </div>

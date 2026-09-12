@@ -227,13 +227,16 @@ describe("ArchivePage — (c) live and archived are distinguishable", () => {
 });
 
 describe("ArchivePage — a TRIMMED trail is not presented as complete", () => {
-  // `close_session` trims a session's file to ~2000 lines, so a long session's
-  // head is discarded by design. The route reports `first_seq` for exactly this,
-  // and a viewer that ignores it tells the operator the trail is the whole story
-  // when it is not — the quiet version of a false claim.
+  // When a session closes, `trim_file` DRAINS EVERYTHING BEFORE THE LAST
+  // `command/start` — a session that ran commands keeps only its most recent one
+  // onward, and only that window is then capped. So a trimmed session HAS events,
+  // which is why this fixture has one; the route reports `first_seq` for exactly
+  // this case, and a viewer that ignores it tells the operator the trail is the
+  // whole story when it is not.
   it("says earlier events are not recorded when the trail does not begin at 1", async () => {
     device({
       sessions: [{ id: "long", state: { kind: "status", ts: T0, status: "closed" } }],
+      events: { long: trail("echo late", "late\n") },
       firstSeqFor: { long: 1734 },
     });
     render(<ArchivePage sessions={[]} />);
@@ -241,6 +244,11 @@ describe("ArchivePage — a TRIMMED trail is not presented as complete", () => {
 
     expect(await screen.findByText(/Earlier events are not recorded/i)).toBeTruthy();
     expect(screen.getByText(/begins at event 1734/)).toBeTruthy();
+    // It states the device's REAL rule. The old wording said "the last 2000
+    // lines", which overstates what survived by an order of magnitude on a real
+    // session (d1: 33 discarded, 26 surviving).
+    expect(screen.getByText(/keeps its most recent command onward/i)).toBeTruthy();
+    expect(screen.queryByText(/last 2000 lines/i)).toBeNull();
   });
 
   it("stays silent for a trail that DOES begin at 1", async () => {
@@ -414,7 +422,7 @@ describe("the archive is reachable from the rail", () => {
         sseState="connected"
         token="t"
         plugins={{ rows: [], specLoaded: true, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any}
-        cmdEvents={{ cards: [], events: [] }}
+        cmdEvents={{ cards: [], events: [], firstSeq: 1 }}
         connModal={null}
         onConnClose={vi.fn()}
         onConnConnect={vi.fn(() => Promise.resolve("s1"))}

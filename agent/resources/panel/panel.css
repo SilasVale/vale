@@ -3651,6 +3651,18 @@ button.dtab-close:hover { opacity: 1; }
   overflow-wrap: anywhere;
 }
 
+/* A trail that does not begin where the session began. Set apart and stated in
+   words, not by colour: it is a fact about what was RECORDED, and an operator
+   who misses it will read a trimmed trail as the whole story. */
+.traj-trimmed {
+  margin: 0 0 8px;
+  padding: 6px 8px;
+  border: 1px dashed var(--surface-chip);
+  border-radius: 6px;
+  font: 400 11px var(--font);
+  color: var(--chrome-ink-dim);
+}
+
 
 /* ============ layout.css ============ */
 /* ============================================================

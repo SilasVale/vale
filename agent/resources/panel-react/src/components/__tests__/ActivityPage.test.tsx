@@ -340,7 +340,7 @@ describe("ActivityPage — (d) the page works with ZERO sessions", () => {
         sseState="connected"
         token="t"
         plugins={{ rows: [], specLoaded: true, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any}
-        cmdEvents={{ cards: [], events: [] }}
+        cmdEvents={{ cards: [], events: [], firstSeq: 1 }}
         connModal={null}
         onConnClose={vi.fn()}
         onConnConnect={vi.fn(() => Promise.resolve("s1"))}

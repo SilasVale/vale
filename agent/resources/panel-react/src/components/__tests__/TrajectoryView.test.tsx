@@ -180,3 +180,36 @@ describe("governance events in the timeline", () => {
     expect(goals[1]).toContain("cleared");
   });
 });
+
+describe("TrajectoryView — a trimmed trail is not presented as complete", () => {
+  // THE LIVE MOUNT IS THE ONE THAT WAS SILENT. The Archive disclosed the trim
+  // while the terminal's own trajectory view — fed the same `first_seq` by the
+  // same hook — showed the survivors as if they were the whole trail, because
+  // `App` built the slice as `{cards, events}` and dropped the field ONE LINE
+  // above the mount. The component's own comment stated the obligation the
+  // wiring made unsatisfiable. The notice now lives HERE, so every mount is
+  // covered by construction rather than by remembering.
+  const evs = [start(40, "echo late")];
+
+  it("says earlier events are not recorded when the device's trail does not begin at 1", () => {
+    const { container } = render(<TrajectoryView events={evs} firstSeq={40} />);
+    const note = container.querySelector(".traj-trimmed")!;
+    expect(note).not.toBeNull();
+    expect(note.getAttribute("data-first-seq")).toBe("40");
+    expect(note.textContent).toMatch(/Earlier events are not recorded/i);
+    // The device's REAL rule, not "the last 2000 lines": the pre-last-command
+    // history is drained first, and only the remainder is capped.
+    expect(note.textContent).toMatch(/keeps its most recent command onward/i);
+  });
+
+  it("stays silent when the trail begins at 1, and when the device did not say", () => {
+    // `firstSeq` ABSENT means an older agent that does not report it — which is
+    // not the same as "not trimmed", so the view claims nothing rather than
+    // claiming completeness.
+    for (const props of [{ firstSeq: 1 }, {}]) {
+      const { container, unmount } = render(<TrajectoryView events={evs} {...props} />);
+      expect(container.querySelector(".traj-trimmed")).toBeNull();
+      unmount();
+    }
+  });
+});

@@ -20,6 +20,12 @@ import type { CommandEvent } from "../hooks/useCommandEvents";
 export interface CommandEvents {
   cards: { id: string; command: string; output: string; startedAt: number; ended: boolean; exitCode: number | null; reason: string | null; durationMs: number | null; seq: number }[];
   events: CommandEvent[];
+  /** Where the device's copy of this trail BEGINS (the route's `first_seq`).
+   *  This slice existed at runtime since round 23 and the TYPE did not declare
+   *  it, which is how the live view came to state an obligation it could not
+   *  meet: the value was in scope one line above the mount and the type said it
+   *  was not there. */
+  firstSeq: number;
 }
 
 export interface WorkspaceSession extends Session {
@@ -158,7 +164,7 @@ export function TerminalWorkspace({
                 plan={activeSession?.plan}
               />
             ) : trajOpen && activeSid ? (
-              <TrajectoryView key={activeSid} events={cmdEvents.events} />
+              <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} />
             ) : (
               <>
                 {sessions.filter((s) => !s.closed).map((s) => (
@@ -204,7 +210,7 @@ export function TerminalWorkspace({
                 plan={activeSession?.plan}
             />
           ) : trajOpen && activeSid ? (
-            <TrajectoryView key={activeSid} events={cmdEvents.events} />
+            <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} />
           ) : (
             <div id="term-container">
               {sessions.length === 0 ? (

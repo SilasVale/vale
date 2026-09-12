@@ -15,12 +15,19 @@ import type { CommandCard } from "../hooks/useCommandEvents";
 // is TEXT-ONLY (React text nodes reach the DOM — never innerHTML).
 //
 // Pagination is client-side over what the DEVICE RETURNS, which is NOT always
-// the full log: `close_session` trims a session's file to ~2000 lines, so a long
-// session's head is discarded by design. The route reports `first_seq` for
-// exactly this — greater than 1 means earlier events exist on neither side of
-// the wire — and the view must not present such a trail as complete. (This
-// comment used to claim "returns the FULL audit log", which the trim makes
-// false.)
+// the full log. When a session closes, `trim_file` DRAINS EVERYTHING BEFORE THE
+// LAST `command/start` — a session that ran commands keeps only its most recent
+// one onward, and only that window is then capped at ~2000 lines. So a long
+// session's earlier history is discarded by design.
+//
+// The route reports `first_seq` for exactly this: greater than 1 means earlier
+// events exist on neither side of the wire. The view must not present such a
+// trail as complete, and until round 27 it COULD NOT: this comment stated the
+// obligation while the component took only `events`, and `App`/`TerminalWorkspace`
+// dropped `first_seq` one line before the mount. A stated obligation that the
+// data flow makes unsatisfiable is worse than a missing one. `firstSeq` is a prop
+// now, and the notice below is the only implementation of it — the Archive used
+// to carry its own copy.
 //
 // The view shows the newest ROUNDS_PAGE rounds (the tail is what streams,
 // anchored like a terminal) and "load earlier" widens the window upward.
@@ -109,7 +116,17 @@ function EventRow({ ev }: { ev: CommandEvent }) {
   );
 }
 
-export function TrajectoryView({ events }: { events: import("../hooks/useCommandEvents").CommandEvent[] }) {
+export function TrajectoryView({
+  events,
+  firstSeq,
+}: {
+  events: import("../hooks/useCommandEvents").CommandEvent[];
+  /** The `seq` of the first event the DEVICE still has, from the route's
+   *  `first_seq`. Greater than 1 means earlier events are not on either side of
+   *  the wire, and this view must say so rather than let the trail read as
+   *  complete — see the notice below. */
+  firstSeq?: number;
+}) {
   // round-128: events come from the App-level shared poll (one fetch per 2s,
   // not a second independent one).
   const rounds = useTrajectory(events);
@@ -179,6 +196,19 @@ export function TrajectoryView({ events }: { events: import("../hooks/useCommand
 
   return (
     <div id="traj-view">
+      {firstSeq != null && firstSeq > 1 && (
+        // THE TRAIL IS NOT THE WHOLE STORY, and this is the ONLY place that says
+        // so — every mount goes through this component, so a new one cannot
+        // forget. The wording states the device's real rule: it is not "the last
+        // 2000 lines" (the cap applies only after the pre-last-command history
+        // is drained), and saying that would overstate what survived by an order
+        // of magnitude on a real session.
+        <p className="traj-trimmed" data-first-seq={firstSeq}>
+          Earlier events are not recorded: this trail begins at event {firstSeq}. When a
+          session closes, the device keeps its most recent command onward and drops what
+          came before.
+        </p>
+      )}
       <div className="traj-header">
         <span className="traj-title">Trajectory</span>
         <span className="traj-count">{rounds.length}</span>

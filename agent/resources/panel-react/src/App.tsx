@@ -196,7 +196,17 @@ export function App() {
     registerWrite,
     token,
     plugins,
-    cmdEvents: { cards: cmdEvents.cards, events: cmdEvents.events },
+    // `firstSeq` RIDES ALONG. It used to be dropped here — ONE LINE above the
+    // mounts — which made the trajectory's own comment ("the view must not
+    // present such a trail as complete") an obligation the data flow could not
+    // satisfy, while the Archive disclosed the same trim from the same value. A
+    // stated obligation that the wiring makes unsatisfiable is worse than no
+    // obligation: it reads as handled.
+    cmdEvents: {
+      cards: cmdEvents.cards,
+      events: cmdEvents.events,
+      firstSeq: cmdEvents.firstSeq,
+    },
   };
 
   if (isDesktopPath()) {
