@@ -40,6 +40,11 @@
   --accent-light: #ffefe5;
   --accent-hover: #bf3a0a;
   --accent-dark: #a63308;
+  /* TEXT on --accent-light. The panel has had `--accent-on-soft` all along; the
+     console did not, and three rules here referenced it anyway — a `var()` that
+     resolves to nothing makes the DECLARATION invalid, so the property is dropped
+     silently and the element inherits. Measured: #a63308 on #ffefe5 = 6.04. */
+  --accent-on-soft: #a63308;
   --accent-ring: rgba(232, 89, 12, 0.18);
   --accent-shadow: rgba(217, 72, 15, 0.3);
 
@@ -167,6 +172,10 @@ body[data-theme="dark"] {
   --accent-light: #3d2817;
   --accent-hover: #ffc078;
   --accent-dark: #e8590c;
+  /* Dark mode needs the BRIGHT accent for this: --accent-dark (#e8590c) on
+     --accent-light (#3d2817) measures 3.87 and FAILS AA — the same trap
+     `.note.tip` works around with a per-rule override. #ffa94d = 7.29. */
+  --accent-on-soft: #ffa94d;
   --accent-ring: rgba(255, 169, 77, 0.22);
   --accent-shadow: rgba(0, 0, 0, 0.45);
 
@@ -1565,7 +1574,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .models-prefix.lane-nv { border-left-color: var(--success); }
 .models-prefix.lane-gmi { border-left-color: var(--warning); }
 .models-prefix.lane-cm { border-left-color: var(--info); }
-.models-prefix.lane-amd { border-left-color: var(--danger); }
+.models-prefix.lane-amd { border-left-color: var(--error); }
 
 .models-backend { font-weight: 600; color: var(--text); }
 .models-n { font-size: 11.5px; color: var(--text-secondary); }
@@ -1597,7 +1606,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 }
 .model-chip:hover:not(:disabled) { border-color: var(--accent); color: var(--accent-on-soft); }
 .model-chip.current {
-  background: var(--accent-soft);
+  background: var(--accent-light);
   border-color: var(--accent);
   color: var(--accent-on-soft);
   font-weight: 600;

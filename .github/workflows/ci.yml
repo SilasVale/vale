@@ -260,6 +260,15 @@ jobs:
       # a harness that could not tell an unmocked request from an empty page.)
       - name: panel-audit skip-vs-pass checks
         run: node scripts/test/panel-audit-skip-check.mjs
+      # A `var()` THAT RESOLVES TO NOTHING SILENTLY DELETES ITS DECLARATION. No
+      # error, no log, the page renders — just not what the rule says. Round 43's
+      # console Models page used three names that exist in the PANEL's tokens and not
+      # in the console's, so a lane had no stripe and the current chip was not
+      # highlighted, while every contrast sweep still read 0 under AA: a dropped
+      # `color` leaves an INHERITED colour, which measures fine. A probe cannot see a
+      # declaration that never applied.
+      - name: dangling custom-property checks
+        run: node scripts/custom-prop-check.mjs
       # THE SAME DISEASE IN THE E2E GATE, and this one was in CI on every push.
       # The suite ends on `exit(failed.length ? 1 : 0)`, so `--only` naming a
       # section that does not exist ran NOTHING, printed "== 0/0 passed ==" and
