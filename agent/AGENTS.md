@@ -515,7 +515,63 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 43 (still the frontend redesign, still the axis that
+Last updated: 2026-09-11 round 44 (the first redesign slice that changes what a
+person SEES — I stopped auditing stylesheets and drove a real browser at both live
+surfaces, then worked from the pictures). Commit: 1af31917. d1 UPDATED TO 1.2.349.
+  (1) HOW I LOOKED, because it is reusable: the device's own playwright drives a
+  page (`browser_run_script` + `acquireBrowser()`), screenshots to
+  `C:\ProgramData\Vale\pwout`, `system_file_upload` hands back a one-time URL, and
+  `curl` on this box fetches it. No listener on either side. THE TWO LIVE SURFACES
+  ARE `https://api.saisi.online/` (the console) AND `http://127.0.0.1:18080/desktop/`
+  (the panel, reachable FROM d1) — and `networkidle` NEVER fires on the panel
+  because it holds an SSE stream open by design; use `domcontentloaded`.
+  (2) WHAT THE CONSOLE'S LOGIN SCREENSHOT SHOWED, all visible at 1440x900: a 396px
+  card floating in ~1440px of nothing; the ONLY explanatory sentence on the page
+  sitting OUTSIDE the card, under it, in the smallest type on screen, belonging to
+  nothing; and THE WORDMARK RENDERED TWICE — `<h1>Vale</h1>` followed by `app.sub`,
+  whose value began with "Vale" ("Vale / Vale 平台 · AI 网关与设备"). `app.sub` is
+  used in exactly ONE place, directly under that `<h1>`, so the duplication was
+  structural rather than a typo.
+  NOW: a split page. Brand owns the left half (wordmark, one-line description, and
+  that sentence, centred as one group); the form owns the right; the language
+  toggle moved to the brand half where a PAGE-level control belongs.
+  (3) MY FIRST ATTEMPT MADE IT WORSE AND THE SCREENSHOT SAID SO, which is the whole
+  reason for looking. Moving the brand out SHORTENED the card, and the language
+  button — absolutely positioned at its top-right — landed ON the card's top
+  border. The accent wash I added was clipped to a corner smudge by
+  `overflow: hidden`, and after repositioning it was STILL invisible because
+  `--accent-soft` (#ffefe5) on `--bg` (#fafafa) is imperceptible at that size; it
+  is REMOVED rather than left as decoration that does nothing. `max-width: 34ch`
+  is a LATIN measure — CJK glyphs are about twice as wide, so the Chinese copy
+  broke after twelve characters and left "转发。" alone on a line; now `30em`.
+  (4) VERIFIED AT TWO WIDTHS, BY MEASUREMENT AND BY EYE: wide 1440
+  `overlapsCard=false` (card x=882, lang x=653); narrow 700 `overlapsCard=false`,
+  card 396px, `hScroll=false`. Screenshots of both. Deployed and confirmed live.
+  (5) THE PANEL, MEASURED FOR THE NEXT ROUND rather than guessed at: it is in far
+  better shape than the console was. 57px icon-only rail, session tabs, a
+  governance pill row (Take control / Set a goal for this session / Ask before
+  each command), an xterm surface, a status bar. `bodyBg` is `rgb(250,250,250)` and
+  `railW` 57. TWO THINGS WORTH TAKING NEXT, both from the picture: the STATUS BAR
+  is the only place the release shows and it is the smallest, lowest-contrast text
+  on screen (`1 session · v1.2.348 · up 1h 24m · CPU 2% · MEM 63%`); and the three
+  GOVERNANCE PILLS are the product's core story rendered at the lowest emphasis on
+  the page. `painted: 0` canvases — xterm is on its DOM renderer, as round-274
+  documented.
+  (6) AND THE SCREENSHOT CAUGHT A REAL DEPLOYMENT GAP: its terminal still showed
+  the `npm i -g …` I ran in round 31, and the status bar read **v1.2.348** — the
+  CLI had been updated but `vale update` was NEVER RUN, so the device was behind
+  while I believed it current. Ran it; the execute returned a 502, WHICH IS THE
+  DOCUMENTED MID-SWAP DROP AND NOT PROOF OF ANYTHING, so it was verified BY EFFECT:
+  `release: 1.2.349` / `latest: 1.2.349 (this device is current)`. The round-39
+  drift check answered it in one line.
+  (7) STILL TO DECIDE, and now with evidence in hand: the panel's remaining
+  subjective work (status-bar emphasis, governance-pill prominence, whether an
+  icon-only rail is right) and the console's VIEWS beyond login (Overview, Users,
+  Devices, Keys, Routes) — none of which I have looked at yet.
+  Gates: token contract green; gateway 766 + format; gateway-ui 1 + render smoke +
+  build; panel 506; agent 583 default. CI green on main.
+
+Previous round: 2026-09-11 round 43 (still the frontend redesign, still the axis that
 can be MEASURED: last round the two surfaces disagreed on token VALUES, this round
 on DISCIPLINE — and the panel was the one that was wrong). Commit: 4bcd32bb. NO
 RELEASE: the change is proven rendering-neutral, so there is nothing to ship.
