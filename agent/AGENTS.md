@@ -519,7 +519,61 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 71 (the rail's ✕ — three defects in one control: an
+Last updated: 2026-09-12 round 72-73 (the 炫彩 art direction, asked for by the user:
+a new mark, an iridescent token layer, the wash, and glass surfaces — across all THREE
+frontends, then released as 1.2.357). Commits: d29e3138, 654c990b, 472c4bc2, 494723da,
+5efd7d5e. d1 on 1.2.357; audit CLEAN; keep-latest applied (v1.2.357 alone).
+  (1) THE MARK: same silhouette (near hill, far ridge, sun over the pass), relit as an
+  iridescent sky. RENDERED AND LOOKED AT at 140/72/40/22px before keeping it — v1 read as
+  "purple sky over a flat orange band", the horizon was a stripe rather than a sunrise,
+  so v2 peaks the warmth AT the horizon and lifts the ribbons into the upper half.
+  (2) THE TOKEN LAYER (`--aura-*`, 18 declarations per frontend) is DECORATIVE ONLY: no
+  text colour is ever taken from it, so no contrast measurement moves. The block is
+  lifted verbatim from the panel into the console.
+  (3) THE WASH is a fixed `body::before` with `pointer-events: none`, BELOW every
+  surface. The first pass was too timid to see at all — measured by looking at a
+  screenshot, it rendered as slightly dirty white.
+  (4) WHY THE LIGHT THEME WAS FLAT, and it was not the gradient: `.card` was
+  `background: var(--bg)`, fully OPAQUE, so the wash rendered behind every card and was
+  hidden by it. Cards are now 84% of their own colour + `backdrop-filter`.
+  (5) THE MINIFIER WAS SILENTLY EATING THE BLUR. `backdrop-filter` computed to `none`
+  while the built CSS contained it, the token resolved, and the engine reported
+  `CSS.supports(...) === true`. Cause: with the standard property FIRST and `-webkit-`
+  second, lightningcss collapsed the pair and kept the `-webkit-` form, which this
+  Chromium reports as UNSUPPORTED. STANDARD LAST is the survivor. Verified:
+  `backdropOnCard: "blur(14px) saturate(1.4)"` in both themes.
+  (6) THE LANDING PAGE IS WHERE THE DIRECTION READS BEST — lower alphas (26-34%) than
+  the console's (30-62%) and visibly stronger, because the console's light theme starts
+  from #fafafa where a soft tint has far less room. Not an intensity problem; a
+  background problem.
+  (7) I SHIPPED THE OLD LOGO IN THE PANEL. The mark exists in THREE places (the panel's
+  `BrandMark`, the console's favicon.svg, the landing's data-URI); I changed two and
+  forgot the panel, and EVERY gate stayed green. Found by `strings` on the built exe
+  looking for a gradient id that was not there. `Icon.test.tsx` now reads
+  `brand/logo-aurora.svg` and requires the same gradient ids, path shapes and stop
+  colours — mutation-proven by reproducing the exact miss.
+  (8) I NEARLY REPORTED A PHANTOM REGRESSION: my contrast probe returned 13/13 failures
+  in the light theme (`stat-value` at 1.15:1). The numbers were the PROBE's —
+  `getComputedStyle` returns the glass background as `color(srgb 0.98 0.98 0.98 / 0.84)`
+  and my parser took the trailing `84` as the ALPHA. I looked at the page before writing
+  it down; the text is plainly readable. The broken instrument was mine.
+  (9) THE RELEASE GUARD FIRED TWICE, both times correctly: once for uncommitted panel
+  artifacts, once because the exe predated the logo-fix commit. Both are the
+  fail-closed behaviour working, not obstacles.
+  (10) VERIFIED ON THE DEVICE (1.2.357): all seven aurora gradient ids in the rail mark,
+  `isAuroraMark: true`, wash active with `pointer-events: none`.
+  (11) STILL OPEN: Ctrl+Shift+Y is a no-op and round 61's PathView "jump to step" is
+  inert in BOTH shells — `sessionViews` exists in THREE places and App's copy is
+  WRITE-ONLY (runtime-reproduced with a positive control by a subagent; the fix is to
+  pass it into DesktopShell and delete its local copy). Also: the landing page's
+  `--ds-font-family`/`--ds-transition-duration` hold the other frontends' names with
+  different values (outside the contract, which compares console vs panel only), and the
+  console's light `--accent` is 4.30:1 with white — no ink fixes it, the accent must
+  darken to ~#bf3a0a.
+  Gates: panel 522 (60 files) + build; console 788 + build + deploy; landing deployed;
+  custom-property green; token contract green; CI + release.yml green; d1 on 1.2.357.
+
+Previous round: 2026-09-11 round 71 (the rail's ✕ — three defects in one control: an
 accessible name that lied, no way to undo, and a header counting a row it had hidden).
 Commit: 064f8b7c. CI green; NOT yet released (the panel ships inside the exe).
   (1) THE ACCESSIBLE NAME SAID SOMETHING THE ACTION DID NOT DO: `title="Hide from list"`
