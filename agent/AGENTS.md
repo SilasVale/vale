@@ -488,7 +488,89 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 30 (the trail dropped a run attribution the device
+Last updated: 2026-09-11 round 31 (a FRESH AUDIT of `paths.rs` — the foundation
+module no round had ever opened — found the layout migration could NEVER finish on
+a two-volume device and blamed a file lock for it; plus a backgrounded command the
+operator was told had been interrupted). Commits: e7158bea, 68129b44, plus
+1.2.335 and 1.2.336.
+  (1) THE MIGRATION COULD NOT CROSS VOLUMES. `move_one` used `std::fs::rename`
+  with no fallback, and `rename` is documented to fail across mount points. The
+  migration moves the logs and `pwout` from InstallDir to DataDir — which on d1 are
+  `D:\Vale` and `C:\ProgramData\Vale`, TWO VOLUMES — so every data-side move
+  failed, the marker was never written, `migration_pending` stayed true FOREVER,
+  and every boot announced "INCOMPLETE (pending moves locked?)".
+  THE DIAGNOSIS WAS THE SECOND HALF OF THE DEFECT: nothing was locked, and the
+  message sent a reader hunting a file lock that never existed. A message is a
+  claim about the world; this one was false on every single boot. It now names the
+  conditions that actually cause it.
+  The fix is copy-then-remove on rename failure only, so a same-volume move keeps
+  its atomicity. Two details are load-bearing: the source is left in place if the
+  COPY fails (a half-copied tree that also deleted its origin loses data), and the
+  move reports SUCCESS if the copy landed but the source could not be deleted —
+  the leftover is a duplicate, not a loss, and retrying forever over an
+  undeletable file would keep the device permanently "INCOMPLETE".
+  THE TEST USES A REAL CROSS-DEVICE RENAME: `/tmp` is ext4 and `/dev/shm` is tmpfs
+  here, so `rename` between them fails with EXDEV for the same reason it does on
+  the device. It asserts that premise FIRST, so it would fail loudly rather than go
+  vacuous if the two ever became one filesystem, then moves a FILE and a DIRECTORY
+  TREE across the boundary. Mutation-proven: rename-only fails it on the file.
+  LABELLED LIMIT: `cfg(target_os = "linux")` — it needs a second filesystem, and
+  the fallback itself is platform-neutral.
+  (2) TWO MORE IN THE COMMENT-CLAIMS-WHAT-THE-CODE-DOES-NOT FAMILY, now seven
+  rounds running. `layout_marker_file()` had ZERO callers (its only reader was its
+  own test) while `migration_notes` hardcoded the same path TWICE — the reason is
+  legitimate (the migration takes its roots as ARGUMENTS so tests can pin the plan
+  without the process-global cached dirs), which is why there are two functions and
+  no reason for three copies of the literal. And `winmain.rs`'s half-swap recovery
+  said it "runs from the BOOT task wrapper (which exists independently)": THERE IS
+  NO WRAPPER — `self_heal` is called from inside this process and the boot task's
+  Execute IS this exe, so the `!exe.exists()` branch cannot run in the situation it
+  was written for. If a swap leaves no exe, nothing starts the agent and nothing
+  repairs it. The branch is still worth keeping (it diagnoses a doubled-up state
+  from `startup.log`), and the comment now says what it can and cannot do. CLOSING
+  THE GAP NEEDS A LAUNCHER THAT IS NOT THE EXE; NOT DONE, deliberately — untested
+  Windows-only boot recovery is worse than a documented absence.
+  (3) A BACKGROUNDED COMMAND WAS REPORTED AS "INTERRUPTED", found by the same
+  scout after its brief was complete. The card said "Backgrounded" while the STATE
+  it fed was `warn`, and the path summary's word for `warn` is "interrupted" — so
+  work still legitimately RUNNING was summarized as stopped, and `bad = fail +
+  warn` lit the session's "bad" marker for a session nothing had gone wrong with.
+  TWO PRE-EXISTING TESTS WERE PINNING THE DEFECT and that is the part worth
+  keeping: one asserted the state list `[...,"warn","warn",...]` for a fixture
+  whose third entry is a BACKGROUNDED command, the other asserted
+  `reason: "backgrounded"` maps to `state: "warn"`. Both were green and both
+  described the bug as the contract. A TEST THAT PINS A DEFECT IS WORSE THAN A
+  MISSING ONE, because its green is taken as evidence the behaviour is intended.
+  `bg` is now a distinct state, counted separately, ranked with `running`, excluded
+  from `bad`, and rendered on its own neutral line. Adding it also exposed the
+  state union being declared in THREE places; both components now use the shared
+  `PathState`, so the next state is one edit.
+  (4) THE ROUND'S OTHER FINDING IS THAT THE DEVICE WAS FIVE RELEASES BEHIND.
+  `vale status` read 1.2.329 while the CDN served 1.2.334 — the delivery gap this
+  log keeps recording, caught only by LOOKING. d1 is now on 1.2.334 (then 1.2.336),
+  verified by effect: `found=True first_seq=34 events=26` (the trim disclosure) and
+  `unfiltered=2 filtered_by_net=1` (round 29's tag filter — before that fix the
+  second number would have been 2, the unfiltered result presented as filtered).
+  (5) AUDIT FINDINGS NOT ACTED ON, recorded with their evidence so the next round
+  does not re-derive them. The scout's TOP finding is a TRUTH GAP rather than a
+  bug: session-less `terminal_execute` — the path the CONSOLE uses, since the relay
+  never injects a session id — calls a logger-free `execute_local`, so
+  `session_log.rs`'s "Every terminal command on a device is recorded as an event
+  stream" is FALSE for that path, and `/api/sessions` can never show it. Also open:
+  the boot stale-cleanup probes PRE-V2 spellings (`<install>\vale-playwright.new.zip`)
+  while staging writes `components\...`, so a power cut leaves leftovers the NEXT
+  swap applies (version skew under a new release marker) — and it is the literal
+  counterexample to the guide's "zero legacy-directory probing outside paths.rs";
+  a backgrounded command's exit code lives only in an in-memory capped evicting map
+  while the durable trail ends at `status: "backgrounded"`; the CLI's registry
+  fallbacks (`C:\Program Files\Vale`) differ from the agent's (exe dir) and `setup`
+  discards the `reg add` status; the migration test's fixtures are drive-letter
+  based and NO test runs on Windows in CI; and six modules still carry
+  `<install>/...` doc paths that layout v2 moved.
+  Gates: agent 578 default / 629 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 764 + format; panel 491 (was 487) + build.
+
+Previous round: 2026-09-11 round 30 (the trail dropped a run attribution the device
 had ALREADY RECORDED — and a comment explained the loss away as a design choice).
 Commit: 0bcb2798, plus 1.2.334.
   (1) `useOperationRuns.ts` OPENED BY STATING that `useCommandEvents` "reads ONE
