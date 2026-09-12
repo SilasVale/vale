@@ -515,7 +515,71 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 41 (asked whether the gateway can add models and
+Last updated: 2026-09-11 round 42 (user asked to redesign both frontends; started
+with the half that is MEASURABLE — the two surfaces disagreed on the values of
+their shared design tokens — and it turned out I could make it worse by doing half
+of it). Commits: afb1b721, eb6d9b6c. Deployed to the live worker and verified.
+  (1) THE MEASURED DEFECT, BEFORE ANY TASTE. The console (`gateway/ui`, served by
+  the `vale-gate` worker) and the device panel (`agent/resources/panel-react`) are
+  ONE PRODUCT with two hand-rolled token sets that shared SIXTEEN token NAMES, of
+  which TWELVE HELD DIFFERENT VALUES: `--chrome-bg` was Bootstrap gray-100 in one
+  and zinc in the other, `--chrome-ink` gray-900 vs `#1d1d1f`, `--radius-sm` 6px
+  vs 10px, `--radius-lg` 14px vs 20px. So a shared name meant two different things
+  depending on which surface you looked at — and THE CONSOLE'S OWN COMMENT SAID
+  "Same vocabulary as the device panel's frame". That sentence is what stopped
+  anyone checking: not a lie about code, a half-truth about DESIGN that read as an
+  assurance.
+  (2) THE DARK SETS HAD ALREADY BEEN ALIGNED (2 of 11 differed), which is exactly
+  why the divergence survived — whoever built dark mode compared the two, and
+  light was never compared. A surface checked once is not checked.
+  (3) I MADE IT WORSE BEFORE BETTER, AND THE FIX IS THE INTERESTING PART. Aligning
+  only `--chrome-*` left a ZINC FRAME AROUND A BOOTSTRAP BODY — the two halves
+  disagreeing INSIDE one surface rather than across two. The contract check could
+  not see it, because it compares names BOTH sides declare and the console's own
+  `--text`/`--border`/`--bg-secondary` are not shared names. So the check now ALSO
+  requires every console neutral to be a value the panel DECLARES, and the moment
+  that was written it found EIGHT MORE in dark mode — the same half-alignment, one
+  mode over. It then caught two values I had INTERPOLATED rather than taken from
+  the palette (`--border-strong`, `--text-muted`): a design system with invented
+  midpoints is not a system. All now drawn from the panel's scale.
+  Mutation-proven on the exact mistake: `--text: #212529` fails with "console
+  neutral(s) are NOT on the panel's scale".
+  (4) THE DIRECTION IS DELIBERATE: the console FOLLOWS the panel (104 tokens
+  against 78, palette documented, and it is the device's primary operator
+  surface). Resolving one `var()` level is required to compare fairly — the panel
+  writes `var(--ds-neutral-50)` where the console writes `#fafafa`, which is
+  legitimate — and anything deeper is reported UNRESOLVED rather than treated as
+  a match.
+  (5) THE CHECK'S PARSER LIED FIRST, the same way the model-drift checker did one
+  round ago: it matched `body[data-theme="dark"]` inside a COMMENT and read the
+  LIGHT block as if it were the dark one. Comments are now stripped before
+  parsing, and the check asserts it found at least 8 shared tokens so a wrong
+  block cannot pass as agreement. Caught by reading the raw file instead of
+  trusting the tool's output.
+  (6) ALSO FIXED, found by doing the work twice: EVERY CONSOLE BUILD LEFT ITS
+  PREDECESSOR BEHIND. `vite.config` sets `emptyOutDir: false` deliberately (that
+  directory also holds the code-viewer mirror), so every hashed bundle this
+  console has ever built stayed in the repo and shipped with the worker; two
+  rebuilds in one round left two superseded files, both TRACKED by git.
+  `prune-stale-assets.mjs` now runs after vite and removes ONLY unreferenced
+  `assets/index-*.{js,css}`, refusing to act when `index.html` references nothing.
+  The directory went from six files to two.
+  (7) VERIFIED ON THE LIVE WORKER, not the repo: `https://api.saisi.online/`
+  serves the new pair, and the served CSS contains all six zinc values with ZERO
+  of the seven Bootstrap ones. (My first live check read a CACHED response and
+  looked like a failed deploy; a cache-busted fetch and a direct 200 on the new
+  bundle settled it — worth recording because "the deploy did not take" is the
+  wrong conclusion I nearly drew.)
+  (8) STILL TO DECIDE, and I am not guessing: the scope of the REST of the
+  redesign. This slice is the objective half — the surfaces measurably disagreed.
+  The subjective half (layout, density, navigation, whether the console's five
+  views are the right five) is a design decision with no test to appeal to, and it
+  wants the user's call on direction before pages move around.
+  Gates: token contract green (16 light / 11 dark shared tokens agree; every
+  console neutral on the panel's scale in both modes); gateway 766 + format;
+  gateway-ui build + tests + jsdom render smoke; panel 506 untouched.
+
+Previous round: 2026-09-11 round 41 (asked whether the gateway can add models and
 whether it updates itself: it can do neither by itself, and nothing was watching —
 so the watching is now a tool). Commit: de5b625c. NO RELEASE: `scripts/` is not in
 the npm package, so this change cannot reach a device.
