@@ -519,7 +519,34 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 84 (a key the CLI promised to register with and never
+Last updated: 2026-09-12 round 85 (the read-back timeout asserted a conclusion a timeout
+cannot support — and, catching my own fix, the JS-visible verdict API let a caller omit
+the field the new message needed).
+Commit: 9473a6f3. CI green.
+  (1) "rollback: the swap did NOT take" WAS PRINTED FOR EVERY UNPROVEN SWAP. `ok: false`
+  is a TIMEOUT: the swap kills and restarts the agent, so a slow-but-successful swap looks
+  identical to a failed one — and `saw === null` (marker absent OR UNREADABLE) is weaker
+  evidence still. All three collapsed into one confident sentence. `ReleaseMarkerCheck`
+  carries `waitedMs` now and the message states what was OBSERVED and over how long: "no
+  release marker showing <want> within 90s (last read: <what>) ... NOT pinned ... Check the
+  update log and `vale status`, then re-run". The NOT-PINNED decision is unchanged — an
+  unproven swap must never pin — only the claim about WHY.
+  (2) THE TEST CAUGHT A REAL GAP IN MY OWN FIX: `releaseMarkerVerdict` is reachable from JS
+  (`require("../bin/vale.js")`), so the TS interface does not constrain runtime callers —
+  and the existing test builds the object WITHOUT `waitedMs`, which would have rendered
+  "within NaNs". The message now names the window generically when the field is absent, and
+  the test passes it and asserts the new wording.
+  (3) MUTATION-PROVEN: restoring "did NOT take" fails the new assertion (34/1), naming
+  "must not assert a conclusion a timeout cannot support". Two more assertions cover
+  `saw === null`, which must not read as a verdict at all.
+  (4) STILL OPEN: L11 "sources staged" prints even when stageDesktopShell returned early;
+  L8 `autostart status` cannot distinguish a read failure from an absent task; L5 a failed
+  update receipt is silent because `ps()` returns rather than throws; L3 the pin write and
+  the root-marker cleanup share one try, so a cleanup-only failure reports the pin as NOT
+  written when it WAS.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 84 (a key the CLI promised to register with and never
 used, and a missing boot task reported as a failure of a change nobody asked it to make).
 Commit: 6a087c57. CI green.
   (1) `vale setup --reg-key K` WITHOUT `--tunnel` PRINTED "registering device with the
