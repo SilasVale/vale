@@ -1,14 +1,28 @@
 /* ============================================================
    Base — reset, scrollbars, focus ring, typography.
    ============================================================ */
-:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.16); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
-*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
 }
@@ -19,6 +33,28 @@ body {
   background: var(--bg);
   color: var(--ink);
   font: 13px/1.5 var(--font);
+}
+
+/* ---- aurora wash ----
+   The iridescent light behind everything. It is a FIXED pseudo-element rather than a
+   background-image on `body` so it never scrolls with content and never sits under a
+   stacking context that would repaint it; `pointer-events: none` keeps it out of the
+   way of every control. Because it is decorative and stays BELOW all surfaces, no
+   text colour changes and every contrast measurement is unaffected. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--aura-wash);
+  opacity: 0.9;
+}
+/* Content rides above the wash. The rail and the workspace already establish their
+   own stacking; this only guarantees the wash is never on top. */
+body > * {
+  position: relative;
+  z-index: 1;
 }
 
 #root {
@@ -38,6 +74,14 @@ code {
   font-size: 12px;
 }
 
-.muted { color: var(--muted); }
-.hint { font-size: 12px; color: var(--muted); }
-.error { color: var(--danger-on-soft); font-size: 12px; }
+.muted {
+  color: var(--muted);
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.error {
+  color: var(--danger-on-soft);
+  font-size: 12px;
+}

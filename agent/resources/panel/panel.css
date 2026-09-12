@@ -16,6 +16,69 @@
   --brand-grad-a: #f59f00;
   --brand-grad-b: #e8590c;
 
+  /* ---- aurora art direction ----
+     The iridescent layer. Every value here is DECORATIVE: it may sit behind text,
+     under a border, or inside a glow, but no TEXT colour is ever taken from it, so
+     the AA contrast of the surfaces above is unchanged by this whole block.
+     Names are shared with the console by scripts/test/token-contract-check.mjs, so
+     both products light up identically. */
+  --aura-1: #22d3ee; /* cyan   */
+  --aura-2: #818cf8; /* indigo */
+  --aura-3: #c084fc; /* violet */
+  --aura-4: #f472b6; /* pink   */
+  --aura-5: #f59f00; /* brand amber — anchors the sweep to the product colour */
+  /* The wash that sits on the app background. Kept LOW alpha on purpose: it must
+     never compete with content, and it is the only thing here that covers a large
+     area. */
+  --aura-wash:
+    radial-gradient(
+      70rem 44rem at 8% -12%,
+      color-mix(in srgb, var(--aura-3) 62%, transparent),
+      transparent 62%
+    ),
+    radial-gradient(
+      58rem 38rem at 96% 2%,
+      color-mix(in srgb, var(--aura-1) 48%, transparent),
+      transparent 60%
+    ),
+    radial-gradient(
+      64rem 40rem at 50% 116%,
+      color-mix(in srgb, var(--aura-5) 44%, transparent),
+      transparent 64%
+    ),
+    radial-gradient(
+      40rem 30rem at 78% 88%,
+      color-mix(in srgb, var(--aura-4) 30%, transparent),
+      transparent 66%
+    );
+  /* The iridescent sweep, for accents and the brand mark. */
+  --aura-sweep: linear-gradient(
+    115deg,
+    var(--aura-1),
+    var(--aura-2) 28%,
+    var(--aura-3) 55%,
+    var(--aura-4) 78%,
+    var(--aura-5)
+  );
+  /* A softer sweep for large fills where the full one is too loud. */
+  --aura-sweep-soft: linear-gradient(
+    115deg,
+    color-mix(in srgb, var(--aura-1) 55%, transparent),
+    color-mix(in srgb, var(--aura-3) 55%, transparent) 50%,
+    color-mix(in srgb, var(--aura-5) 45%, transparent)
+  );
+  /* Depth: the shadow that makes a raised surface look lifted, tinted toward the
+     sweep rather than plain black. */
+  --aura-glow:
+    0 0 0 1px color-mix(in srgb, var(--aura-3) 22%, transparent),
+    0 6px 24px -8px color-mix(in srgb, var(--aura-2) 40%, transparent);
+  --aura-glow-strong:
+    0 0 0 1px color-mix(in srgb, var(--aura-3) 36%, transparent),
+    0 10px 34px -10px color-mix(in srgb, var(--aura-4) 48%, transparent);
+  /* Blur radius for frosted surfaces. A plain value, so it IS shared; the surface
+     COLOUR is not, because the two frontends' surface roles hold different values. */
+  --glass-blur: 14px;
+
   /* ---- dsh neutral scale ---- */
   --ds-neutral-50: #fafafa;
   --ds-neutral-100: #f4f4f5;
@@ -245,14 +308,28 @@ body[data-theme="dark"] {
 /* ============================================================
    Base — reset, scrollbars, focus ring, typography.
    ============================================================ */
-:focus-visible { outline: 2px solid var(--focus-ring); outline-offset: 2px; }
+:focus-visible {
+  outline: 2px solid var(--focus-ring);
+  outline-offset: 2px;
+}
 
-*::-webkit-scrollbar { width: 8px; height: 8px; }
-*::-webkit-scrollbar-thumb { background: rgba(0, 0, 0, 0.16); border-radius: 4px; }
-*::-webkit-scrollbar-thumb:hover { background: rgba(0, 0, 0, 0.28); }
-*::-webkit-scrollbar-track { background: transparent; }
+*::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+*::-webkit-scrollbar-thumb {
+  background: rgba(0, 0, 0, 0.16);
+  border-radius: 4px;
+}
+*::-webkit-scrollbar-thumb:hover {
+  background: rgba(0, 0, 0, 0.28);
+}
+*::-webkit-scrollbar-track {
+  background: transparent;
+}
 
-html, body {
+html,
+body {
   height: 100%;
   margin: 0;
 }
@@ -263,6 +340,28 @@ body {
   background: var(--bg);
   color: var(--ink);
   font: 13px/1.5 var(--font);
+}
+
+/* ---- aurora wash ----
+   The iridescent light behind everything. It is a FIXED pseudo-element rather than a
+   background-image on `body` so it never scrolls with content and never sits under a
+   stacking context that would repaint it; `pointer-events: none` keeps it out of the
+   way of every control. Because it is decorative and stays BELOW all surfaces, no
+   text colour changes and every contrast measurement is unaffected. */
+body::before {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  background: var(--aura-wash);
+  opacity: 0.9;
+}
+/* Content rides above the wash. The rail and the workspace already establish their
+   own stacking; this only guarantees the wash is never on top. */
+body > * {
+  position: relative;
+  z-index: 1;
 }
 
 #root {
@@ -282,9 +381,17 @@ code {
   font-size: 12px;
 }
 
-.muted { color: var(--muted); }
-.hint { font-size: 12px; color: var(--muted); }
-.error { color: var(--danger-on-soft); font-size: 12px; }
+.muted {
+  color: var(--muted);
+}
+.hint {
+  font-size: 12px;
+  color: var(--muted);
+}
+.error {
+  color: var(--danger-on-soft);
+  font-size: 12px;
+}
 
 
 /* ============ components.css ============ */
