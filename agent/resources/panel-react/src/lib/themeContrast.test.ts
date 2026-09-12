@@ -406,6 +406,32 @@ describe("opacity is not used to dim text", () => {
     ).toContain("background: var(--accent-solid)");
   });
 
+  it("text on a surface darker than white does not use a white-surface step", () => {
+    // The tested probe (`agent/scripts/lib/contrast-probe.mjs`) composited the
+    // real stacks and measured, in LIGHT mode across all eight pages:
+    //
+    //   .mem-tag          --tag-ink #0b7a6e on its own soft bg = 4.30  (need 4.5, 11px)
+    //   .plug-tools       --muted   #71717a on --surface-chip   = 4.40
+    //   .plug-tag success --muted   #71717a on --state-muted-soft = 4.23
+    //
+    // `--muted` is the panel's dominant secondary step (114 `color:` uses) and it
+    // PASSES on white (4.83) and on --bg (4.63) while FAILING on the two darker
+    // surfaces — the same conditional-pass shape the console's `--text-muted` had.
+    // The console's answer was to stop using the mark weight for text at all; here
+    // the step is legitimate, so the TWO rules that sit on darker surfaces take
+    // --chrome-ink-dim (6.56 there) and the token is left alone. Measured after:
+    // .mem-tag 4.99, .plug-tools 7.03, .plug-tag 6.76.
+    //
+    // `--tag-ink` was darkened in place instead: #0b7a6e -> #0a6f64 is the same
+    // hue and takes it from 4.30 to 4.99. The lightest value that cleared every
+    // surface was #66666f, which is NOT on the --ds-neutral-* scale — an invented
+    // midpoint, which round 42 established is not a design system.
+    const css = builtCss();
+    expect(blockOf(css, ".plug-tools")).toContain("color: var(--chrome-ink-dim)");
+    expect(blockOf(css, '.plug-tag[data-state="success"]')).toContain("color: var(--chrome-ink-dim)");
+    expect(blockOf(css, ":root")).toContain("--tag-ink: #0a6f64");
+  });
+
   it("--accent-ink and --faint never paint TEXT", () => {
     // The dark theme was NEVER SWEPT until now — every contrast measurement in
     // this file before it was taken in LIGHT mode, and the dark block holds its

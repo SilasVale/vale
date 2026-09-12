@@ -117,7 +117,7 @@
   --state-muted-soft: rgba(127, 127, 127, 0.12);
 
   /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
-  --tag-ink: #0b7a6e;        /* memory tag chips (teal ink, light theme) */
+  --tag-ink: #0a6f64;        /* memory tag chips (teal ink, light theme) */
   --terminal-bg: #131418;    /* xterm + browser viewport (always dark) */
   --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
@@ -1948,7 +1948,8 @@ code {
   flex: none;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--muted);
+  /* --surface-chip is darker than white, where --muted measures 4.4. */
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border-radius: 999px;
   padding: 1px 8px;
@@ -1966,7 +1967,8 @@ code {
    is a translucent grey rather than --ds-neutral-100, which is a LIGHT solid
    and so painted a pale chip with pale text once the dark theme was on. */
 .plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
-.plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
+/* --muted on --state-muted-soft measured 4.23; 4.5 is the bar for an 11px tag. */
+.plug-tag[data-state="success"] { color: var(--chrome-ink-dim); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .plug-tag[data-state="muted"] { color: var(--muted); background: var(--state-muted-soft); }

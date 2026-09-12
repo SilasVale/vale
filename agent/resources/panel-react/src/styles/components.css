@@ -1661,7 +1661,8 @@
   flex: none;
   font-family: var(--font-mono);
   font-size: 10.5px;
-  color: var(--muted);
+  /* --surface-chip is darker than white, where --muted measures 4.4. */
+  color: var(--chrome-ink-dim);
   background: var(--surface-chip);
   border-radius: 999px;
   padding: 1px 8px;
@@ -1679,7 +1680,8 @@
    is a translucent grey rather than --ds-neutral-100, which is a LIGHT solid
    and so painted a pale chip with pale text once the dark theme was on. */
 .plug-tag[data-state="ongoing"] { color: var(--accent-on-soft); background: var(--accent-soft); }
-.plug-tag[data-state="success"] { color: var(--muted); background: var(--state-muted-soft); }
+/* --muted on --state-muted-soft measured 4.23; 4.5 is the bar for an 11px tag. */
+.plug-tag[data-state="success"] { color: var(--chrome-ink-dim); background: var(--state-muted-soft); }
 .plug-tag[data-state="warn"] { color: var(--warn-ink); background: var(--warn-soft); }
 .plug-tag[data-state="error"] { color: var(--danger-on-soft); background: var(--danger-soft); }
 .plug-tag[data-state="muted"] { color: var(--muted); background: var(--state-muted-soft); }
