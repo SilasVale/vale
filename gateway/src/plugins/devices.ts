@@ -470,6 +470,14 @@ async function handleDevicesAdd(request: Request, env: any): Promise<Response> {
   const body = await readJson(request);
   const device = validatedDeviceOrError(body);
   if (device instanceof Response) return device;
+  // THE SAME GATE THE OTHER WRITE PATHS APPLY. `validateDevice` checks the SHAPE of a
+  // hostname (any RFC domain passes) — it is not an allowlist. Without this, a console
+  // session could register `hostname: "attacker.example"` and then `GET
+  // /api/devices/<n>/proxy/...`, which makes the worker dial that host carrying the
+  // device's PERMANENT bearer token and proxy secret. The requirement is stated verbatim
+  // in this file's own comment on the one-time-key path; this path just never called it.
+  const addHostErr = hostAllowError(device.hostname, env);
+  if (addHostErr) return jsonError(400, addHostErr, "invalid_request");
   // New record gets a registration date; an admin update of an existing
   // device keeps the original one (same contract as self-register).
   const existing = await getDevice(env, device.name);
@@ -594,6 +602,14 @@ async function handleDeviceRename(request: Request, env: any, url: URL): Promise
       "hostname must be a domain like d1.agent.saisi.online",
       "invalid_request",
     );
+  // SHAPE IS NOT AN ALLOWLIST. The regex above accepts `attacker.example`, and RENAME
+  // PRESERVES the token and proxySecret — so this was the credential-stealing variant of
+  // the same hole: rename a registered device to a hostile host and the next proxy call
+  // hands that host the credentials the device already had.
+  if (hostname) {
+    const renHostErr = hostAllowError(hostname, env);
+    if (renHostErr) return jsonError(400, renHostErr, "invalid_request");
+  }
   const updated = await renameDevice(env, oldName, newName, hostname || undefined);
   if (updated === "not_found") return jsonError(404, "Device not found", "not_found_error");
   if (updated === "name_taken")

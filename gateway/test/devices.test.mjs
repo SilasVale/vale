@@ -32,8 +32,12 @@ function makeEnv(devices, links = {}) {
   });
 }
 
-async function adminCookie() { return issueSessionToken(ADMIN_PW, "admin", "admin"); }
-async function userCookie() { return issueSessionToken(ADMIN_PW, "bob", "user"); }
+async function adminCookie() {
+  return issueSessionToken(ADMIN_PW, "admin", "admin");
+}
+async function userCookie() {
+  return issueSessionToken(ADMIN_PW, "bob", "user");
+}
 
 function req(method, path, { body, cookie, auth, ip } = {}) {
   const headers = {};
@@ -54,22 +58,43 @@ function stubFetch(matcher, response) {
   globalThis.fetch = async (url, init) => {
     calls.push(String(url));
     if (String(url).includes(matcher)) {
-      return response instanceof Response ? response : new Response(JSON.stringify(response), { status: 200, headers: { "content-type": "application/json" } });
+      return response instanceof Response
+        ? response
+        : new Response(JSON.stringify(response), {
+            status: 200,
+            headers: { "content-type": "application/json" },
+          });
     }
     return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
   };
-  return { calls, restore: () => { globalThis.fetch = real; } };
+  return {
+    calls,
+    restore: () => {
+      globalThis.fetch = real;
+    },
+  };
 }
 
-const D1 = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok-1234567890", registeredAt: 1000, lastVersion: "1.0.105" };
+const D1 = {
+  name: "d1",
+  hostname: "d1.agent.saisi.online",
+  token: "devtok-1234567890",
+  registeredAt: 1000,
+  lastVersion: "1.0.105",
+};
 const D2 = { name: "d2", hostname: "d2.agent.saisi.online", token: "devtok-9876543210" };
 
 /* ---------------- rename ---------------- */
 
 test("rename: happy path preserves token + metadata, migrates plugin links", async () => {
-  const env = makeEnv([D1, D2], { "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 } });
+  const env = makeEnv([D1, D2], {
+    "tok-d1": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 },
+  });
   const res = await worker.fetch(
-    req("POST", "/api/devices/d1/rename", { body: { name: "renamed", hostname: "renamed.agent.saisi.online" }, cookie: await adminCookie() }),
+    req("POST", "/api/devices/d1/rename", {
+      body: { name: "renamed", hostname: "renamed.agent.saisi.online" },
+      cookie: await adminCookie(),
+    }),
     env,
   );
   assert.equal(res.status, 200);
@@ -104,7 +129,10 @@ test("rename: same-name rename is allowed (no-op host refresh)", async () => {
 
 test("rename: error branches — 401 unauth / 403 non-admin / 400 bad name / 404 missing / 409 taken", async () => {
   const env = makeEnv([D1, D2]);
-  const noAuth = await worker.fetch(req("POST", "/api/devices/d1/rename", { body: { name: "x1" } }), env);
+  const noAuth = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", { body: { name: "x1" } }),
+    env,
+  );
   assert.equal(noAuth.status, 401);
 
   const bob = await worker.fetch(
@@ -114,13 +142,22 @@ test("rename: error branches — 401 unauth / 403 non-admin / 400 bad name / 404
   assert.equal(bob.status, 403);
 
   const admin = await adminCookie();
-  const bad = await worker.fetch(req("POST", "/api/devices/d1/rename", { body: { name: "bad name!" }, cookie: admin }), env);
+  const bad = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", { body: { name: "bad name!" }, cookie: admin }),
+    env,
+  );
   assert.equal(bad.status, 400);
 
-  const missing = await worker.fetch(req("POST", "/api/devices/ghost/rename", { body: { name: "x1" }, cookie: admin }), env);
+  const missing = await worker.fetch(
+    req("POST", "/api/devices/ghost/rename", { body: { name: "x1" }, cookie: admin }),
+    env,
+  );
   assert.equal(missing.status, 404);
 
-  const taken = await worker.fetch(req("POST", "/api/devices/d1/rename", { body: { name: "d2" }, cookie: admin }), env);
+  const taken = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", { body: { name: "d2" }, cookie: admin }),
+    env,
+  );
   assert.equal(taken.status, 409);
 });
 
@@ -128,21 +165,37 @@ test("rename: error branches — 401 unauth / 403 non-admin / 400 bad name / 404
 
 test("register-keys: generate → list with TTL → revoke → empty; 401 unauth", async () => {
   const env = makeEnv([D1]);
-  const gen = await worker.fetch(req("POST", "/api/devices/register-key", { cookie: await adminCookie() }), env);
+  const gen = await worker.fetch(
+    req("POST", "/api/devices/register-key", { cookie: await adminCookie() }),
+    env,
+  );
   assert.equal(gen.status, 200);
   const { key } = await gen.json();
   assert.match(key, /^[0-9a-f]{16}$/);
 
-  const listRes = await worker.fetch(req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }), env);
+  const listRes = await worker.fetch(
+    req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }),
+    env,
+  );
   assert.equal(listRes.status, 200);
   const listed = (await listRes.json()).keys;
   assert.equal(listed.length, 1);
   assert.equal(listed[0].code, key);
   assert.ok(listed[0].expiresAt > Date.now(), "KV TTL must surface as a future expiry");
 
-  const revoke = await worker.fetch(req("DELETE", `/api/devices/register-keys/${key}`, { cookie: await adminCookie() }), env);
+  const revoke = await worker.fetch(
+    req("DELETE", `/api/devices/register-keys/${key}`, { cookie: await adminCookie() }),
+    env,
+  );
   assert.equal(revoke.status, 200);
-  const after = (await (await worker.fetch(req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }), env)).json()).keys;
+  const after = (
+    await (
+      await worker.fetch(
+        req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }),
+        env,
+      )
+    ).json()
+  ).keys;
   assert.equal(after.length, 0);
 
   const unauth = await worker.fetch(req("GET", "/api/devices/register-keys"), env);
@@ -151,13 +204,19 @@ test("register-keys: generate → list with TTL → revoke → empty; 401 unauth
 
 test("register-keys: expired-but-unreaped KV entries are filtered from the list", async () => {
   const env = makeEnv([D1]);
-  const gen = await worker.fetch(req("POST", "/api/devices/register-key", { cookie: await adminCookie() }), env);
+  const gen = await worker.fetch(
+    req("POST", "/api/devices/register-key", { cookie: await adminCookie() }),
+    env,
+  );
   const { key } = await gen.json();
 
   // Simulate real KV: the name lingers in list() after the TTL passed.
   env._expiry.set(`regkey:${key}`, Math.floor(Date.now() / 1000) - 5);
 
-  const listRes = await worker.fetch(req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }), env);
+  const listRes = await worker.fetch(
+    req("GET", "/api/devices/register-keys", { cookie: await adminCookie() }),
+    env,
+  );
   const listed = (await listRes.json()).keys;
   assert.equal(listed.length, 0, "expired keys must not surface as unused reg keys");
 });
@@ -170,23 +229,33 @@ test("register-keys: expired-but-unreaped KV entries are filtered from the list"
 function travelMs(ms) {
   const real = Date.now;
   Date.now = () => real() + ms;
-  return () => { Date.now = real; };
+  return () => {
+    Date.now = real;
+  };
 }
 
 test("install-cmd: upstream version flows through", async () => {
   const env = makeEnv([D1]);
   const undo = travelMs(0);
   const { restore } = stubFetch("agent.saisi.online/api/version", {
-    version: "9.9.9", download: "https://x/dl/vale-agent-9.9.9.tgz", sha256: "a".repeat(64),
+    version: "9.9.9",
+    download: "https://x/dl/vale-agent-9.9.9.tgz",
+    sha256: "a".repeat(64),
   });
   try {
-    const res = await worker.fetch(req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.equal(j.ok, true);
     assert.equal(j.version, "9.9.9");
     assert.equal(j.download, "https://x/dl/vale-agent-9.9.9.tgz");
-  } finally { restore(); undo(); }
+  } finally {
+    restore();
+    undo();
+  }
 });
 
 test("install-cmd: 5-min in-isolate cache (second call hits, clock travel re-fetches)", async () => {
@@ -195,7 +264,10 @@ test("install-cmd: 5-min in-isolate cache (second call hits, clock travel re-fet
   // so each phase's cache age is deterministic (5-min TTL).
   const env = makeEnv([D1]);
   let undo = travelMs(10 * 60 * 1000);
-  const { calls, restore } = stubFetch("agent.saisi.online/api/version", { version: "9.9.9", download: "https://x/dl/v.tgz" });
+  const { calls, restore } = stubFetch("agent.saisi.online/api/version", {
+    version: "9.9.9",
+    download: "https://x/dl/v.tgz",
+  });
   try {
     const auth = { cookie: await adminCookie() };
     await worker.fetch(req("GET", "/api/devices/install-cmd", auth), env);
@@ -205,7 +277,10 @@ test("install-cmd: 5-min in-isolate cache (second call hits, clock travel re-fet
     undo = travelMs(20 * 60 * 1000);
     await worker.fetch(req("GET", "/api/devices/install-cmd", auth), env);
     assert.equal(calls.length, 2, "cache must expire after 5 min");
-  } finally { restore(); undo(); }
+  } finally {
+    restore();
+    undo();
+  }
 });
 
 test("install-cmd: upstream failure → null version fallback (UI falls back to its constant)", async () => {
@@ -215,11 +290,17 @@ test("install-cmd: upstream failure → null version fallback (UI falls back to 
   const real = globalThis.fetch;
   globalThis.fetch = async () => new Response("boom", { status: 503 });
   try {
-    const res = await worker.fetch(req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.deepEqual([j.ok, j.version, j.download], [true, null, null]);
-  } finally { globalThis.fetch = real; undo(); }
+  } finally {
+    globalThis.fetch = real;
+    undo();
+  }
 });
 
 // round-529 (coverage-driven): the fetch-THROW arm had ZERO pins (only the
@@ -229,13 +310,21 @@ test("install-cmd: upstream throw → null version fallback (no 500)", async () 
   // 40 min: strictly beyond the previous tests' cache stamps + TTL.
   const undo = travelMs(40 * 60 * 1000);
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
   try {
-    const res = await worker.fetch(req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/devices/install-cmd", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.deepEqual([j.ok, j.version, j.download], [true, null, null]);
-  } finally { globalThis.fetch = real; undo(); }
+  } finally {
+    globalThis.fetch = real;
+    undo();
+  }
 });
 
 test("install-cmd: 401 unauth", async () => {
@@ -251,9 +340,13 @@ test("plugins/status: ?fresh=1 bypasses the 30s probe cache; cached call does no
   // across tests, so probe counting must use a name no other test touches.
   // The stub matcher is LOWERCASE: the WHATWG URL parser lowercases
   // hostnames (deviceFetch round-121), so "dFresh" arrives as "dfresh".
-  const env = makeEnv([{ name: "dFresh", hostname: "dFresh.agent.saisi.online", token: "tok-fresh" }]);
+  const env = makeEnv([
+    { name: "dFresh", hostname: "dFresh.agent.saisi.online", token: "tok-fresh" },
+  ]);
   const { calls, restore } = stubFetch("dfresh.agent.saisi.online/api/status", {
-    ok: true, version: "9.8.7", serial_ports: [],
+    ok: true,
+    version: "9.8.7",
+    serial_ports: [],
   });
   try {
     const auth = { cookie: await adminCookie() };
@@ -275,24 +368,35 @@ test("plugins/status: ?fresh=1 bypasses the 30s probe cache; cached call does no
     const fresh = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", auth), env);
     assert.equal(fresh.status, 200);
     assert.equal(calls.filter((u) => u.includes("/api/status")).length, probesAfterFirst + 1);
-  } finally { restore(); }
+  } finally {
+    restore();
+  }
 });
 
 test("upload proxy: 401 unauth / 401 bad device token (no network on reject)", async () => {
-  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "a".repeat(64), proxySecret: "s" } });
+  const env = makeEnv({
+    d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "a".repeat(64), proxySecret: "s" },
+  });
   const noAuth = await worker.fetch(req("POST", "/api/upload"), env);
   assert.equal(noAuth.status, 401);
   const bad = await worker.fetch(
-    req("POST", "/api/upload", { auth: `Bearer ${"b".repeat(64)}` }), env);
+    req("POST", "/api/upload", { auth: `Bearer ${"b".repeat(64)}` }),
+    env,
+  );
   assert.equal(bad.status, 401);
 });
 
 test("upload proxy: device config token accepted (no network on reject paths only)", async () => {
   const { __clearCaches } = await import("../src/store.ts");
   __clearCaches();
-  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" } });
+  const env = makeEnv({
+    d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" },
+  });
   // Bad token still 401 without touching the network.
-  const bad = await worker.fetch(req("POST", "/api/upload", { auth: `Bearer ${"d".repeat(64)}` }), env);
+  const bad = await worker.fetch(
+    req("POST", "/api/upload", { auth: `Bearer ${"d".repeat(64)}` }),
+    env,
+  );
   assert.equal(bad.status, 401);
 });
 
@@ -301,13 +405,18 @@ test("upload proxy: device config token accepted (no network on reject paths onl
 test("upload proxy: registry outage denies with 401 (no throw)", async () => {
   const { __clearCaches } = await import("../src/store.ts");
   __clearCaches();
-  const env = makeEnv({ d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" } });
+  const env = makeEnv({
+    d1: { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" },
+  });
   const realGet = env.KEYS.get.bind(env.KEYS);
   env.KEYS.get = async (k) => {
     if (k === "devices:v1") throw new Error("kv down");
     return realGet(k);
   };
-  const res = await worker.fetch(req("POST", "/api/upload", { auth: `Bearer ${"c".repeat(64)}` }), env);
+  const res = await worker.fetch(
+    req("POST", "/api/upload", { auth: `Bearer ${"c".repeat(64)}` }),
+    env,
+  );
   assert.equal(res.status, 401);
   assert.match((await res.json()).error.message, /Invalid device token/);
 });
@@ -318,7 +427,9 @@ test("upload proxy: forwards a MINIMAL header set — UPLOAD_KEY + multipart fra
   const env = {
     // ARRAY seed: the accept path iterates listDevices() (Device[]) — the
     // object-shaped seeds above only exercise reject paths.
-    ...makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" }]),
+    ...makeEnv([
+      { name: "d1", hostname: "d1.agent.saisi.online", token: "c".repeat(64), proxySecret: "s" },
+    ]),
     UPLOAD_KEY: "test-upload-key",
     INDEX_WORKER_URL: "https://idx.example",
   };
@@ -411,17 +522,26 @@ const T64 = (c) => c.repeat(64);
 // below uses its own cf-connecting-ip so the tests never trip each other.
 let nextIp = 41;
 const testIp = () => `10.44.1.${nextIp++}`;
-const selfReg = (env, body, ip) => worker.fetch(
-  req("POST", "/api/devices/self-register", { body, ip: ip || testIp() }),
-  env,
-);
+const selfReg = (env, body, ip) =>
+  worker.fetch(req("POST", "/api/devices/self-register", { body, ip: ip || testIp() }), env);
 
 test("self-register: malformed body 400, non-64-hex token 403, off-suffix host 400", async () => {
   __clearCaches();
   const env = makeEnv([]);
-  assert.equal((await selfReg(env, { name: "bad name!", hostname: "d9.agent.saisi.online", token: T64("a") })).status, 400);
-  assert.equal((await selfReg(env, { name: "d9", hostname: "d9.agent.saisi.online", token: "shorttok" })).status, 403);
-  assert.equal((await selfReg(env, { name: "d9", hostname: "evil.example.com", token: T64("a") })).status, 400);
+  assert.equal(
+    (await selfReg(env, { name: "bad name!", hostname: "d9.agent.saisi.online", token: T64("a") }))
+      .status,
+    400,
+  );
+  assert.equal(
+    (await selfReg(env, { name: "d9", hostname: "d9.agent.saisi.online", token: "shorttok" }))
+      .status,
+    403,
+  );
+  assert.equal(
+    (await selfReg(env, { name: "d9", hostname: "evil.example.com", token: T64("a") })).status,
+    400,
+  );
   assert.deepEqual(JSON.parse(await env.KEYS.get("devices:v1")), [], "rejects mutate nothing");
 });
 
@@ -449,12 +569,22 @@ test("self-register: unreachable device still registers without proxySecret", as
   __clearCaches();
   const env = makeEnv([]);
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
   try {
-    const res = await selfReg(env, { name: "d11", hostname: "d11.agent.saisi.online", token: T64("9") });
+    const res = await selfReg(env, {
+      name: "d11",
+      hostname: "d11.agent.saisi.online",
+      token: T64("9"),
+    });
     assert.equal(res.status, 200);
     const devs = JSON.parse(await env.KEYS.get("devices:v1"));
-    assert.equal(devs.find((d) => d.name === "d11")?.proxySecret, undefined, "no secret harvested, registration intact");
+    assert.equal(
+      devs.find((d) => d.name === "d11")?.proxySecret,
+      undefined,
+      "no secret harvested, registration intact",
+    );
   } finally {
     globalThis.fetch = real;
   }
@@ -462,13 +592,30 @@ test("self-register: unreachable device still registers without proxySecret", as
 
 test("self-register: existing device rejects hostname moves + unproven rotations", async () => {
   __clearCaches();
-  const OLD = T64("c"), NEW = T64("d");
-  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const OLD = T64("c"),
+    NEW = T64("d");
+  const env = makeEnv([
+    {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: OLD,
+      proxySecret: "ps-stored",
+      registeredAt: 7,
+    },
+  ]);
   const { restore } = stubFetch("d1.agent.saisi.online", {});
   try {
-    const moved = await selfReg(env, { name: "d1", hostname: "moved.agent.saisi.online", token: OLD });
+    const moved = await selfReg(env, {
+      name: "d1",
+      hostname: "moved.agent.saisi.online",
+      token: OLD,
+    });
     assert.equal(moved.status, 409);
-    const rotated = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    const rotated = await selfReg(env, {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: NEW,
+    });
     assert.equal(rotated.status, 409, "different token without stored-tunnel proof refuses");
     const devs = JSON.parse(await env.KEYS.get("devices:v1"));
     assert.equal(devs.find((d) => d.name === "d1").token, OLD);
@@ -481,10 +628,21 @@ test("self-register: existing device rejects hostname moves + unproven rotations
 // an unreachable tunnel must 409, not 500.
 test("self-register: dead tunnel refuses rotation with 409 (no 500)", async () => {
   __clearCaches();
-  const OLD = T64("c"), NEW = T64("d");
-  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const OLD = T64("c"),
+    NEW = T64("d");
+  const env = makeEnv([
+    {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: OLD,
+      proxySecret: "ps-stored",
+      registeredAt: 7,
+    },
+  ]);
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
   try {
     const res = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
     assert.equal(res.status, 409);
@@ -499,26 +657,44 @@ test("self-register: dead tunnel refuses rotation with 409 (no 500)", async () =
 // proxySecret capture arm had ZERO pins.
 test("self-register: tunnel-proved rotation accepted, new device captures the secret", async () => {
   __clearCaches();
-  const OLD = T64("e"), NEW = T64("f");
+  const OLD = T64("e"),
+    NEW = T64("f");
   const SECRET = "s".repeat(40);
-  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: SECRET, registeredAt: 7 }]);
+  const env = makeEnv([
+    {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: OLD,
+      proxySecret: SECRET,
+      registeredAt: 7,
+    },
+  ]);
   const real = globalThis.fetch;
   globalThis.fetch = async (url) => {
     const u = String(url);
     const secret = u.includes("d1.agent.saisi.online") ? SECRET : "n".repeat(40);
     return new Response(JSON.stringify(u.includes("/api/status") ? { proxy_secret: secret } : {}), {
-      status: 200, headers: { "content-type": "application/json" },
+      status: 200,
+      headers: { "content-type": "application/json" },
     });
   };
   try {
-    const rotated = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
+    const rotated = await selfReg(env, {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: NEW,
+    });
     assert.equal(rotated.status, 200, "tunnel proof (secret match) accepts the rotation");
     const devs = JSON.parse(await env.KEYS.get("devices:v1"));
     const d1 = devs.find((d) => d.name === "d1");
     assert.equal(d1.token, NEW);
     assert.equal(d1.proxySecret, SECRET, "stored secret preserved across rotation");
     assert.equal(d1.registeredAt, 7, "idempotent refresh keeps the original date");
-    const fresh = await selfReg(env, { name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+    const fresh = await selfReg(env, {
+      name: "d9",
+      hostname: "d9.agent.saisi.online",
+      token: T64("a"),
+    });
     assert.equal(fresh.status, 200);
     const d9 = JSON.parse(await env.KEYS.get("devices:v1")).find((d) => d.name === "d9");
     assert.equal(d9.proxySecret, "n".repeat(40), "new device captures the served secret");
@@ -529,8 +705,17 @@ test("self-register: tunnel-proved rotation accepted, new device captures the se
 
 test("self-register: stored-tunnel proof rotates the token", async () => {
   __clearCaches();
-  const OLD = T64("e"), NEW = T64("f");
-  const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: OLD, proxySecret: "ps-stored", registeredAt: 7 }]);
+  const OLD = T64("e"),
+    NEW = T64("f");
+  const env = makeEnv([
+    {
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: OLD,
+      proxySecret: "ps-stored",
+      registeredAt: 7,
+    },
+  ]);
   const { restore } = stubFetch("d1.agent.saisi.online", { proxy_secret: "ps-stored" });
   try {
     const res = await selfReg(env, { name: "d1", hostname: "d1.agent.saisi.online", token: NEW });
@@ -547,17 +732,22 @@ test("self-register: stored-tunnel proof rotates the token", async () => {
 /* ---------------- register + tunnel-token (one-time-key chain) ---------- */
 // round-441 (coverage-driven): both public one-time-key handlers had ZERO
 // route pins — the spend/claim/grant chain and the round-68 anti-takeover.
-const regPost = (env, path, body) => worker.fetch(
-  req("POST", path, { body, ip: testIp() }),
-  env,
-);
+const regPost = (env, path, body) => worker.fetch(req("POST", path, { body, ip: testIp() }), env);
 
 test("register: garbage key 403s with zero KV writes; happy path spends the key", async () => {
   __clearCaches();
   const env = makeEnv([]);
-  const garbage = await regPost(env, "/api/register", { key: "nope", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+  const garbage = await regPost(env, "/api/register", {
+    key: "nope",
+    name: "d9",
+    hostname: "d9.agent.saisi.online",
+    token: T64("a"),
+  });
   assert.equal(garbage.status, 403);
-  assert.ok([...env._kv.keys()].every((k) => !k.startsWith("regclaim")), "round-115: invalid keys are zero-write");
+  assert.ok(
+    [...env._kv.keys()].every((k) => !k.startsWith("regclaim")),
+    "round-115: invalid keys are zero-write",
+  );
   await env.KEYS.put("regkey:kk11", "1");
   const body = { key: "kk11", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") };
   const { restore } = stubFetch("d9.agent.saisi.online", {});
@@ -569,7 +759,11 @@ test("register: garbage key 403s with zero KV writes; happy path spends the key"
   }
   assert.equal(res.status, 200);
   assert.equal((await res.json()).ok, true);
-  assert.equal(await regPost(env, "/api/register", body).then((r) => r.status), 403, "spent key refuses reuse");
+  assert.equal(
+    await regPost(env, "/api/register", body).then((r) => r.status),
+    403,
+    "spent key refuses reuse",
+  );
   const devs = JSON.parse(await env.KEYS.get("devices:v1"));
   assert.ok(devs.some((d) => d.name === "d9"));
 });
@@ -578,7 +772,12 @@ test("register: existing device name refuses with 409 (round-68 anti-takeover)",
   __clearCaches();
   const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("c") }]);
   await env.KEYS.put("regkey:kk22", "1");
-  const res = await regPost(env, "/api/register", { key: "kk22", name: "d1", hostname: "d1.agent.saisi.online", token: T64("d") });
+  const res = await regPost(env, "/api/register", {
+    key: "kk22",
+    name: "d1",
+    hostname: "d1.agent.saisi.online",
+    token: T64("d"),
+  });
   assert.equal(res.status, 409);
   const devs = JSON.parse(await env.KEYS.get("devices:v1"));
   assert.equal(devs.find((d) => d.name === "d1").token, T64("c"), "production record untouched");
@@ -591,13 +790,26 @@ test("register: unreachable device still registers without proxySecret", async (
   const env = makeEnv([]);
   await env.KEYS.put("regkey:kkprobe", "1");
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { throw new TypeError("fetch failed"); };
+  globalThis.fetch = async () => {
+    throw new TypeError("fetch failed");
+  };
   try {
-    const res = await regPost(env, "/api/register", { key: "kkprobe", name: "d10", hostname: "d10.agent.saisi.online", token: T64("e") });
+    const res = await regPost(env, "/api/register", {
+      key: "kkprobe",
+      name: "d10",
+      hostname: "d10.agent.saisi.online",
+      token: T64("e"),
+    });
     assert.equal(res.status, 200);
     const devs = JSON.parse(await env.KEYS.get("devices:v1"));
-    assert.equal(devs.find((d) => d.name === "d10")?.proxySecret, undefined, "no secret harvested, registration intact");
-  } finally { globalThis.fetch = real; }
+    assert.equal(
+      devs.find((d) => d.name === "d10")?.proxySecret,
+      undefined,
+      "no secret harvested, registration intact",
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
 });
 
 // round-526 (coverage-driven): the post-claim key recheck had ZERO pins — a
@@ -612,7 +824,12 @@ test("register: key vanishing after claim 403s (single-flight recheck)", async (
     if (k === "regkey:kkrace" && ++reads > 1) return null; // raced away
     return realGet(k);
   };
-  const res = await regPost(env, "/api/register", { key: "kkrace", name: "d9", hostname: "d9.agent.saisi.online", token: T64("a") });
+  const res = await regPost(env, "/api/register", {
+    key: "kkrace",
+    name: "d9",
+    hostname: "d9.agent.saisi.online",
+    token: T64("a"),
+  });
   assert.equal(res.status, 403);
   assert.match((await res.json()).error.message, /Invalid or used registration key/);
 });
@@ -623,12 +840,21 @@ test("register: valid key with bad body 400s; rename rejects a bad hostname", as
   __clearCaches();
   const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("c") }]);
   await env.KEYS.put("regkey:kk44", "1");
-  const bad = await regPost(env, "/api/register", { key: "kk44", name: "bad name!", hostname: "d9.agent.saisi.online", token: T64("a") });
+  const bad = await regPost(env, "/api/register", {
+    key: "kk44",
+    name: "bad name!",
+    hostname: "d9.agent.saisi.online",
+    token: T64("a"),
+  });
   assert.equal(bad.status, 400);
   const admin = await adminCookie();
-  const ren = await worker.fetch(req("POST", "/api/devices/d1/rename", {
-    body: { name: "d1", hostname: "not a host!!" }, cookie: admin,
-  }), env);
+  const ren = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", {
+      body: { name: "d1", hostname: "not a host!!" },
+      cookie: admin,
+    }),
+    env,
+  );
   assert.equal(ren.status, 400);
 });
 
@@ -658,7 +884,9 @@ test("register: lost insert race 409s (pre-check passed, lock lost)", async () =
   __clearCaches();
   const env = makeEnv([]);
   await env.KEYS.put("regkey:kk66", "1");
-  const raced = JSON.stringify([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("q") }]);
+  const raced = JSON.stringify([
+    { name: "d1", hostname: "d1.agent.saisi.online", token: T64("q") },
+  ]);
   let devGets = 0;
   const innerGet = env.KEYS.get.bind(env.KEYS);
   env.KEYS.get = async (k) => {
@@ -667,7 +895,12 @@ test("register: lost insert race 409s (pre-check passed, lock lost)", async () =
   };
   const { restore } = stubFetch("d1.agent.saisi.online", {});
   try {
-    const res = await regPost(env, "/api/register", { key: "kk66", name: "d1", hostname: "d1.agent.saisi.online", token: T64("w") });
+    const res = await regPost(env, "/api/register", {
+      key: "kk66",
+      name: "d1",
+      hostname: "d1.agent.saisi.online",
+      token: T64("w"),
+    });
     assert.equal(res.status, 409);
   } finally {
     restore();
@@ -685,13 +918,19 @@ test("upload proxy: admin session is proxied with the upload key", async () => {
   const real = globalThis.fetch;
   globalThis.fetch = async (url, init) => {
     seen.push(String(url));
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
+    return new Response(JSON.stringify({ ok: true }), {
+      status: 200,
+      headers: { "content-type": "application/json" },
+    });
   };
   try {
-    const res = await worker.fetch(req("POST", "/api/upload", {
-      cookie: await adminCookie(),
-      body: "pretend-file-bytes",
-    }), env);
+    const res = await worker.fetch(
+      req("POST", "/api/upload", {
+        cookie: await adminCookie(),
+        body: "pretend-file-bytes",
+      }),
+      env,
+    );
     assert.equal(res.status, 200);
     assert.deepEqual(seen, ["https://idx.example/api/upload"]);
   } finally {
@@ -714,17 +953,23 @@ test("upload proxy: declared 26MB body passes the re-raised bound", async () => 
   };
   let calls = 0;
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { calls++; return new Response("{}"); };
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("{}");
+  };
   try {
-    const res = await worker.fetch(new Request("https://x/api/upload", {
-      method: "POST",
-      headers: {
-        cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
-        "content-type": "multipart/form-data; boundary=----valeboundary",
-        "content-length": String(26 * 1024 * 1024),
-      },
-      body: "small-lie",
-    }), env);
+    const res = await worker.fetch(
+      new Request("https://x/api/upload", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
+          "content-type": "multipart/form-data; boundary=----valeboundary",
+          "content-length": String(26 * 1024 * 1024),
+        },
+        body: "small-lie",
+      }),
+      env,
+    );
     assert.notEqual(res.status, 413, "26MB is a legitimate firmware-size payload now");
     assert.equal(calls, 1, "must reach the index worker (which owns the real cap)");
   } finally {
@@ -741,17 +986,23 @@ test("upload proxy: declared 101MB body 413s without touching the network", asyn
   };
   let calls = 0;
   const real = globalThis.fetch;
-  globalThis.fetch = async () => { calls++; return new Response("{}"); };
+  globalThis.fetch = async () => {
+    calls++;
+    return new Response("{}");
+  };
   try {
-    const res = await worker.fetch(new Request("https://x/api/upload", {
-      method: "POST",
-      headers: {
-        cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
-        "content-type": "multipart/form-data; boundary=----valeboundary",
-        "content-length": String(101 * 1024 * 1024),
-      },
-      body: "small-lie",
-    }), env);
+    const res = await worker.fetch(
+      new Request("https://x/api/upload", {
+        method: "POST",
+        headers: {
+          cookie: `${SESSION_COOKIE}=${await adminCookie()}`,
+          "content-type": "multipart/form-data; boundary=----valeboundary",
+          "content-length": String(101 * 1024 * 1024),
+        },
+        body: "small-lie",
+      }),
+      env,
+    );
     assert.equal(res.status, 413);
     assert.match((await res.json()).error.message, /max 100MB/);
     assert.equal(calls, 0, "rejected before any upstream dial");
@@ -769,7 +1020,14 @@ function tokenEnv(devices = []) {
   return makeBaseEnv({
     devices,
     users: {
-      admin: { id: "admin", username: "admin", role: "admin", enabled: true, token: ADMINTOK, relayToken: RELAYTOK },
+      admin: {
+        id: "admin",
+        username: "admin",
+        role: "admin",
+        enabled: true,
+        token: ADMINTOK,
+        relayToken: RELAYTOK,
+      },
     },
     kv: {
       "auth:admin_password": ADMIN_PW,
@@ -784,84 +1042,110 @@ function tokenEnv(devices = []) {
 test("upload proxy: the admin API token may stage a file (the Linux → device leg)", async () => {
   const env = tokenEnv([]);
   const seen = [];
-  await withFetch(async (url, init) => {
-    seen.push({ url: String(url), method: init.method, headers: init.headers });
-    return new Response(JSON.stringify({ ok: true }), { status: 200, headers: { "content-type": "application/json" } });
-  }, async () => {
-    const res = await worker.fetch(new Request("https://x/api/upload", {
-      method: "PUT",
-      headers: { authorization: `Bearer ${ADMINTOK}`, "content-length": "5" },
-      body: "bytes",
-    }), env);
-    assert.equal(res.status, 200, "the /mcp credential must be able to feed the relay");
-    assert.equal(seen.length, 1);
-    assert.equal(seen[0].method, "PUT", "the method must survive the proxy (raw-stream path)");
-    // The device/user credential never rides on to the index worker — only
-    // the relay's own UPLOAD_KEY does.
-    assert.equal(seen[0].headers.get("authorization"), "Bearer test-upload-key");
-  });
+  await withFetch(
+    async (url, init) => {
+      seen.push({ url: String(url), method: init.method, headers: init.headers });
+      return new Response(JSON.stringify({ ok: true }), {
+        status: 200,
+        headers: { "content-type": "application/json" },
+      });
+    },
+    async () => {
+      const res = await worker.fetch(
+        new Request("https://x/api/upload", {
+          method: "PUT",
+          headers: { authorization: `Bearer ${ADMINTOK}`, "content-length": "5" },
+          body: "bytes",
+        }),
+        env,
+      );
+      assert.equal(res.status, 200, "the /mcp credential must be able to feed the relay");
+      assert.equal(seen.length, 1);
+      assert.equal(seen[0].method, "PUT", "the method must survive the proxy (raw-stream path)");
+      // The device/user credential never rides on to the index worker — only
+      // the relay's own UPLOAD_KEY does.
+      assert.equal(seen[0].headers.get("authorization"), "Bearer test-upload-key");
+    },
+  );
 });
 
 test("upload proxy: a relay-role token is refused (ADR-0007 scoping holds)", async () => {
   const env = tokenEnv([]);
-  await withFetch(async () => {
-    throw new Error("must not dial the index worker");
-  }, async () => {
-    const res = await worker.fetch(new Request("https://x/api/upload", {
-      method: "PUT",
-      headers: { authorization: `Bearer ${RELAYTOK}`, "content-length": "5" },
-      body: "bytes",
-    }), env);
-    assert.equal(res.status, 401, "relay tokens are for the translate path only");
-  });
+  await withFetch(
+    async () => {
+      throw new Error("must not dial the index worker");
+    },
+    async () => {
+      const res = await worker.fetch(
+        new Request("https://x/api/upload", {
+          method: "PUT",
+          headers: { authorization: `Bearer ${RELAYTOK}`, "content-length": "5" },
+          body: "bytes",
+        }),
+        env,
+      );
+      assert.equal(res.status, 401, "relay tokens are for the translate path only");
+    },
+  );
 });
 
 test("upload proxy: PUT forwards ?name= and the raw-metadata headers", async () => {
   const env = tokenEnv([]);
   const seen = [];
-  await withFetch(async (url, init) => {
-    seen.push({ url: String(url), headers: init.headers });
-    return new Response(JSON.stringify({ ok: true }), { status: 200 });
-  }, async () => {
-    const res = await worker.fetch(
-      new Request("https://x/api/upload?name=%E5%9B%BA%E4%BB%B6.bin", {
-        method: "PUT",
-        headers: {
-          authorization: `Bearer ${ADMINTOK}`,
-          "content-length": "5",
-          "x-filename": "fw.bin",
-          "x-content-type": "application/octet-stream",
-          cookie: "ag_session=must-not-ride",
-        },
-        body: "bytes",
-      }),
-      env,
-    );
-    assert.equal(res.status, 200);
-    // Dropping the query used to silently rename every relay file "file".
-    assert.equal(seen[0].url, "https://idx.example/api/upload?name=%E5%9B%BA%E4%BB%B6.bin");
-    assert.equal(seen[0].headers.get("x-filename"), "fw.bin");
-    assert.equal(seen[0].headers.get("x-content-type"), "application/octet-stream");
-    assert.equal(seen[0].headers.get("cookie"), null);
-  });
+  await withFetch(
+    async (url, init) => {
+      seen.push({ url: String(url), headers: init.headers });
+      return new Response(JSON.stringify({ ok: true }), { status: 200 });
+    },
+    async () => {
+      const res = await worker.fetch(
+        new Request("https://x/api/upload?name=%E5%9B%BA%E4%BB%B6.bin", {
+          method: "PUT",
+          headers: {
+            authorization: `Bearer ${ADMINTOK}`,
+            "content-length": "5",
+            "x-filename": "fw.bin",
+            "x-content-type": "application/octet-stream",
+            cookie: "ag_session=must-not-ride",
+          },
+          body: "bytes",
+        }),
+        env,
+      );
+      assert.equal(res.status, 200);
+      // Dropping the query used to silently rename every relay file "file".
+      assert.equal(seen[0].url, "https://idx.example/api/upload?name=%E5%9B%BA%E4%BB%B6.bin");
+      assert.equal(seen[0].headers.get("x-filename"), "fw.bin");
+      assert.equal(seen[0].headers.get("x-content-type"), "application/octet-stream");
+      assert.equal(seen[0].headers.get("cookie"), null);
+    },
+  );
 });
 
 test("upload proxy: non-admin session and unknown tokens stay 401", async () => {
   const env = tokenEnv([]);
-  const asUser = await worker.fetch(new Request("https://x/api/upload", {
-    method: "PUT",
-    headers: { authorization: `Bearer ${"z".repeat(64)}`, "content-length": "5" },
-    body: "bytes",
-  }), env);
+  const asUser = await worker.fetch(
+    new Request("https://x/api/upload", {
+      method: "PUT",
+      headers: { authorization: `Bearer ${"z".repeat(64)}`, "content-length": "5" },
+      body: "bytes",
+    }),
+    env,
+  );
   assert.equal(asUser.status, 401);
 });
 
 test("public gate: 10 tunnel-token attempts then 429", async () => {
   __clearCaches();
   const env = makeEnv([]);
-  const attempt = () => worker.fetch(req("POST", "/api/install/tunnel-token", {
-    body: { key: "nope" }, ip: "10.99.99.99",
-  }), env);
+  const attempt = () =>
+    worker.fetch(
+      req("POST", "/api/install/tunnel-token", {
+        body: { key: "nope" },
+        ip: "10.99.99.99",
+      }),
+      env,
+    );
   for (let i = 0; i < 10; i++) {
     assert.equal((await attempt()).status, 403, `attempt ${i + 1} passes the gate`);
   }
@@ -881,7 +1165,12 @@ test("tunnel-token: valid key returns the CF token once, then feeds register via
   const again = await regPost(env, "/api/install/tunnel-token", { key: "kk33" });
   assert.equal(again.status, 403, "spent key cannot harvest the token twice");
   // Same install completes registration with the spent key via the grant.
-  const reg = await regPost(env, "/api/register", { key: "kk33", name: "d9", hostname: "d9.agent.saisi.online", token: T64("e") });
+  const reg = await regPost(env, "/api/register", {
+    key: "kk33",
+    name: "d9",
+    hostname: "d9.agent.saisi.online",
+    token: T64("e"),
+  });
   assert.equal(reg.status, 200);
 });
 
@@ -896,9 +1185,17 @@ test("devices list/add/mcp: admin success paths", async () => {
     worker.fetch(req(method, path, { cookie: admin, body }), env);
   const empty = await (await call("GET", "/api/devices")).json();
   assert.deepEqual(empty.devices, []);
-  const bad = await call("POST", "/api/devices", { name: "!!", hostname: "d1.agent.saisi.online", token: "tok12345" });
+  const bad = await call("POST", "/api/devices", {
+    name: "!!",
+    hostname: "d1.agent.saisi.online",
+    token: "tok12345",
+  });
   assert.equal(bad.status, 400);
-  const add = await call("POST", "/api/devices", { name: "d1", hostname: "d1.agent.saisi.online", token: "tok12345" });
+  const add = await call("POST", "/api/devices", {
+    name: "d1",
+    hostname: "d1.agent.saisi.online",
+    token: "tok12345",
+  });
   assert.equal(add.status, 200);
   const added = await add.json();
   assert.equal(added.ok, true);
@@ -908,7 +1205,10 @@ test("devices list/add/mcp: admin success paths", async () => {
   assert.equal(list.devices.length, 1);
   assert.equal(list.devices[0].name, "d1");
   assert.ok(list.devices[0].mcp.url.includes("d1.agent.saisi.online/mcp"));
-  assert.ok(list.devices[0].mcp.json.includes("tok12345"), "mcp snippet is the one place with the raw token");
+  assert.ok(
+    list.devices[0].mcp.json.includes("tok12345"),
+    "mcp snippet is the one place with the raw token",
+  );
   assert.equal((await call("GET", "/api/devices/nope/mcp")).status, 404);
   const mcp = await call("GET", "/api/devices/d1/mcp");
   assert.equal(mcp.status, 200);
@@ -920,14 +1220,23 @@ test("devices list/add/mcp: admin success paths", async () => {
 test("devices delete: removes the record and revokes its plugin links", async () => {
   __clearCaches();
   const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("a") }]);
-  await env.KEYS.put("plugins:v1", JSON.stringify({ "tok-x": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 } }));
+  await env.KEYS.put(
+    "plugins:v1",
+    JSON.stringify({ "tok-x": { device: "d1", createdAt: 1, expiresAt: Date.now() + 86400000 } }),
+  );
   __clearCaches();
   const admin = await adminCookie();
   const del = await worker.fetch(req("DELETE", "/api/devices/d1", { cookie: admin }), env);
   assert.equal(del.status, 200);
-  const list = await (await worker.fetch(req("GET", "/api/devices", { cookie: admin }), env)).json();
+  const list = await (
+    await worker.fetch(req("GET", "/api/devices", { cookie: admin }), env)
+  ).json();
   assert.deepEqual(list.devices, []);
-  assert.deepEqual(JSON.parse(await env.KEYS.get("plugins:v1")), {}, "device links revoked on delete");
+  assert.deepEqual(
+    JSON.parse(await env.KEYS.get("plugins:v1")),
+    {},
+    "device links revoked on delete",
+  );
 });
 
 test("panel-grant redeem: no-token/unknown-token 401, mismatch 403, unknown grant 404, ok + single-use", async () => {
@@ -937,13 +1246,18 @@ test("panel-grant redeem: no-token/unknown-token 401, mismatch 403, unknown gran
     { name: "d2", hostname: "d2.agent.saisi.online", token: T64("b") },
   ]);
   const admin = await adminCookie();
-  const mint = (n) => worker.fetch(req("POST", `/api/devices/${n}/panel-grant`, { cookie: admin }), env);
+  const mint = (n) =>
+    worker.fetch(req("POST", `/api/devices/${n}/panel-grant`, { cookie: admin }), env);
   const code = (await (await mint("d1")).json()).url.split("grant=")[1];
   assert.ok(code, "mint returns a grant code");
-  const redeem = (token, grant) => worker.fetch(req("POST", "/api/devices/panel-grant/redeem", {
-    ...(token ? { auth: token } : {}),
-    body: { grant },
-  }), env);
+  const redeem = (token, grant) =>
+    worker.fetch(
+      req("POST", "/api/devices/panel-grant/redeem", {
+        ...(token ? { auth: token } : {}),
+        body: { grant },
+      }),
+      env,
+    );
   assert.equal((await redeem(null, code)).status, 401);
   assert.equal((await redeem(T64("z"), code)).status, 401);
   assert.equal((await redeem(T64("b"), code)).status, 403, "grant bound to another device");
@@ -957,11 +1271,16 @@ test("panel-grant redeem: KV read failure fails closed 401", async () => {
   const env = makeEnv([{ name: "d1", hostname: "d1.agent.saisi.online", token: T64("a") }]);
   const inner = env.KEYS.get.bind(env.KEYS);
   await inner("devices:v1"); // warm any boot reads before breaking the stub
-  env.KEYS.get = async () => { throw new Error("kv down"); };
-  const res = await worker.fetch(req("POST", "/api/devices/panel-grant/redeem", {
-    auth: T64("a"),
-    body: { grant: "whatever" },
-  }), env);
+  env.KEYS.get = async () => {
+    throw new Error("kv down");
+  };
+  const res = await worker.fetch(
+    req("POST", "/api/devices/panel-grant/redeem", {
+      auth: T64("a"),
+      body: { grant: "whatever" },
+    }),
+    env,
+  );
   assert.equal(res.status, 401, "listDevices throw → caller null → 401, never 500");
 });
 
@@ -973,9 +1292,16 @@ test("panel-grant redeem: KV read failure fails closed 401", async () => {
 test("plugins/status: probe prefers npm release over Cargo version + persists lastVersion", async () => {
   __clearCaches();
   const env = makeEnv([{ name: "pv1", hostname: "pv1.agent.saisi.online", token: "pv1-devtok" }]);
-  const { restore } = stubFetch("/api/status", { version: "1.0.145", release: "1.2.305", cpu_pct: 1 });
+  const { restore } = stubFetch("/api/status", {
+    version: "1.0.145",
+    release: "1.2.305",
+    cpu_pct: 1,
+  });
   try {
-    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.equal(j.devices.pv1.agent_up, true);
@@ -992,7 +1318,10 @@ test("plugins/status: probe falls back to Cargo version when release is absent",
   const env = makeEnv([{ name: "pv2", hostname: "pv2.agent.saisi.online", token: "pv2-devtok" }]);
   const { restore } = stubFetch("/api/status", { version: "1.0.145" });
   try {
-    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     assert.equal((await res.json()).devices.pv2.version, "1.0.145");
   } finally {
@@ -1005,7 +1334,10 @@ test("plugins/status: probe with no version fields omits version, no crash", asy
   const env = makeEnv([{ name: "pv3", hostname: "pv3.agent.saisi.online", token: "pv3-devtok" }]);
   const { restore } = stubFetch("/api/status", { ok: true });
   try {
-    const res = await worker.fetch(req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }), env);
+    const res = await worker.fetch(
+      req("GET", "/api/plugins/status?fresh=1", { cookie: await adminCookie() }),
+      env,
+    );
     assert.equal(res.status, 200);
     const j = await res.json();
     assert.equal(j.devices.pv3.agent_up, true);
@@ -1013,4 +1345,78 @@ test("plugins/status: probe with no version fields omits version, no crash", asy
   } finally {
     restore();
   }
+});
+
+/* ---------------- hostname allowlist on the ADMIN write paths ----------------
+ * A security audit found these two paths applied only the SHAPE check
+ * (`validateDevice`'s RFC-domain regex / the rename regex), never the hostname
+ * ALLOWLIST the other write paths use. Consequence, proven against the real
+ * dispatcher: register `hostname: "attacker.example"`, then call
+ * `GET /api/devices/<n>/proxy/...` and the worker dials that host carrying the
+ * device's PERMANENT bearer token and proxy secret. Rename is the
+ * credential-stealing variant because it PRESERVES both.
+ *
+ * There were no tests here before because there was no check.
+ */
+test("POST /api/devices: a hostname outside the allowlist is REFUSED (token must never be dialed to it)", async () => {
+  const env = makeEnv([]);
+  const admin = await adminCookie();
+  const res = await worker.fetch(
+    req("POST", "/api/devices", {
+      cookie: admin,
+      body: { name: "evil", hostname: "attacker.example", token: "a".repeat(64) },
+    }),
+    env,
+  );
+  assert.equal(res.status, 400, "a non-allowlisted hostname must not become a device record");
+  assert.match(
+    (await res.json()).error?.message || "",
+    /agent\.saisi\.online/,
+    "the error names the required suffix",
+  );
+  // And nothing was stored — the dial is only reachable through a record.
+  const list = await worker.fetch(req("GET", "/api/devices", { cookie: admin }), env);
+  const names = ((await list.json()).devices || []).map((d) => d.name);
+  assert.ok(!names.includes("evil"), "no record may survive a refused registration");
+});
+
+test("POST /api/devices/<n>/rename: a hostname outside the allowlist is REFUSED (rename preserves the token)", async () => {
+  const env = makeEnv([D1]);
+  const admin = await adminCookie();
+  const res = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", {
+      cookie: admin,
+      body: { name: "d1", hostname: "attacker.example" },
+    }),
+    env,
+  );
+  assert.equal(res.status, 400, "renaming onto a hostile host must be refused");
+  assert.match((await res.json()).error?.message || "", /agent\.saisi\.online/);
+  // The device must still point at its REAL host — rename preserves the
+  // credential, so a partial write would hand that credential to the attacker.
+  const list = await worker.fetch(req("GET", "/api/devices", { cookie: admin }), env);
+  const d1 = ((await list.json()).devices || []).find((d) => d.name === "d1");
+  assert.equal(d1?.hostname, D1.hostname, "the original hostname must be untouched");
+});
+
+test("POST /api/devices + rename: an ALLOWLISTED hostname still works (the guard is a filter, not a wall)", async () => {
+  const env = makeEnv([D1]);
+  const admin = await adminCookie();
+  const add = await worker.fetch(
+    req("POST", "/api/devices", {
+      cookie: admin,
+      body: { name: "d9", hostname: "d9.agent.saisi.online", token: "b".repeat(64) },
+    }),
+    env,
+  );
+  assert.equal(add.status, 200, "a legitimate hostname must still register");
+  const ren = await worker.fetch(
+    req("POST", "/api/devices/d1/rename", {
+      cookie: admin,
+      body: { name: "d1", hostname: "d1b.agent.saisi.online" },
+    }),
+    env,
+  );
+  assert.equal(ren.status, 200, "a legitimate rename must still work");
+  assert.equal((await ren.json()).device.hostname, "d1b.agent.saisi.online");
 });
