@@ -488,7 +488,63 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 31 (a FRESH AUDIT of `paths.rs` — the foundation
+Last updated: 2026-09-11 round 32 (the console's commands were NEVER recorded,
+though the module header claimed every command was — and the test that proved it
+exposed a race across the whole test file). Commit: b61d7e4b, plus 1.2.337.
+  (1) A TRUTH GAP IN THE GOVERNANCE RECORD ITSELF. `session_log.rs` opens by
+  stating "Every terminal command on a device is recorded as an event stream". It
+  was FALSE for the local branch — the one the CONSOLE takes, because the gateway
+  never injects a session id. That path called `execute_local`, a logger-free
+  executor, so a console command left NO durable trace: only a transient SSE frame
+  with no retention, invisible to `/api/sessions` and to the archive. The sentence
+  claiming otherwise is the only reason nobody looked.
+  (2) THE FIX RECORDS IT IN THE SAME CORPUS, NOT A PARALLEL ONE. Commands without
+  a session share ONE device-level stream (`LOCAL_SID = "device"`, labelled
+  "console (no session)"), so they land under the same list route, the same archive
+  page, the same close-time trim and the same 30-day retention. A second log would
+  have been a second answer to "what ran on this device" — this repo's recorded
+  defect — and would have needed its own retention decision.
+  CLOSED WITH WHAT IS KNOWN AND NOTHING INVENTED: `execute_local` reports
+  `{kind, text, truncated}` and no exit code, so none is recorded. A fabricated `0`
+  would read as "succeeded" in every view that renders exit codes.
+  (3) THE ANNOTATIONS NEEDED HOISTING, NOT COPYING. `intent`, `considered`,
+  `plan_step` and `run_id` were extracted INSIDE the session branch, under a
+  comment that says "a second extraction at the log site is how the two drift".
+  Re-reading them in the other branch would have created exactly that drift, so the
+  block now sits above the branch and both paths share one read.
+  (4) AND THE TEST FOUND A LATENT RACE ACROSS THE WHOLE FILE — round 20's lesson,
+  second site, identical tell (GREEN ALONE, RED IN THE SUITE). `seeded_tools()`
+  built its log directory as `vale-sesslog-tools-{pid}` — per PROCESS — while
+  `cargo test` runs the tests in PARALLEL THREADS of one process, and EVERY one of
+  its 33 callers began by REMOVING that directory. So the tests were wiping each
+  other's audit trail, and any test that wrote a record and read it back raced the
+  rest. Each invocation now gets its own directory, and
+  `seeded_tools_with_logger` hands the logger back so a test reads the trail it
+  drove instead of guessing a path. Five consecutive full-suite runs green.
+  (5) THE TEST DRIVES THE TOOL — no `session_id`, then reads the record back —
+  because this repo has recorded three times that a test exercising the layer BELOW
+  the one that was broken stays green while the bug lives on. Mutation-proven:
+  removing the recording fails it on "a session-less command must leave a record".
+  (6) ALSO CORRECTED: six doc paths that layout v2 MOVED and that still read
+  `<install>/...` — the audit trail's own header (the very header whose claim this
+  round made true), the memory store's, the playwright component's, the
+  boxed-versions file's, and `filelog.rs`'s "next to the exe".
+  (7) RELEASED 1.2.337. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the TWELFTH consecutive release.
+  (8) STILL OPEN from the round-31 audit, with evidence: the boot stale-cleanup
+  probes PRE-V2 spellings while staging writes `components\...`, so a power cut
+  leaves leftovers the NEXT swap applies (version skew under a new release marker),
+  and it is the literal counterexample to the guide's "zero legacy-directory
+  probing outside paths.rs"; a backgrounded command's exit code lives only in an
+  in-memory capped evicting map while the durable trail ends at
+  `status: "backgrounded"`; the CLI's registry fallbacks differ from the agent's
+  and `setup` discards the `reg add` status; the migration test's fixtures are
+  drive-letter based and NO test runs on Windows in CI.
+  Gates: agent 520 default / 630 feat-gated (was 519/629 with the one new test),
+  clippy -D warnings clean BOTH configs, fmt clean, xwin OK; gateway 764 + format.
+
+Previous round: 2026-09-11 round 31 (a FRESH AUDIT of `paths.rs` — the foundation
 module no round had ever opened — found the layout migration could NEVER finish on
 a two-volume device and blamed a file lock for it; plus a backgrounded command the
 operator was told had been interrupted). Commits: e7158bea, 68129b44, plus
