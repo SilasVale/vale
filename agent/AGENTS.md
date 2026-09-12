@@ -519,7 +519,45 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 69 (the model catalogue feature is now verified END TO
+Last updated: 2026-09-11 round 70 (released 1.2.356 — five verified panel fixes had
+been sitting unreleased, and the panel is compiled INTO the exe, so unshipped means
+unfixed). Tag v1.2.356; d1 on 1.2.356; audit CLEAN; keep-latest applied.
+  (1) WHY A RELEASE AND NOT MORE FEATURES: rounds 53 and 63 produced five verified panel
+  fixes — the PathView wiring, the shared version rule, the corrected Playwright security
+  claim, the Stop confirmation, the three-state readout — and NONE of them had reached a
+  device. The console ships from the worker so its fixes were live the moment they were
+  deployed; the panel does not.
+  (2) VERIFIED IN THE BINARY BEFORE PUBLISHING, because a Windows exe cannot be run here:
+  `strings` shows "NO per-launch token", "stop the browser?", "Open the timeline" and
+  `plug-confirm-hint` present, with the OLD false claim ("with a per-launch token") and
+  the OLD tooltip ("Show this step in the timeline") both ABSENT. (Two strings I checked
+  first came back 0 — "no other users yet" is a CONSOLE i18n string and `releaseVersion`
+  is minified away — so absence only counts where the string belongs to the panel.)
+  (3) VERIFIED ON THE DEVICE AFTER: `release: 1.2.356`, `this CLI: 1.2.356`,
+  `this device is current`. The live Plugins page shows the new security text with the
+  old claim gone, the Stop button is present, and no `v1.0.x` appears anywhere — the
+  frozen Cargo version is no longer displayed beside the release.
+  (4) A TRANSPORT FAILURE THAT LOOKED LIKE A NO-OP: my first `npm i -g` returned "fetch
+  failed" and had never reached the device. I did NOT re-run it blindly — `vale status`
+  said `latest: 1.2.356 is on the CDN -- THIS DEVICE IS BEHIND by 1 release`, which is
+  how the CLI reports drift, so the install was simply re-issued. THAT readout is the
+  reason "the command failed" and "the command did nothing" are distinguishable here.
+  (5) THE ADD-TIME MODEL VALIDATION I FLAGGED LAST ROUND IS NOT BUILT, ON PURPOSE AND
+  WITH A REASON: the worker has NO per-prefix `/models` URL (only per-purpose endpoints
+  like OG_ZEN_CHAT and CMD_CHAT), and most upstreams need the user's own key — the drift
+  tool's four unauthenticated upstreams are the exception, not the rule. Adding a
+  per-prefix table would create the "sixth copy of the catalogue" `channels.ts` explicitly
+  warns about, to catch typos on 4 of 8 channels. The honest state is that the channel
+  dropdown prevents the WORST version (a prefix nothing routes) and a typo still becomes
+  one failed request that names the problem.
+  (6) STILL OPEN: the panel audit's remaining items — Ctrl+Shift+Y shadowing App's
+  sessionViews (a no-op), the rail's ✕ mislabelled "Archive session" with no undo, the
+  Memory empty state contradicting its own +New, Logs panel-only while accelerators are
+  desktop-only — plus the landing page's `--dsw-alias-*` rename.
+  Gates: release audit CLEAN (`CDN == GitHub asset byte-for-byte`); CI + release.yml
+  green; d1 on 1.2.356.
+
+Previous round: 2026-09-11 round 69 (the model catalogue feature is now verified END TO
 END — through the real dispatcher, because `wrangler dev` cannot run on this box).
 Commit: 82094063. CI green.
   (1) WHAT THE 7 UNIT TESTS COULD NOT COVER: the loop an operator actually performs —
