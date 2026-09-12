@@ -69,18 +69,14 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     --aura-3: #c084fc;
     --aura-4: #f472b6;
     --aura-5: #f59f00;
-    --aura-wash:
-      radial-gradient(70rem 44rem at 8% -12%, color-mix(in srgb, var(--aura-3) 34%, transparent), transparent 62%),
-      radial-gradient(58rem 38rem at 96% 2%, color-mix(in srgb, var(--aura-1) 26%, transparent), transparent 60%),
-      radial-gradient(64rem 40rem at 50% 116%, color-mix(in srgb, var(--aura-5) 30%, transparent), transparent 64%);
     --aura-sweep: linear-gradient(115deg, var(--aura-1), var(--aura-2) 28%, var(--aura-3) 55%, var(--aura-4) 78%, var(--aura-5));
     --glass-blur: 14px;
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
     --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.12);
-    --ds-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
+    --ds-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
     --ds-font-family-code: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, "PingFang SC", "Microsoft YaHei";
-    --ds-transition-duration: 0.15s;
+    --ds-transition-duration: 0.2s;
     --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   }
 
@@ -121,7 +117,14 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    background: var(--aura-wash);
+    /* Composed HERE, not taken from a shared token: this page starts from a dark
+       background, so its wash carries lower alphas than the console's (#fafafa) — a
+       deliberate per-surface difference, and a shared name holding two values is what
+       the token contract exists to catch. */
+    background:
+      radial-gradient(70rem 44rem at 8% -12%, color-mix(in srgb, var(--aura-3) 34%, transparent), transparent 62%),
+      radial-gradient(58rem 38rem at 96% 2%, color-mix(in srgb, var(--aura-1) 26%, transparent), transparent 60%),
+      radial-gradient(64rem 40rem at 50% 116%, color-mix(in srgb, var(--aura-5) 30%, transparent), transparent 64%);
   }
   body > * { position: relative; z-index: 1; }
 

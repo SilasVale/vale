@@ -23,11 +23,17 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
-import { contrastRatio, parseColour } from "../../agent/scripts/lib/contrast-probe.mjs";
+import {
+  contrastRatio,
+  parseColour,
+} from "../../agent/scripts/lib/contrast-probe.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CONSOLE = "gateway/ui/src/styles/globals.css";
 const PANEL = "agent/resources/panel-react/src/styles/tokens.css";
+// The THIRD surface. It has its own namespace, but the names it DOES share must mean
+// the same thing — and nothing was checking them.
+const LANDING = "index/src/page.js";
 
 /** Every `--name: value;` in every rule OUTSIDE comments, keyed by selector.
  *  Comments are stripped FIRST: the console's header mentions
@@ -40,7 +46,8 @@ export function blocks(cssText) {
   for (const m of s.matchAll(/([^{}]+)\{([^{}]*)\}/g)) {
     const sel = m[1].trim().split("\n").pop().trim();
     const vars = {};
-    for (const v of m[2].matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g)) vars[v[1]] = v[2].trim();
+    for (const v of m[2].matchAll(/(--[a-z0-9-]+)\s*:\s*([^;]+);/g))
+      vars[v[1]] = v[2].trim();
     out[sel] = { ...(out[sel] || {}), ...vars };
   }
   return out;
@@ -64,8 +71,15 @@ export function divergences(consoleVars, panelVars) {
   for (const k of shared) {
     const a = resolve(consoleVars[k], consoleVars);
     const b = resolve(panelVars[k], panelVars);
-    if (a === null || b === null) { unresolved.push(k); continue; }
-    if (a !== b) differ.push({ token: k, console: a, panel: b });
+    if (a === null || b === null) {
+      unresolved.push(k);
+      continue;
+    }
+    // Compare MEANING, not source formatting: whitespace anywhere (including just inside
+    // a function's parentheses) is not a difference between two surfaces.
+    const squash = (v) => String(v).replace(/\s+/g, "");
+    if (squash(a) !== squash(b))
+      differ.push({ token: k, console: a, panel: b });
   }
   return { shared, differ, unresolved };
 }
@@ -120,8 +134,11 @@ const isColour = (v) => /^#|^rgba?\(/.test(String(v));
 export function deadFallbacks(cssText, defined, skipFile = "") {
   void skipFile;
   const out = [];
-  for (const m of cssText.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,\s*([\s\S]*?)\)\s*[,;)]/g)) {
-    if (defined.has(m[1])) out.push({ token: m[1], fallback: m[2].trim().slice(0, 40) });
+  for (const m of cssText.matchAll(
+    /var\(\s*(--[a-z0-9-]+)\s*,\s*([\s\S]*?)\)\s*[,;)]/g,
+  )) {
+    if (defined.has(m[1]))
+      out.push({ token: m[1], fallback: m[2].trim().slice(0, 40) });
   }
   return out;
 }
@@ -144,17 +161,23 @@ let failures = 0;
 // one is a false positive of the sweep (`.rail-avatar` is white on a
 // `background-image` gradient, which a `backgroundColor` walk cannot see).
 {
-  const g = blocks(readFileSync(`${ROOT}gateway/ui/src/styles/globals.css`, "utf8"));
+  const g = blocks(
+    readFileSync(`${ROOT}gateway/ui/src/styles/globals.css`, "utf8"),
+  );
   const root = g[":root"] || {};
   const dark = g['body[data-theme="dark"]'] || {};
   for (const tok of ["--success-text", "--warning-text", "--error-text"]) {
     if (!(tok in root) || !(tok in dark)) {
       failures += 1;
-      console.log(`    console: ${tok} must be declared in BOTH theme blocks (light-only freezes against the light background)`);
+      console.log(
+        `    console: ${tok} must be declared in BOTH theme blocks (light-only freezes against the light background)`,
+      );
     }
   }
-  const css = readFileSync(`${ROOT}gateway/ui/src/styles/globals.css`, "utf8")
-    .replace(/\/\*[\s\S]*?\*\//g, "");
+  const css = readFileSync(
+    `${ROOT}gateway/ui/src/styles/globals.css`,
+    "utf8",
+  ).replace(/\/\*[\s\S]*?\*\//g, "");
   // ...and the NEUTRAL ladder is the same story, measured on the surfaces these
   // steps actually sit on:
   //   #71717a (--text-muted)  white 4.83 | --bg 4.63 | --bg-secondary 4.40 | --bg-tertiary 4.10
@@ -163,20 +186,29 @@ let failures = 0;
   // so whether it was safe depended on which surface a rule happened to land on —
   // not something a stylesheet check can see. Both remain valid as marks.
   for (const mark of ["--text-muted", "--text-faint"]) {
-    const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g"))];
+    const offenders = [
+      ...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g")),
+    ];
     if (offenders.length) {
       failures += offenders.length;
-      console.log(`    console: ${offenders.length} rule(s) paint TEXT with ${mark}, a MARK weight — use --text-secondary`);
+      console.log(
+        `    console: ${offenders.length} rule(s) paint TEXT with ${mark}, a MARK weight — use --text-secondary`,
+      );
     }
   }
   for (const mark of ["--success", "--warning", "--error"]) {
-    const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g"))];
+    const offenders = [
+      ...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g")),
+    ];
     if (offenders.length) {
       failures += offenders.length;
-      console.log(`    console: ${offenders.length} rule(s) paint TEXT with ${mark}, the MARK weight — use ${mark}-text`);
+      console.log(
+        `    console: ${offenders.length} rule(s) paint TEXT with ${mark}, the MARK weight — use ${mark}-text`,
+      );
     }
   }
-  if (!failures) console.log("  console: semantic colours have a readable text weight");
+  if (!failures)
+    console.log("  console: semantic colours have a readable text weight");
 }
 
 // --- dead fallbacks, both frontends ----------------------------------------
@@ -185,24 +217,32 @@ for (const [label, dir, tokenFile] of [
   ["panel", "agent/resources/panel-react/src/", "styles/tokens.css"],
 ]) {
   const tokText = blocks(readFileSync(`${ROOT}${dir}${tokenFile}`, "utf8"));
-  const defined = new Set(Object.values(tokText).flatMap((b) => Object.keys(b)));
+  const defined = new Set(
+    Object.values(tokText).flatMap((b) => Object.keys(b)),
+  );
   const { readdirSync, statSync } = await import("node:fs");
-  const walk = (d) => readdirSync(d).flatMap((e) => {
-    const f = `${d}/${e}`;
-    if (statSync(f).isDirectory()) return e === "node_modules" ? [] : walk(f);
-    return /\.(css|tsx|ts)$/.test(f) && !f.endsWith(tokenFile) ? [f] : [];
-  });
+  const walk = (d) =>
+    readdirSync(d).flatMap((e) => {
+      const f = `${d}/${e}`;
+      if (statSync(f).isDirectory()) return e === "node_modules" ? [] : walk(f);
+      return /\.(css|tsx|ts)$/.test(f) && !f.endsWith(tokenFile) ? [f] : [];
+    });
   let dead = 0;
   for (const f of walk(`${ROOT}${dir}`)) {
     const hits = deadFallbacks(readFileSync(f, "utf8"), defined);
     for (const h of hits) {
       dead += 1;
-      if (dead <= 3) console.log(`    ${f.replace(ROOT, "")}: var(${h.token}, ${h.fallback}…) can never apply`);
+      if (dead <= 3)
+        console.log(
+          `    ${f.replace(ROOT, "")}: var(${h.token}, ${h.fallback}…) can never apply`,
+        );
     }
   }
   if (dead) {
     failures += dead;
-    console.log(`  ${label}: ${dead} DEAD fallback(s) — a token the system declares always wins`);
+    console.log(
+      `  ${label}: ${dead} DEAD fallback(s) — a token the system declares always wins`,
+    );
   } else {
     console.log(`  ${label}: no dead fallbacks`);
   }
@@ -214,6 +254,18 @@ const cases = [
 ];
 const gc = blocks(readFileSync(`${ROOT}${CONSOLE}`, "utf8"));
 const pc = blocks(readFileSync(`${ROOT}${PANEL}`, "utf8"));
+// page.js is a JS MODULE with a <style> block inside a template literal, not a
+// stylesheet — handing the whole file to a CSS parser makes it match JS braces too.
+// (It happened to read `:root` correctly, which is exactly the kind of accidental
+// success that hides a parser pointed at the wrong input.) Extract the stylesheet
+// first, and FAIL if there is not one.
+const landingSrc = readFileSync(`${ROOT}${LANDING}`, "utf8");
+const landingCss = /<style>([\s\S]*?)<\/style>/.exec(landingSrc);
+assert.ok(
+  landingCss,
+  `${LANDING}: no <style> block found — the parser would read JS`,
+);
+const lc = blocks(landingCss[1]);
 
 // --- the accent family must be READABLE, in both directions ------------------
 //
@@ -241,15 +293,26 @@ function contrastFailures(label, tokens) {
   const toRgb = (c) => {
     const v = String(c || "").trim();
     let m = v.match(/^#([0-9a-f]{3})$/i);
-    if (m) return { r: parseInt(m[1][0] + m[1][0], 16), g: parseInt(m[1][1] + m[1][1], 16), b: parseInt(m[1][2] + m[1][2], 16) };
+    if (m)
+      return {
+        r: parseInt(m[1][0] + m[1][0], 16),
+        g: parseInt(m[1][1] + m[1][1], 16),
+        b: parseInt(m[1][2] + m[1][2], 16),
+      };
     m = v.match(/^#([0-9a-f]{6})$/i);
-    if (m) return { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16) };
+    if (m)
+      return {
+        r: parseInt(m[1].slice(0, 2), 16),
+        g: parseInt(m[1].slice(2, 4), 16),
+        b: parseInt(m[1].slice(4, 6), 16),
+      };
     const rgb = v.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
     if (rgb) return { r: +rgb[1], g: +rgb[2], b: +rgb[3] };
     return null;
   };
   const ratioOf = (a, b) => {
-    const fgO = toRgb(a), bgO = toRgb(b);
+    const fgO = toRgb(a),
+      bgO = toRgb(b);
     if (!fgO || !bgO) return null;
     return contrastRatio(fgO, bgO);
   };
@@ -258,7 +321,9 @@ function contrastFailures(label, tokens) {
     if (r === null) {
       out.push(`${label}: ${what} could not be measured (${fg} on ${bg})`);
     } else if (r < AA_TEXT) {
-      out.push(`${label}: ${what} measures ${r.toFixed(2)}, under AA ${AA_TEXT} (${fg} on ${bg})`);
+      out.push(
+        `${label}: ${what} measures ${r.toFixed(2)}, under AA ${AA_TEXT} (${fg} on ${bg})`,
+      );
     }
   };
   const fg = get("--accent-fg");
@@ -274,41 +339,92 @@ function contrastFailures(label, tokens) {
 }
 
 let accentFailures = 0;
-for (const [label, gsel] of [["light", ":root"], ["dark", 'body[data-theme="dark"]']]) {
+for (const [label, gsel] of [
+  ["light", ":root"],
+  ["dark", 'body[data-theme="dark"]'],
+]) {
   const tokens = { ...(gc[":root"] || {}), ...(gc[gsel] || {}) };
   const bad = contrastFailures(label, tokens);
   accentFailures += bad.length;
   for (const b of bad) console.log(`  ${b}`);
 }
-if (accentFailures === 0) console.log("  accent family: readable in both directions, both themes");
-
+if (accentFailures === 0)
+  console.log("  accent family: readable in both directions, both themes");
 
 for (const [label, gsel, psel] of cases) {
   const g = gc[gsel] || {};
   const p = pc[psel] || {};
   const { shared, differ, unresolved } = divergences(g, p);
   // A comparison that read nothing must not report success.
-  assert.ok(shared.length >= 8, `${label}: only ${shared.length} shared tokens found — the parser read the wrong block`);
+  assert.ok(
+    shared.length >= 8,
+    `${label}: only ${shared.length} shared tokens found — the parser read the wrong block`,
+  );
   if (unresolved.length) {
-    console.log(`  ${label}: ${unresolved.length} shared token(s) UNRESOLVED (nested var) — not compared: ${unresolved.join(", ")}`);
+    console.log(
+      `  ${label}: ${unresolved.length} shared token(s) UNRESOLVED (nested var) — not compared: ${unresolved.join(", ")}`,
+    );
   }
   // The console's neutrals, in this mode, against the panel's whole scale.
+  // THE LANDING PAGE, for the names it shares with the console. Its own `--dsw-alias-*`
+  // namespace is deliberately local; what must agree is anything it declares under a
+  // name the console also declares.
+  {
+    // EFFECTIVE sets, not raw blocks. A theme's tokens are `:root` PLUS its override —
+    // the console's dark block redefines console-named tokens while the landing's
+    // redefines `--dsw-alias-*`, so comparing the two OVERRIDE blocks alone found an
+    // intersection of exactly ZERO and would have reported "no disagreement" for the
+    // worst possible reason.
+    const effective = (blk, sel) => ({
+      ...(blk[":root"] || {}),
+      ...(blk[sel] || {}),
+    });
+    const gEff = effective(gc, gsel);
+    const lEff = effective(
+      lc,
+      label === "light" ? ":root" : "body[data-ds-dark-theme]",
+    );
+    const { shared: lShared, differ: lDiffer } = divergences(gEff, lEff);
+    assert.ok(
+      lShared.length >= 8,
+      `${label}: landing comparison read only ${lShared.length} shared tokens — the parser looked at the wrong block`,
+    );
+    for (const d of lDiffer) {
+      failures += 1;
+      console.log(
+        `  ${label}: landing  ${d.token}: console ${d.console} vs landing ${d.panel}`,
+      );
+    }
+    if (!lDiffer.length)
+      console.log(
+        `  ${label}: landing agrees on all ${lShared.length} shared tokens`,
+      );
+  }
+
   const scalePanel = { ...(pc[":root"] || {}), ...(pc[psel] || {}) };
   const off = offScaleNeutrals(g, scalePanel, isColour);
   if (off.length === 0) {
-    console.log(`  ${label}: every console neutral is a value the panel declares`);
+    console.log(
+      `  ${label}: every console neutral is a value the panel declares`,
+    );
   } else {
     failures += off.length;
-    console.log(`  ${label}: ${off.length} console neutral(s) are NOT on the panel's scale:`);
-    for (const o of off) console.log(`    ${o.token}: ${o.value} is the console's alone`);
+    console.log(
+      `  ${label}: ${off.length} console neutral(s) are NOT on the panel's scale:`,
+    );
+    for (const o of off)
+      console.log(`    ${o.token}: ${o.value} is the console's alone`);
   }
 
   if (differ.length === 0) {
     console.log(`  ${label}: ${shared.length} shared tokens agree`);
   } else {
     failures += differ.length;
-    console.log(`  ${label}: ${differ.length} of ${shared.length} shared tokens DIVERGE`);
-    for (const d of differ) console.log(`    ${d.token}: console ${d.console} vs panel ${d.panel}`);
+    console.log(
+      `  ${label}: ${differ.length} of ${shared.length} shared tokens DIVERGE`,
+    );
+    for (const d of differ)
+      console.log(`    ${d.token}: console ${d.console} vs panel ${d.panel}`);
   }
 }
 failures += accentFailures;
@@ -318,12 +434,26 @@ if (failures) {
   // surfaces", which sends a reader looking for a value mismatch that is not
   // there. Say which.
   console.error(`\ntoken contract FAILED (${failures}):`);
-  console.error("  * a shared token holding DIFFERENT VALUES on the two surfaces -> the panel is");
-  console.error("    the device's primary operator surface, so pick ITS value for the console;");
-  console.error("  * a DEAD fallback (`var(--x, v)` where the system declares --x) -> drop the");
-  console.error("    fallback, it can never apply and it describes a design that is gone;");
-  console.error("  * or the ACCENT FAMILY is not readable (see the measurements above) -> darken the");
-  console.error("    accent rather than the ink: no foreground passes on #d9480f at the base AND its");
+  console.error(
+    "  * a shared token holding DIFFERENT VALUES on the two surfaces -> the panel is",
+  );
+  console.error(
+    "    the device's primary operator surface, so pick ITS value for the console;",
+  );
+  console.error(
+    "  * a DEAD fallback (`var(--x, v)` where the system declares --x) -> drop the",
+  );
+  console.error(
+    "    fallback, it can never apply and it describes a design that is gone;",
+  );
+  console.error(
+    "  * or the ACCENT FAMILY is not readable (see the measurements above) -> darken the",
+  );
+  console.error(
+    "    accent rather than the ink: no foreground passes on #d9480f at the base AND its",
+  );
   process.exit(1);
 }
-console.log("token contract: the console and the panel agree on every shared token name.");
+console.log(
+  "token contract: the console and the panel agree on every shared token name.",
+);
