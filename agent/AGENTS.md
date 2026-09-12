@@ -519,7 +519,39 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 81 (two more CLI findings; the first is a claim written
+Last updated: 2026-09-12 round 82 (the SIBLING of the round-79 fix, in THREE more
+places: a failed READ reported as evidence of ABSENCE — plus `tunnel start` claiming
+success from an unobserved spawn).
+Commit: cffbc1dd. CI green.
+  (1) `rollback --clear` was fixed in round 79 for treating any `catch` as "no pin
+  present". THE SAME CATCH WAS DOING THE SAME THING TWICE MORE and neither was fixed:
+    * `statusReport`'s marker read — `catch { /* no marker => nothing in flight */ }` —
+      so an EACCES/EBUSY on the busy marker printed **"update: none in flight"**, a claim
+      about an update that may be running now. `StatusFacts` gains
+      `updateMarkerUnreadable` and the line says "state UNKNOWN -- the busy marker exists
+      but could not be read". The field carries the rule its neighbours already state
+      ("null is NOT 'up to date'").
+    * `rollback status` — a read error printed "not pinned (tracks the release channel)".
+      Only ENOENT means that now; anything else reports UNKNOWN and exits 1.
+  (2) `tunnel start` CLAIMED SUCCESS FROM A SPAWN NOBODY WATCHED: stdio ignored, no
+  `error`/`exit` listener, `unref()`, exit 0 immediately — so the success line printed for
+  a cloudflared that died on a bad config, a missing credentials file, a gone route, or an
+  already-running instance. When the SPAWN ITSELF failed there was no error listener
+  either: node printed the success line and THEN died with an unhandled `'error'` stack.
+  It listens for both now, waits 1.5 s, then ASKS the same question `tunnel status` asks
+  (the tasklist probe). `tunnel` is async; the dispatcher already wraps every command.
+  (3) VERIFIED BY EFFECT, including the case the fix could have broken: `tunnel start`
+  (not installed) exits 1; `rollback status` (no pin) still says "not pinned" at exit 0 —
+  the ENOENT path is unchanged, so a claim of ABSENCE is still made, but only when
+  absence is what happened.
+  (4) STILL OPEN: F9 `setup --reg-key` without `--tunnel` never spends the key its own
+  message says it is registering with; L4 the 90 s read-back timeout is stated as fact
+  ("the swap did NOT take") rather than as a timeout; L7 `autostart` counts a missing
+  ValeDesktop task as a failure though its own comment says skip; L10 the `reg add` writes
+  of the "single source of truth" discard their result.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 81 (two more CLI findings; the first is a claim written
 before its own evidence — a version marker written ~20 lines ABOVE the step that can
 abort setup, while its comment said it was written after).
 Commit: 81dd9778. CI green.
