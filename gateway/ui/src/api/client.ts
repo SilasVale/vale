@@ -64,6 +64,17 @@ export interface RouteInfo {
 
 export interface PublicRouteInfo {
   routes: RouteInfo[];
+  /**
+   * THE AUTHORITATIVE CATALOGUE, and the only list safe to SET A ROUTE FROM.
+   *
+   * `routes[].models` holds BARE names per channel ("mimo-v2.5"), while routing is
+   * by PREFIX — an unprefixed name goes to Command Code, not to the channel it was
+   * listed under. Setting a route from `routes[].models` therefore silently
+   * switched to a DIFFERENT channel than the one the user clicked in.
+   *
+   * This list is prefixed ids and is identical to what `/v1/models` serves.
+   */
+  models: string[];
   apiHost: string;
 }
 

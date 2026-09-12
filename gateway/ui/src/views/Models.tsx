@@ -44,6 +44,9 @@ export default function ModelsView() {
   const { t } = useTranslation();
   const { toast } = useToast();
   const [routes, setRoutes] = useState<RouteInfo[]>([]);
+  // The PREFIXED catalogue (== /v1/models). Chips are rendered from this, never
+  // from `routes[].models`, which is bare and would set the wrong channel.
+  const [allModels, setAllModels] = useState<string[]>([]);
   const [health, setHealth] = useState<HealthChannel[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [loading, setLoading] = useState(true);
@@ -58,10 +61,15 @@ export default function ModelsView() {
         api.getHealth().catch(() => null),
         api.getRoute().catch(() => null),
       ]);
-      if (info?.routes) setRoutes(info.routes);
       // A catalogue that could not be read must SAY SO. An empty page here would
-      // claim the gateway advertises nothing, which is a different fact.
-      else setFailed(true);
+      // claim the gateway advertises nothing, which is a different fact. The
+      // AUTHORITATIVE list is `info.models`; without it there is nothing safe to
+      // render chips from, so this is a failure rather than a fallback to the bare
+      // per-channel names.
+      if (info?.models?.length) {
+        setAllModels(info.models);
+        setRoutes(info.routes || []);
+      } else setFailed(true);
       if (health?.channels) setHealth(health.channels);
       if (route?.effective) setCurrent(route.effective);
       else if (route?.model) setCurrent(route.model);
@@ -85,7 +93,14 @@ export default function ModelsView() {
     }
   }, [t, toast]);
 
-  const total = routes.reduce((n, r) => n + (r.models?.length || 0), 0);
+  const total = allModels.length;
+  // The prefixes that actually route somewhere. `"none"` is the server's sentinel
+  // for the DEFAULT channel (unprefixed names), not a prefix to match on.
+  const realPrefixes = routes.map((r) => r.prefix).filter((p) => p && p !== "none");
+  const modelsFor = (prefix: string): string[] =>
+    prefix && prefix !== "none"
+      ? allModels.filter((m) => m.startsWith(prefix))
+      : allModels.filter((m) => !realPrefixes.some((p) => m.startsWith(p)));
   // Health is reported per channel PREFIX; the catalogue is the authority on which
   // channels exist, so an id with no health entry is "not checked", not "down".
   const healthFor = (prefix: string) =>
@@ -103,11 +118,13 @@ export default function ModelsView() {
 
       {!loading && !failed && routes.map((r) => {
         const h = healthFor(r.prefix);
-        const models = r.models || [];
+        const models = modelsFor(r.prefix);
         return (
           <Card key={r.prefix} className="models-card">
             <div className="models-head">
-              <span className={`models-prefix ${laneClass(r.prefix)}`}>{r.prefix}</span>
+              <span className={`models-prefix ${laneClass(r.prefix)}`}>
+                {r.prefix && r.prefix !== "none" ? r.prefix : t("models.noPrefix")}
+              </span>
               <span className="models-backend">{r.backend}</span>
               {h ? (
                 <span className={`models-health ${h.ok ? "ok" : "bad"}`} title={h.reason || h.model}>
