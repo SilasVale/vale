@@ -420,6 +420,42 @@ const TERMINAL_TOOLS: McpTool[] = [
     },
   },
   {
+    name: "terminal_jobs",
+    description:
+      "Background-job registry. With no params: list recent run_in_background jobs {job_id, command, done, exit_code}. With {job_id, wait_secs}: block until that job finishes or the timeout elapses, then return its final state. THIS IS HOW A run_in_background EXECUTION IS COLLECTED — terminal_execute advertises run_in_background, and the job record exists precisely so callers poll here instead of blind-reading the session.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        job_id: {
+          type: "string",
+          description: "Job id returned by terminal_execute(run_in_background:true).",
+        },
+        wait_secs: {
+          type: "integer",
+          description: "Max seconds to wait for completion when job_id is given. Default 0 (instant snapshot).",
+        },
+      },
+      required: [],
+    },
+  },
+  {
+    name: "terminal_forget_saved",
+    description:
+      "Remove a saved terminal connection by id (from terminal_saved_connections) and delete its stored password (ssh targets). The live session, if any, is untouched.",
+    inputSchema: {
+      type: "object",
+      properties: {
+        ...DEVICE_PARAM,
+        id: {
+          type: "string",
+          description: "The id (kind:target) from terminal_saved_connections.",
+        },
+      },
+      required: ["id"],
+    },
+  },
+  {
     name: "terminal_connect_saved",
     description:
       "Reconnect to a saved terminal connection by id (from terminal_saved_connections). Replays the saved params; returns the new session id.",
@@ -487,7 +523,7 @@ const TERMINAL_TOOLS: McpTool[] = [
  * cannot carry works here.
  *
  * Registration is a POLICY decision, not a capability one: the device serves
- * 49 tools, this file used to mirror 28 of them by hand, and everything
+ * 52 tools, this file used to mirror 28 of them by hand, and everything
  * unmirrored was uncalled (`tools/call` looks the name up here before
  * routing). test/mcp-handler.test.mjs now reads the agent's generated
  * spec-tools.json and fails on any name that is neither registered here nor

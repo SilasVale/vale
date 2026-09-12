@@ -187,8 +187,8 @@ import { readFileSync } from "node:fs";
 const NOT_EXPOSED = {
   // OS surface beyond the sanctioned transfer pair: a PTY is strictly more
   // capable and the panel already renders these.
-  system_file_list: "OS browsing — terminal_* covers it; the panel has the GUI",
-  system_file_stat: "OS metadata — same",
+  system_file_list: "OS browsing — terminal_* covers it",
+  system_file_stat: "OS metadata — terminal_* covers it",
   system_file_read: "inline ≤1 MiB read; the relay pair is the transfer path",
   system_file_write: "inline ≤4 MiB write; the relay pair is the transfer path",
   system_process_list: "tasklist is a PTY away",
@@ -204,19 +204,17 @@ const NOT_EXPOSED = {
   // The playwright-mcp bridge plumbing mcp-browser.ts drives internally;
   // exposing it lets a client route around the browser_* tools entirely.
   mcp_client_connect: "internal bridge plumbing (mcp-browser.ts calls it)",
-  mcp_client_list: "internal bridge plumbing",
+  mcp_client_list: "session introspection is device-local; the console bridge (mcp-browser.ts) calls only mcp_client_connect and mcp_client_call",
   mcp_client_call: "internal bridge plumbing",
-  mcp_client_disconnect: "internal bridge plumbing",
+  mcp_client_disconnect: "teardown is device-local; the console bridge never disconnects a client it did not open",
   // Swaps the device binary and restarts the agent (drops every session).
-  agent_update: "self-modifying — console/CLI action, not an MCP call",
+  agent_update: "self-modifying — a CLI action (`vale update`), not an MCP call",
   page_view: "legacy remote-page helper (design plugin)",
   // terminal_sftp was the pre-relay transfer path. Kept off deliberately:
   // round-554 makes the relay pair the ONE method, and sftp takes arbitrary
   // host/user/credential args an MCP client should not be offered.
   terminal_sftp: "superseded by the relay pair; takes arbitrary SSH credentials",
   sftp: "legacy alias of terminal_sftp",
-  terminal_jobs: "job control — panel surface",
-  terminal_forget_saved: "credential-store admin — panel surface",
   terminal_secret_set: "alias of secret_set (registered)",
   terminal_secret_get: "alias of secret_get (registered)",
   terminal_secret_delete: "alias of secret_delete (registered)",

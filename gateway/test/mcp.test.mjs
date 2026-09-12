@@ -20,7 +20,10 @@ test("mcp tools: all tools take a device param", () => {
   // same shape of decision. The device mints the id and stamps it onto the
   // records; if the console cannot CALL run_begin, a console-driven execution
   // can never be attributed — and the console is the primary consumer.
-  assert.equal(tools.length, 33);
+  // 35 = 28 device tools + 7 gateway-synthesized browser_* bridge tools. Was 33
+  // before round 78 exposed terminal_jobs and terminal_forget_saved, which the
+  // NOT_EXPOSED map claimed the panel called — it never did.
+  assert.equal(tools.length, 35);
   for (const t of tools) {
     assert.equal(t.inputSchema.type, "object");
     assert.ok(t.inputSchema.properties.device, `${t.name} must take device`);
