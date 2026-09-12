@@ -1562,7 +1562,7 @@ async fn run_playwright_op(
 /// viewers can't exhaust tasks/memory. 64 slots shared across /api/events
 /// and /api/events/term; each slot is a permit that releases on drop.
 /// P2-4: read the boxed-component version manifest (`vale setup`/`vale update`
-/// write `<install>/boxed-versions.json`). Returns None when absent or
+/// write `<install>/etc/boxed-versions.json`). Returns None when absent or
 /// unparseable — advisory only, never fail-closed.
 fn boxed_versions() -> Option<serde_json::Value> {
     let text = std::fs::read_to_string(crate::paths::boxed_versions_file()).ok()?;

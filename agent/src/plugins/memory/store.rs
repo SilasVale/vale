@@ -193,7 +193,7 @@ pub struct SearchQuery<'a> {
 }
 
 impl MemoryStore {
-    /// Open (or create) the store under `dir` (e.g. `<install>/memory/`).
+    /// Open (or create) the store under `dir` (e.g. `data_dir()/memory/`).
     pub fn new(dir: PathBuf, limits: MemoryLimits) -> Self {
         let _ = std::fs::create_dir_all(&dir);
         let store = Self {

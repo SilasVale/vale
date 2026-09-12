@@ -682,6 +682,14 @@ async fn execute_local(
         "truncated": truncated,
     }))
 }
+/// The audit-trail id for commands that ran WITHOUT a session — the console's
+/// path. One device-level stream, not one per command: the corpus is keyed by id,
+/// so a per-call id would create a file per tool call and swamp the archive.
+const LOCAL_SID: &str = "device";
+
+/// What that stream is called on the archive's row.
+const LOCAL_LABEL: &str = "console (no session)";
+
 /// How long the approval gate waits for an operator decision (design beat 3).
 /// Mirrors the manager's own deadline; named here so the call site reads as a
 /// budget rather than a magic number.
@@ -713,6 +721,45 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                 let timeout_secs = params.get("timeout_secs").and_then(|v| v.as_u64()).unwrap_or(30).min(3600);
                 let quiet_ms = params.get("quiet_ms").and_then(|v| v.as_u64()).unwrap_or(200);
 
+                // record and any later reader see the same values — a second
+                // extraction at the log site is how the two drift.
+                //
+                // A malformed `considered` (not an array of strings) is
+                // treated as ABSENT rather than refused: the reasoning is
+                // optional metadata about a command that is about to run
+                // anyway, and failing the execute over it would trade a real
+                // action for a nice-to-have annotation.
+                let intent: Option<String> = params
+                    .get("intent")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
+                // Which declared step this command advances. The plan is
+                // 1-based, so 0 and negatives read as ABSENT rather than
+                // matching no step — see SessionEvent::command_start_full.
+                let plan_step: Option<u32> = params
+                    .get("plan_step")
+                    .and_then(|v| v.as_u64())
+                    .and_then(|n| u32::try_from(n).ok());
+                let considered: Option<Vec<String>> = params
+                    .get("considered")
+                    .and_then(|v| v.as_array())
+                    .map(|a| {
+                        a.iter()
+                            .filter_map(|x| x.as_str())
+                            .map(|s| s.to_string())
+                            .collect::<Vec<_>>()
+                    })
+                    .filter(|c| !c.is_empty());
+                // The RUN this command belonged to, as declared by
+                // run_begin. An ATTRIBUTE, never an authorization input —
+                // see crate::runs for the rule and its pin. Unknown ids are
+                // accepted verbatim: the runs log is best-effort, so a
+                // client that lost its begin record must not lose its
+                // commands too.
+                let run_id: Option<String> = params
+                    .get("run_id")
+                    .and_then(|v| v.as_str())
+                    .map(|s| s.to_string());
                 if let Some(session_id) = params.get("session_id").and_then(|v| v.as_str()) {
                     // ── Session-aware mode: write + wait for output ──
                     let sid = session_id.to_string();
@@ -736,45 +783,6 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                     let run_in_background = params.get("run_in_background").and_then(|v| v.as_bool()).unwrap_or(false);
                     // The agent's stated reasoning, if the client sent any. Read
                     // ONCE here and carried to the audit write below, so the
-                    // record and any later reader see the same values — a second
-                    // extraction at the log site is how the two drift.
-                    //
-                    // A malformed `considered` (not an array of strings) is
-                    // treated as ABSENT rather than refused: the reasoning is
-                    // optional metadata about a command that is about to run
-                    // anyway, and failing the execute over it would trade a real
-                    // action for a nice-to-have annotation.
-                    let intent: Option<String> = params
-                        .get("intent")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
-                    // Which declared step this command advances. The plan is
-                    // 1-based, so 0 and negatives read as ABSENT rather than
-                    // matching no step — see SessionEvent::command_start_full.
-                    let plan_step: Option<u32> = params
-                        .get("plan_step")
-                        .and_then(|v| v.as_u64())
-                        .and_then(|n| u32::try_from(n).ok());
-                    let considered: Option<Vec<String>> = params
-                        .get("considered")
-                        .and_then(|v| v.as_array())
-                        .map(|a| {
-                            a.iter()
-                                .filter_map(|x| x.as_str())
-                                .map(|s| s.to_string())
-                                .collect::<Vec<_>>()
-                        })
-                        .filter(|c| !c.is_empty());
-                    // The RUN this command belonged to, as declared by
-                    // run_begin. An ATTRIBUTE, never an authorization input —
-                    // see crate::runs for the rule and its pin. Unknown ids are
-                    // accepted verbatim: the runs log is best-effort, so a
-                    // client that lost its begin record must not lose its
-                    // commands too.
-                    let run_id: Option<String> = params
-                        .get("run_id")
-                        .and_then(|v| v.as_str())
-                        .map(|s| s.to_string());
                     // The approval request this command is picking up. Sent when
                     // re-issuing a command whose gate PARKED: the operator has
                     // since answered, so the decision is waiting as a one-shot
@@ -1413,7 +1421,44 @@ pub(super) fn tool_execute(ctx: &super::ctx::ToolCtx) -> ToolDef {
                         state, result, truncated, timed_out, wait_reason, marker_code, read_abs,
                     ))
                 } else {
-                    Ok(execute_local(&command, timeout_secs, &bus).await?)
+                    // A COMMAND RUN WITHOUT A SESSION IS STILL A COMMAND ON THIS
+                    // DEVICE. `session_log.rs` opens by claiming "Every terminal
+                    // command on a device is recorded as an event stream" — and
+                    // this branch, which is the one the CONSOLE takes (the gateway
+                    // never injects a session id), called a logger-free executor
+                    // and left NOTHING durable. The only trace was a transient SSE
+                    // frame with no retention, so a console command could not be
+                    // seen in `/api/sessions` or the archive at all.
+                    //
+                    // It is recorded under a DEVICE-LEVEL id rather than into a new
+                    // file, so it lands in the SAME corpus with the same list
+                    // route, the same archive page, the same trim and the same
+                    // 30-day retention. A parallel log would have been a second
+                    // answer to "what ran on this device", and this repo has
+                    // recorded that defect often enough.
+                    let started = std::time::Instant::now();
+                    logger.remember_identity(LOCAL_SID, "device", LOCAL_LABEL);
+                    logger.log_command_start_run(
+                        LOCAL_SID,
+                        &command,
+                        intent.as_deref(),
+                        considered.as_deref(),
+                        plan_step,
+                        run_id.as_deref(),
+                    );
+                    let out = execute_local(&command, timeout_secs, &bus).await;
+                    // CLOSED WITH WHAT IS KNOWN, AND NOTHING INVENTED.
+                    // `execute_local` reports `{kind, text, truncated}` — no exit
+                    // code — so none is recorded: a fabricated 0 would read as
+                    // "succeeded" in every view that renders exit codes, and the
+                    // reason carries the only outcome we actually have.
+                    logger.log_command_end(
+                        LOCAL_SID,
+                        None,
+                        Some(if out.is_ok() { "local" } else { "local-error" }),
+                        Some(started.elapsed().as_millis() as u64),
+                    );
+                    Ok(out?)
                 }
             }
         },

@@ -20,7 +20,27 @@ use super::build;
 
 /// Build the tool list with a caller-controlled output buffer so tests can
 /// pre-seed session output and exercise terminal_read / terminal_screen.
-fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
+/// A log directory NO OTHER TEST IS USING.
+///
+/// It used to be `vale-sesslog-tools-{pid}` — per PROCESS — while `cargo test`
+/// runs the tests in PARALLEL THREADS of one process, and every `seeded_tools()`
+/// call began by REMOVING that directory. So 33 tests were wiping each other's
+/// audit trail, and any test that wrote a record and read it back raced the rest.
+/// A per-invocation counter makes each one's directory its own. (Round 20 hit the
+/// same shape in the memory store's test directory; this is the second site of
+/// one defect, and the tell was identical — GREEN ALONE, RED IN THE SUITE.)
+fn unique_log_dir() -> std::path::PathBuf {
+    use std::sync::atomic::{AtomicUsize, Ordering};
+    static N: AtomicUsize = AtomicUsize::new(0);
+    std::env::temp_dir().join(format!(
+        "vale-sesslog-tools-{}-{}",
+        std::process::id(),
+        N.fetch_add(1, Ordering::Relaxed)
+    ))
+}
+
+/// `seeded_tools` plus the logger, for tests that must READ the trail they drove.
+fn seeded_tools_with_logger() -> (Vec<ToolDef>, OutputBuf, crate::session_log::SessionLogger) {
     let bus: Arc<dyn EventBus> = Arc::new(AppEventBus::new());
     let serial = Arc::new(SerialPool::new(115200, 1000));
     let mgr = Arc::new(TerminalManager::new(serial.clone()));
@@ -28,9 +48,7 @@ fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
     let diag: DiagStore = Arc::new(std::sync::Mutex::new(DiagBuf::default()));
     // Session logger in a scratch dir — the audit trail is exercised
     // through the same full path as production (round-54).
-    let log_dir = std::env::temp_dir().join(format!("vale-sesslog-tools-{}", std::process::id()));
-    let _ = std::fs::remove_dir_all(&log_dir);
-    let logger = crate::session_log::SessionLogger::new(log_dir);
+    let logger = crate::session_log::SessionLogger::new(unique_log_dir());
     let tools = build(
         &mgr,
         &serial,
@@ -40,6 +58,11 @@ fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
         &logger,
         &Arc::new(std::sync::atomic::AtomicUsize::new(8 * 1024 * 1024)),
     );
+    (tools, buf, logger)
+}
+
+fn seeded_tools() -> (Vec<ToolDef>, OutputBuf) {
+    let (tools, buf, _logger) = seeded_tools_with_logger();
     (tools, buf)
 }
 
@@ -1279,4 +1302,73 @@ async fn secret_tools_reject_missing_fields_before_the_keychain() {
             "{name} validates without a keychain, got: {res:?}"
         );
     }
+}
+
+/// A COMMAND WITH NO SESSION IS STILL A COMMAND ON THIS DEVICE.
+///
+/// `session_log.rs` opens by claiming "Every terminal command on a device is
+/// recorded as an event stream". It was FALSE for the local branch — the one the
+/// CONSOLE takes, since the gateway never injects a session id: that path called
+/// a logger-free executor and left nothing durable at all, so a console command
+/// could not be seen in `/api/sessions` or in the archive.
+///
+/// THIS TEST DRIVES THE TOOL, not the logger. The fix spans a dispatch branch,
+/// and this repo has recorded three times that a test exercising the layer BELOW
+/// the one that was broken stays green while the bug lives on — so it calls
+/// `terminal_execute` with NO `session_id` and then reads the trail back.
+#[tokio::test]
+async fn a_command_without_a_session_is_still_recorded() {
+    let (tools, _buf, logger) = seeded_tools_with_logger();
+    let sid = "device"; // the device-level stream the local branch now writes to
+
+    // A real local shell: `execute_local` spawns `sh -c` on this platform.
+    let out = call(
+        find(&tools, "terminal_execute"),
+        json!({"command": "echo local-probe", "intent": "prove the record exists"}),
+    )
+    .await;
+    assert_eq!(out["kind"], "local", "the local branch really ran: {out}");
+
+    let rec = logger.events_of(sid);
+    assert!(
+        rec.found,
+        "a session-less command must leave a record — without one this trail is \
+         empty and the module's own claim is false for the console's path"
+    );
+    let kinds: Vec<&str> = rec
+        .events
+        .iter()
+        .filter_map(|e| e["kind"].as_str())
+        .collect();
+    assert!(
+        kinds.contains(&"command/start"),
+        "the command must be recorded as STARTED: {kinds:?}"
+    );
+    assert!(
+        kinds.contains(&"command/end"),
+        "and CLOSED, or every reader counts it as still running: {kinds:?}"
+    );
+    // The annotation the client sent rides along — the point of recording is that
+    // an operator can see WHY, not just what.
+    let started = rec
+        .events
+        .iter()
+        .find(|e| e["kind"] == "command/start")
+        .expect("start");
+    assert_eq!(started["intent"], "prove the record exists");
+    assert_eq!(started["command"], "echo local-probe");
+
+    // NO EXIT CODE IS INVENTED. `execute_local` reports `{kind, text, truncated}`
+    // and nothing else, so recording a `0` would read as "succeeded" in every view
+    // that renders one.
+    let ended = rec
+        .events
+        .iter()
+        .find(|e| e["kind"] == "command/end")
+        .expect("end");
+    assert!(
+        ended["exit_code"].is_null(),
+        "an unknown exit code must stay unknown: {ended}"
+    );
+    assert_eq!(ended["reason"], "local", "the reason carries what IS known");
 }

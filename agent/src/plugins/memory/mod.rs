@@ -2,7 +2,8 @@
 //!
 //! AI clients (Claude Code / DSH / the desktop shell) persist and query
 //! knowledge entries through 6 MCP tools (memory_save / search / list /
-//! update / delete / export). Entries live in `<install>/memory/memory.jsonl`
+//! update / delete / export). Entries live in `data_dir()/memory/memory.jsonl`
+//! (layout v2 moved this off the install root; the old spelling lived here)
 //! (append-only JSONL + in-memory index), are device-wide (namespace-optional
 //! scoping), soft-deleted, and capacity-capped (oldest-written first — see
 //! store.rs; this is NOT LRU, because reads do not move `updated_at`) by the

@@ -11,8 +11,18 @@
 //! pruned at 30 days.
 //!
 //! Every terminal command on a device is recorded as an event stream
-//! (`<install>/sessions/<sid>.jsonl`): command/start → output chunks →
-//! command/end. On agent restart the logger replays each file and appends a
+//! (`data_dir()/sessions/<sid>.jsonl`): command/start → output chunks →
+//! command/end. That includes commands run WITHOUT a session — the console's
+//! path, where the relay injects no session id — which share one device-level
+//! stream (`terminal/tools/exec.rs`'s `LOCAL_SID`). This sentence was FALSE for
+//! exactly that path until it was given a record: the local branch called a
+//! logger-free executor, so a console command left no durable trace at all while
+//! this header claimed otherwise.
+//!
+//! (The path above is `data_dir()`, not `<install>`: layout v2 MOVED it, and this
+//! header kept the pre-v2 spelling.)
+//!
+//! On agent restart the logger replays each file and appends a
 //! synthetic `command/end { reason: interrupted }` for any command that never
 //! finished — an audit trail for device-control compliance, and the panel
 //! can show "interrupted — may still be running on the device" instead of

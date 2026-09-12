@@ -501,7 +501,7 @@ async fn connect_http(
     }))
 }
 
-/// Locate the playwright-mcp entry (`<install>/playwright/node_modules/
+/// Locate the playwright-mcp entry (`<install>/components/playwright/node_modules/
 /// @playwright/mcp/cli.js`) + the node runtime (registry NodePath / system
 /// node — the agent no longer bundles node.exe).
 fn bundled_playwright() -> Option<(std::path::PathBuf, std::path::PathBuf)> {

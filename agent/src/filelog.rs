@@ -4,7 +4,9 @@
 //! scheduled-task/service context stdout is a black hole, so runtime
 //! operations (the 35 `tracing!` call sites: recovery notices, bridge
 //! supervision, gateway events) were invisible on the device. `agent.log`
-//! next to the exe fixes that; rotation mirrors the startup.log rule
+//! into `data_dir()/logs` fixes that (layout v2 moved it there from beside the
+//! exe, which is the spelling this sentence used to carry); rotation mirrors the
+//! startup.log rule
 //! (rename to `.log.old` once past 1 MB, so disk growth stays bounded).
 
 use std::io::Write;
