@@ -366,6 +366,42 @@ describe("opacity is not used to dim text", () => {
     ).toEqual([]);
   });
 
+  it("--chrome-ink-faint never paints TEXT or a glyph", () => {
+    // MEASURED IN A REAL BROWSER on the live panel, not inferred: the steady
+    // status readout (`.desktop-status.idle` — session count, release, uptime,
+    // CPU, memory, and the ONLY place the release appears anywhere in the panel)
+    // rendered at **2.56:1** in light mode. The numbers for this token:
+    //
+    //                      light (#a1a1aa)   dark (#6f707a)
+    //   on --chrome-bg-2        2.56            3.45
+    //   bar for text            4.5             4.5     -> fails BOTH
+    //   bar for a mark/glyph    3.0             3.0     -> fails LIGHT too
+    //
+    // So it fails every bar on the surface it is used on, as text AND as a mark,
+    // in light mode. It remains legitimate as a `background` (the rail and tab
+    // DOTS) and as a `border-color` hairline, which is why the rule is written
+    // against `color:` alone. The replacement, `--chrome-ink-dim`, measures
+    // 7.73 light / 6.46 dark.
+    const css = builtCss();
+    // `border-color:` contains the substring `color:` — the boundary keeps the
+    // rule about the `color` property only.
+    const offenders = [...css.matchAll(/(?<![\w-])color:\s*var\(--chrome-ink-faint\)/g)];
+    expect(
+      offenders.length,
+      `${offenders.length} declaration(s) paint with --chrome-ink-faint, which ` +
+        `measures 2.56:1 in light mode — below the 4.5 text bar AND the 3.0 mark ` +
+        `bar. Use --chrome-ink-dim (7.73 light / 6.46 dark). It stays valid for ` +
+        `backgrounds (dots) and border-color (hairlines).`,
+    ).toBe(0);
+
+    // The specific regression, pinned by name so the message survives even if
+    // the token is renamed.
+    const idle = blockOf(css, ".desktop-status.idle");
+    expect(idle, "the steady status readout must use the readable ink").toContain(
+      "color: var(--chrome-ink-dim)",
+    );
+  });
+
   it("the crash banner's TITLE is readable, not inherited from a faint parent", () => {
     // The `<strong>` has no colour of its own (EmbeddedBrowserPane), so it takes
     // the banner's. --faint there measured 2.56 and made an error's headline the

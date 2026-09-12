@@ -618,8 +618,8 @@ code {
   transition: all 0.15s ease;
 }
 .tab:hover { color: var(--chrome-ink); border-color: var(--chrome-ink-faint); }
-.tab.closed { color: var(--chrome-ink-faint); text-decoration: line-through; }
-.tab.closed:hover { color: var(--chrome-ink-faint); }
+.tab.closed { color: var(--chrome-ink-dim); text-decoration: line-through; }
+.tab.closed:hover { color: var(--chrome-ink-dim); }
 .tab.active {
   background: var(--chrome-active-bg);
   /* TEXT gets the readable token; the BORDER keeps the accent, because a border
@@ -665,7 +665,7 @@ code {
 .tab-export, .tab-close {
   margin-left: 5px;
   font-size: 11px;
-  color: var(--chrome-ink-faint);
+  color: var(--chrome-ink-dim);
   visibility: hidden;
   cursor: pointer;
 }
@@ -2218,7 +2218,7 @@ code {
   font-weight: 600;
 }
 .browser-tab-label { overflow: hidden; text-overflow: ellipsis; }
-.browser-tab-close { color: var(--chrome-ink-faint); cursor: pointer; }
+.browser-tab-close { color: var(--chrome-ink-dim); cursor: pointer; }
 .browser-tab-close:hover { color: var(--danger); }
 .browser-tab-new {
   padding: 3px 8px;
@@ -4102,7 +4102,7 @@ button.dtab-close:hover { opacity: 1; }
   width: 15px;
   height: 15px;
   border-radius: 5px;
-  color: var(--chrome-ink-faint);
+  color: var(--chrome-ink-dim);
   opacity: 0;
   transition: opacity 0.12s ease;
 }
@@ -4251,13 +4251,24 @@ button.dtab-close:hover { opacity: 1; }
   min-height: 26px;
   border-top: 1px solid var(--line);
   background: var(--chrome-bg-2);
-  color: var(--chrome-ink-dim);
+  /* The TRANSIENT status message outranks the steady readout, so it takes the
+     strongest ink. */
+  color: var(--chrome-ink);
   font-size: 11.5px;
   border-radius: 0 0 var(--radius) var(--radius);
 }
 .desktop-status.error { background: var(--danger-soft); }
 .desktop-status.error .desktop-status-msg { color: var(--danger); font-weight: 600; }
-.desktop-status.idle { color: var(--chrome-ink-faint); }
+/* THE STEADY READOUT, AND IT WAS UNREADABLE. This branch is what an operator
+   sees almost all the time — session count, release, uptime, CPU and memory —
+   and it is the ONLY place the release is shown anywhere in the panel. It was
+   drawn in `--chrome-ink-faint` on `--chrome-bg-2`, measured in a real browser
+   at **2.56:1 in light mode** (and ~3.45:1 in dark): below AA in BOTH, for the
+   default state, at 11.5px.
+   `--chrome-ink-dim` measures 7.73 light / 6.46 dark. The hierarchy survives
+   because the transient message above now takes `--chrome-ink` (strongest):
+   a live message outranks a steady readout, and BOTH are readable. */
+.desktop-status.idle { color: var(--chrome-ink-dim); }
 .desktop-status-msg { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 /* This density has no StatusBar, so the shared waiting chip rides the footer —
    pinned right, where the session/vitals line already ends. */

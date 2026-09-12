@@ -331,8 +331,8 @@
   transition: all 0.15s ease;
 }
 .tab:hover { color: var(--chrome-ink); border-color: var(--chrome-ink-faint); }
-.tab.closed { color: var(--chrome-ink-faint); text-decoration: line-through; }
-.tab.closed:hover { color: var(--chrome-ink-faint); }
+.tab.closed { color: var(--chrome-ink-dim); text-decoration: line-through; }
+.tab.closed:hover { color: var(--chrome-ink-dim); }
 .tab.active {
   background: var(--chrome-active-bg);
   /* TEXT gets the readable token; the BORDER keeps the accent, because a border
@@ -378,7 +378,7 @@
 .tab-export, .tab-close {
   margin-left: 5px;
   font-size: 11px;
-  color: var(--chrome-ink-faint);
+  color: var(--chrome-ink-dim);
   visibility: hidden;
   cursor: pointer;
 }
@@ -1931,7 +1931,7 @@
   font-weight: 600;
 }
 .browser-tab-label { overflow: hidden; text-overflow: ellipsis; }
-.browser-tab-close { color: var(--chrome-ink-faint); cursor: pointer; }
+.browser-tab-close { color: var(--chrome-ink-dim); cursor: pointer; }
 .browser-tab-close:hover { color: var(--danger); }
 .browser-tab-new {
   padding: 3px 8px;
