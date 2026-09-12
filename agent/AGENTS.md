@@ -488,7 +488,76 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 36 (a browser action that never started was shown
+Last updated: 2026-09-11 round 37 (the CLI's tunnel config pointed the ingress at
+an address the agent does not listen on, and dropped the guard against a stale
+REMOTE config doing the same — settled on the LIVE DEVICE, not by reading).
+Commit: 2fc6dc69, plus 1.2.343.
+  (1) `vale tunnel install` WROTE A DEAD INGRESS. It put
+  `service: http://127.0.0.2:<port>` into `etc\tunnel.yml`; the agent's own
+  provisioning writes `127.0.0.1`, keeps a helper (`ingress_service`) whose comment
+  says it exists to "reach the agent where it actually listens", and calls 127.0.0.2
+  "a dead address (502)". Two writers, two answers, one file — and nothing in
+  either language could see the other.
+  (2) THE DEVICE SETTLED IT, WHICH IS THE METHOD WORTH KEEPING. The repo contained
+  TWO CONTRADICTORY CLAIMS about the same address — `tunnel.rs` calling 127.0.0.2
+  dead, `ServerConfig::default`'s comment calling it "cloudflared's canonical
+  ingress ... Nothing else is reachable" — so reading could not decide. `netstat`
+  on d1 shows the listener on `127.0.0.1:18080`, and d1's own `etc\tunnel.yml`
+  says `service: http://127.0.0.1:18080`. The CLI would have repointed a working
+  tunnel at a socket nobody holds, on the one command whose entire job is to make
+  the tunnel work.
+  (3) IT ALSO DROPPED `allow-remote-config: false`, AND THE LIVE FILE CARRIES IT.
+  The agent writes that line deliberately: cloudflared prefers a REMOTE config when
+  one exists, so a stale remote ingress keeps proxying to a dead address "no matter
+  what tunnel.yml says". The CLI's writer silently re-enabled exactly that. TWO
+  REGRESSIONS IN ONE FILE WRITE, both disproven by the device rather than by
+  reading — and both invisible to any test that did not compare the two writers.
+  (4) A THIRD SPELLING WAS WRONG TOO: `ServerConfig::default()` set
+  `host: "127.0.0.2"`, a default that disagreed with the shipped `config.yaml` it
+  exists to replace, with the agent's own ingress, and with the device. Now
+  127.0.0.1, with the evidence in the comment. Its pin (`tests/integration.rs`) moved
+  with it.
+  (5) THE PIN IS CROSS-LANGUAGE, which is the only kind that could have caught this.
+  The new CLI tests read BOTH `src/vale.ts` AND the compiled `bin/vale.js` and
+  require the ingress to be 127.0.0.1, forbid 127.0.0.2, and require
+  `allow-remote-config: false`; a second test pins the agent's default host against
+  the same rule. This is the gateway's code-viewer mirror shape and for the same
+  reason: A TEST ON ONE COPY CAN ONLY EVER COMPARE COPIES. It also caught a stale
+  `bin/vale.js` immediately, because the compiled CLI is tracked and CI compares it
+  against a fresh compile — the first run failed on the `bin` half rather than
+  passing on `src`. Mutation-proven: restoring 127.0.0.2 fails with "127.0.0.2 is
+  back — the agent calls it a dead address (502)".
+  (6) RELEASED 1.2.343, updated d1 and verified by effect (`release: 1.2.343`). CI
+  and the release workflow green on the tag; keep-latest left ONE release and ONE
+  tag; the dual-builder audit reported the STRONGER WARN verdict for the
+  EIGHTEENTH consecutive release.
+  (7) STILL OPEN, with evidence. From the CLI/gateway audit: ONE UPDATE LOCK WITH
+  TWO STALENESS RULES — the marker PATH agrees across languages but the WINDOW does
+  not (CLI 10 min, Rust 3600 s), so the CLI OVERWRITES a marker the Rust side still
+  refuses and either swap script's unconditional `Remove-Item` releases the other's
+  exclusion, while the operator docs state only the 10-minute rule;
+  `vale uninstall` cannot report failure (it claims removal and exits 0 whatever
+  happened, while its LEGACY-dir twin IS verified and prints a warning);
+  `vale update`'s receipt is written but its `ps()` result discarded, so a failed
+  write manufactures the documented "the command never reached the device"
+  conclusion; the staging guard is a REGION, so five later writes (including the
+  swap script itself) can strand the busy marker; the CLI's fallback roots
+  (`C:\Program Files\Vale`) are not the agent's (exe dir) and `update` — unlike
+  `uninstall` — has no guard against staging into a directory the agent is not
+  running from; `autostart off` prints a success sentence after a per-task failure;
+  and the gateway turns a 2xx with a non-JSON body into a SUCCESSFUL tool result
+  (`resp.json().catch(() => ({}))`). From the panel: `usePlugins` reports "Stopped"
+  for a status never read; `SettingsPage` names a pre-v2 memory path; `useSSE`'s
+  comment guarantees a retry removed in round 163; the device timeline drops a
+  >500-event window's middle while its comment claims the limit is safe; and
+  `lib/path.ts`'s header denies a capability it implements. From earlier rounds: a
+  backgrounded command's exit code is memory-only; the migration test's drive-letter
+  fixtures; no Windows test job in CI; and THE DELIVERY GAP (d1 has needed a manual
+  update in every round this log records).
+  Gates: agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 765 + format; CLI 30 (was 28); panel 503.
+
+Previous round: 2026-09-11 round 36 (a browser action that never started was shown
 as "running" while the device's explanation went undrawn; and ROUND 26'S FIX HAD
 PROMISED A SAFETY NET IT NEVER WOVE). Commit: 58814a1c, plus 1.2.342.
   (1) A BROWSER ACTION THAT NEVER STARTED WAS SHOWN AS "running". The panel mapped
