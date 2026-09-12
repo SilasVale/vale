@@ -519,7 +519,40 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 59 (the console got its URL contract in round 46; the
+Last updated: 2026-09-11 round 60 (I went hunting a "two lists that must agree"
+defect, found the code CORRECT twice, and closed the structural gap that keeps it
+correct: the rail has a compile-time guard, the two SHELLS had none).
+Commit: f8917360. CI green.
+  (1) WHAT IS ACTUALLY THERE: `PanelApp` (browser panel at `/panel/`) and
+  `DesktopShell` (Electron at `/desktop/`) each render all seven pages, via their own
+  `{page === "x" && <XPage />}` chains. Both correct.
+  (2) WHAT IS MISSING: `PAGE_ICONS` is `Record<Page, IconName>`, so the TYPE-CHECK
+  forces the RAIL to have an icon per page — nothing forces either SHELL to render
+  one. Add a member to `Page` and you get a rail button opening a blank content area,
+  compiler happy, and the failure lands on ONE shell: this log's most repeated shape
+  ("a fix that already existed, applied to one of a pair" — rounds 45, 47, 55).
+  (3) `src/lib/pageCoverage.test.ts` (3 checks, in the panel suite CI already runs)
+  parses the union from `Shell.tsx` and requires every member as a `page === "x"`
+  branch in BOTH shells, plus agreement between them. >= 5 pages and >= 5 branches per
+  shell, because a comparison over an empty set passes for ever.
+  (4) MUTATION-PROVEN BOTH WAYS: deleting `settings` from `PanelApp` alone fails naming
+  the file and the page; adding `| "diagnostics"` to the union fails naming it.
+  (5) TWO THINGS I GOT WRONG, both caught by CHECKING: I read `PanelApp`'s render with
+  `head -8` and concluded it never rendered `SettingsPage` — a blank Settings page on
+  the web panel, which would have been a real defect worth a round. Line 118 renders
+  it; my own truncation hid it. And I expected the rail to be a second hand-maintained
+  copy of the pages; it is DERIVED from `PAGE_ICONS`, so it cannot drift.
+  (6) ALSO VERIFIED RATHER THAN TRUSTED: the guide's claim that an unmirrored device
+  tool "is not merely unlisted, it is uncalled" and that doing neither "fails the
+  gateway suite". Tested by appending a fake tool to `agent/spec-tools.json`: the suite
+  fails with "device tool totally_new_device_tool (plugin terminal) is neither
+  registered in mcp-tools.ts nor decided against in NOT_EXPOSED". The assurance HOLDS.
+  (7) STILL OPEN: the panel's governance-pill visual prominence (a taste call), the
+  `--dsw-alias-*` namespace rename on the landing page, and the drift tool's
+  "opportunity" rows.
+  Gates: panel 516 (was 513) + build; prettier clean; CI green on main.
+
+Previous round: 2026-09-11 round 59 (the console got its URL contract in round 46; the
 PANEL — which ships INSIDE the exe — had none, so it now has one, and writing it
 reproduced the very bug the contract exists to catch).
 Commit: 642bd484. CI green.
