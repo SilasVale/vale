@@ -519,7 +519,35 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 83 (a failed write of the PATH REGISTRY — the single
+Last updated: 2026-09-12 round 84 (a key the CLI promised to register with and never
+used, and a missing boot task reported as a failure of a change nobody asked it to make).
+Commit: 6a087c57. CI green.
+  (1) `vale setup --reg-key K` WITHOUT `--tunnel` PRINTED "registering device with the
+  gateway (--reg-key)" AND NEVER USED K. `regKey` has exactly ONE consumer — the
+  Cloudflare token exchange inside `initTunnel`, reached only under `--tunnel`. The device
+  still appeared in the console, but through the AGENT's token-based self-register on first
+  boot, which needs no key, so the operator credited the key for work it did not do.
+  UNFIXABLE BY REGISTERING THERE: the device token is minted by the agent on first boot and
+  `POST /api/register` wants `{key, name, hostname, token}` — so the line now says what the
+  key is actually for and names the flag that makes it do anything.
+  (2) `vale autostart` MADE A MISSING BOOT TASK FATAL while the comment DIRECTLY ABOVE the
+  loop said "Missing task = skipped with a note (never fatal — headless installs have no
+  ValeDesktop)". A headless install therefore could not turn autostart off at all, and the
+  advice printed with the error ("run vale setup first") cannot help because `vale setup`
+  registers the AGENT task and never ValeDesktop (only the NSIS online installer does).
+  It queries existence FIRST, skips with a note, fails only when an EXISTING task refuses
+  the change, and says plainly when there was nothing to switch.
+  (3) VERIFIED BY EFFECT on the headless case (no tasks on this box): before, it printed
+  "autostart: ValeAgent off failed (task may not exist -- run vale setup first)" twice for
+  a change no task was ever asked to make; after, "not installed -- skipped (headless
+  install)" x2 plus one closing line naming which installer registers which task.
+  (4) STILL OPEN: L4 the 90 s read-back timeout is stated as fact ("the swap did NOT take")
+  rather than as a timeout; L11 "sources staged" prints even when stageDesktopShell
+  returned early; L8 `autostart status` cannot distinguish a read failure from an absent
+  task; L5 a failed update receipt is silent because `ps()` returns rather than throws.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 83 (a failed write of the PATH REGISTRY — the single
 source of truth both sides resolve from — was completely silent, because spawnSync does
 not throw and stdio was ignored inside a try that could never fire).
 Commit: 7b0c2995. CI green.
