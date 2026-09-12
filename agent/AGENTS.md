@@ -519,7 +519,51 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 91 (two more panel-auth findings: the grant shape check
+Last updated: 2026-09-12 round 92 (THE HIGHEST-SEVERITY panel finding fixed: the loopback
+token handout trusted a client-supplied `Host` header — and the fix's own worst regression
+is now proven absent, because it would have broken the panel for every operator).
+Commits: 945de7ab, 402595c9. CI green. NOT released (the panel ships inside the exe).
+  (1) `handle_panel_home` ADMITTED TOKEN INJECTION ON `host_ok && (via_proxy || loopback)`,
+  where `loopback` was decided ENTIRELY by the client-supplied `Host` header. `paths.rs` had
+  already stripped the config file's ACL inheritance and granted read only to SYSTEM +
+  Administrators precisely so a local account could not read the device token — and then one
+  unauthenticated `curl http://127.0.0.1:18080/panel/` handed that token to ANY local
+  process, non-admin included, which is device control at SYSTEM. `Host: 127.0.0.1` is free;
+  a loopback SOCKET is not.
+  (2) "LOOPBACK" IS THE PEER NOW. `axum::serve` uses
+  `into_make_service_with_connect_info::<SocketAddr>()`, which injects `ConnectInfo` as a
+  REQUEST EXTENSION — readable by the hand-rolled Tower panel service, which is why this was
+  feasible at all (round 91 flagged the feasibility as unconfirmed). IT FAILS CLOSED: no
+  extension means "cannot tell where this came from", which is not "loopback". The other two
+  admissions are untouched — the proxy-secret branch is a real credential and the grant
+  branch is a single-use code.
+  (3) THREE EXISTING TESTS HAD TO CHANGE because they pinned the header-only behaviour
+  (`desktop_route_serves_spa_and_injects_token`,
+  `panel_token_injection_escapes_script_close`,
+  `panel_plain_and_token_paths_carry_content_hash` now declare a loopback peer, which is what
+  they were always modelling). The host-gate test gained the two cases that ARE the defect:
+  `Host: 127.0.0.1` from a non-loopback peer must NOT inject, and NO peer information must
+  also deny. MUTATION-PROVEN (header-only gate restored -> "Host: 127.0.0.1 from a
+  NON-loopback peer (10.0.0.7) must NOT inject", 77/1).
+  (4) AND THE FIX'S OWN WORST REGRESSION IS NOW PROVEN ABSENT, which is the part that makes
+  it safe to release. If the `ConnectInfo` wiring were wrong the extension would be absent,
+  the check would fail closed, and the panel would silently stop receiving its token —
+  breaking the panel for every operator. EVERY UNIT TEST INSERTS THE EXTENSION BY HAND, so
+  none of them can see that. `mcp_client_integration::panel_token_is_injected_to_a_real_loopback_peer`
+  goes over a REAL TCP CONNECTION to the REAL serve path (`mcp::bind` on an ephemeral port +
+  a reqwest GET on `/panel/`) and asserts the token IS injected. MUTATION-PROVEN BOTH WAYS:
+  dropping `into_make_service_with_connect_info` fails it with the reason named; restoring
+  passes. Also confirmed there is exactly ONE `axum::serve` in the crate, reached by
+  `serve -> serve_with_token -> bind`, so the fix is on the real path and not a sibling.
+  (5) STILL OPEN: gateway F3 `deviceFetch` never applies the suffix allowlist at dial time
+  (`_env` unused) though its docstring lists it as part of the stack; panel F2's other half —
+  the grant is not single-use over eventually-consistent KV (the fix pattern already exists
+  here: the single-flight claim keys `regclaim2:` / `regclaim:`); panel F5 the host allowlist
+  is a family match (`devil.agent.saisi.online` passes).
+  Gates: agent web:: 78 + mcp_client_integration 3 + clippy -D warnings + fmt + xwin check;
+  CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 91 (two more panel-auth findings: the grant shape check
 contradicted the sentence directly above it, and a redemption left NO device-side trace —
 plus a FEASIBILITY ANSWER for the remaining HIGH one).
 Commit: 50c99b4d. CI green.
