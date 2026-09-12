@@ -519,7 +519,47 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 61 (the first MULTI-AGENT round in a while — two audit
+Last updated: 2026-09-11 round 62 (acting on the round-61 audit backlog: a
+destructive action that toasted the OPPOSITE of what it did, and four strings that
+rendered the wrong language — plus the guard that could not see them).
+Commit: 8c8c8e24. Worker deployed; both verified by effect.
+  (1) "CLEAR ALL" REVOKED EVERY REGISTRATION KEY WITHOUT ASKING, THEN SAID IT HADN'T.
+  `handleRevokeAll` destroyed all unused keys on the first click while every other
+  destructive control here confirms (`Keys.tsx`/`Overview.tsx` use `confirm()`, device
+  delete uses a modal), and toasted `devices.regKeysEmpty` — the EMPTY-STATE string —
+  as if it were success, so the one feedback after a destructive action described the
+  ABSENCE of the thing rather than its removal. VERIFIED LIVE: the dialog now reads
+  "Revoke all 2 unused registration keys? This cannot be undone.", two DELETEs follow,
+  and the toast says "Revoked 2 registration key(s)".
+  (2) FOUR STRINGS BYPASSED i18n. Chinese in the English console (`Keys.tsx` window
+  labels 周/月, `余额: …`); English in the Chinese console (`Users.tsx` set/not-set,
+  `Auth.tsx`'s two placeholders). All six now go through `t()` in both dictionaries.
+  (3) AND THE GUARD COULD NOT HAVE CAUGHT IT: `i18n-parity.test.mjs` compares the two
+  DICTIONARIES, so a literal written into JSX is invisible to the check whose stated
+  purpose is exactly this failure. It now also refuses CJK in console source outside
+  `i18n.ts` — the detectable half, unambiguous because the source language is English.
+  The other direction cannot be found mechanically and is not claimed.
+  (4) TWO THINGS THE NEW GUARD TAUGHT: it immediately found two MORE CJK literals that
+  are CORRECT (the language toggle names the other language in its own script), which
+  now carry an explicit `i18n-allow-cjk` marker rather than a pattern-match exception;
+  and MY FIRST MARKER WAS LINE-EXACT AND PRETTIER REVOKED IT — reformatting moved the
+  trailing `{/* … */}` to its own line, so the marker was still in the file and no
+  longer beside the literal, and the check reported the two legitimate toggles as
+  leaks. The marker is matched over a ±2-line window now. An opt-out whose meaning
+  depends on a line boundary is an opt-out a formatter can revoke.
+  (5) STILL OPEN, from the two audits and not yet acted on — console: false zeros for
+  failed reads plus `/devices` links that dead-end for non-admins, the `none` Models
+  card that can only show 0, "Restore default (ds)" naming a default the server
+  contradicts, `Users` rendering "not set" for a failed read, the 8-key status shown
+  twice. Panel: DesktopShell shadowing App's sessionViews (Ctrl+Shift+Y is a no-op),
+  Playwright Stop with no confirm, the rail's ✕ mislabelled "Archive session" with no
+  undo, a stale Playwright security claim, ConnectCard showing the frozen Cargo
+  version, the Memory empty state contradicting its own +New, Logs panel-only while
+  accelerators are desktop-only, and the landing page's `--dsw-alias-*` rename.
+  Gates: gateway-ui 11 (was 10) + build + deploy; gateway 776 + format; token contract
+  green; custom-property green; devices render smoke OK; CI green on main.
+
+Previous round: 2026-09-11 round 61 (the first MULTI-AGENT round in a while — two audit
 subagents, one per frontend, as the objective asks — and the console audit's top
 finding was a logged-in NON-ADMIN being signed out by their own landing page).
 Commits: 497ee5dd, 2fdf9814, ba56babc. Worker deployed; three fixes verified live.
