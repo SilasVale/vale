@@ -488,7 +488,87 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 37 (the CLI's tunnel config pointed the ingress at
+Last updated: 2026-09-11 round 38 (a 2xx the console could not read became a
+SUCCESSFUL tool result; one update lock had two staleness windows; and a failed
+inventory read claimed progress for ever). Commits: 79402d50, 5a70b668, plus
+1.2.344 and 1.2.345.
+  (1) THE GATEWAY TURNED A NON-JSON 2xx INTO A SUCCESSFUL TOOL RESULT.
+  `resp.json().catch(() => ({}))` produced `{}` for an empty, truncated or
+  non-JSON body — and `{}` PASSES the agent-ok check below it, because `data.ok`
+  is `undefined`, not `false`. The model received a successful result containing
+  nothing and would report work it had no evidence for. The round-58 comment
+  above that check documents THE SAME DEFECT through a different door: it taught
+  the code to read the AGENT's `ok` flag, and the fallback manufactured one
+  whenever the agent's answer could not be read at all. `null` now means "no
+  parseable body" and is reported as a failure. Mutation-proven, and the mutation
+  prints the harm verbatim: `{"result":{"content":[{"type":"text","text":"{}"}]}}`.
+  (2) ONE UPDATE LOCK, TWO STALENESS WINDOWS. The marker PATH agreed across the
+  two languages; the WINDOW did not — the CLI reclaimed an abandoned marker after
+  TEN minutes while the agent refused for an HOUR. At eleven minutes the CLI
+  OVERWROTE a marker the agent still honoured, so a CLI update could start
+  alongside a console-launched one and interleave `Copy-Item` on `*.new` — the
+  half-written exe reported "ok" the marker exists to prevent. The agent's own
+  comment made the choice indefensible: it cites round-54 as "a stuck marker
+  blocked updates for up to an hour", then picked an hour. Both sides now use ten
+  minutes, PINNED ACROSS THE LANGUAGE BOUNDARY (the CLI test parses both
+  literals), because no test inside either language can see the other's number.
+  Mutation-proven: restoring 3600 fails with "the two sides disagree about when
+  an abandoned update marker may be reclaimed".
+  (3) A FAILED INVENTORY READ SAID "Loading inventory…" FOR EVER. `usePlugins`'
+  spec fetch was `catch { /* transient — retry next tick */ }` — it set NOTHING,
+  and `specLoaded` is the only thing that re-arms the fetch. THERE IS NO TICK: the
+  5 s poll was removed in round 163, four lines below the comment promising the
+  retry. The status fetch in the SAME hook sets `loadError`; the twin rule applied
+  to one branch and not the other, inside one function. AND THERE WERE TWO SILENT
+  PATHS: `if (Array.isArray(specRes?.plugins))` had NO else, so a 200 the panel
+  cannot use fell through without a throw — the same permanent "Loading…" reached
+  without an exception. Both now go through ONE failure path.
+  MY OWN FIRST FIX HAD THE DEFECT ONE LEVEL UP and the test caught it: the two
+  reads shared one `loadError`, so the status fetch's SUCCESS cleared the spec
+  error microseconds later. A single cell cannot carry two independent facts.
+  (4) THREE COMMENTS DESCRIBED POLLS THAT NO LONGER EXIST (`useCommandEvents`'s
+  "Poll the audit log"/"Cards update every poll"/"a FAILED poll", and
+  `usePlugins`' "don't wait for the poll"). No timer has existed since round 163;
+  `pollMs` is inert and now says so where it is declared, because a test that
+  "polls" at 30 ms cannot be evidence of a cadence that does not exist.
+  (5) `lib/runs.ts` STATED THE OPPOSITE OF THE DEVICE: its `RunBoundary` doc said
+  label/goal/outcome "are ABSENT (a missing key, not `null` and not `""`) … so
+  presence is read, never truthiness", while `runs.rs` says outright that `json!`
+  renders `None` as `null` and the key IS present, and that every consumer must
+  treat null, missing AND blank alike. The code always did the right thing; the
+  sentence would have licensed a future key-existence check that misses every real
+  case. Corrected, with the test that restated the false premise.
+  (6) THE DELIVERY GAP. d1 needed a manual update in every round this log records
+  — three times in this round alone (1.2.343 → .344 → .345) — and NOTHING CHECKS
+  IT. A future round should build the check; it is the single most repeated
+  finding here and it is caught only by looking.
+  (7) A PROCESS NOTE WORTH KEEPING: 1.2.344 reached the CDN with NO TAG AND NO
+  RELEASE, because the tag API call carried a hardcoded SHA and failed silently
+  behind a `>/dev/null`. 1.2.345 supersedes it and `vale rollback` resolves
+  targets from the CDN (not GitHub), so the impact is nil — but the lesson is the
+  round's own family: a step whose failure is discarded reports success.
+  (8) STILL OPEN, with evidence. From the panel data-layer audit: `useSSE`'s
+  comment guarantees a retry removed in round 163 and the sweep loss is real;
+  `useSessions` presents a stale list as current (`?? Date.now()` for `openedAt`,
+  which the device never sends, rendered as the session's AGE and used for
+  sorting); its failed-fetch test is VACUOUS (it never consumes its
+  `mockRejectedValueOnce`, so it passes whether or not the failure path works);
+  `usePlugins` invents "ok" for a start/stop whose answer carried no status;
+  `PluginsPage` renders `started_at ?? Date.now()` as "up 0s" for the production
+  EXTERNAL playwright branch, which omits that field; `revokeGrants` substitutes
+  `[]` for a missing device field and reports success while its twin guards it;
+  and `useCommandEvents`'s absent-`found` default of `true` is a completeness
+  claim, not a neutral one. From earlier rounds: `vale uninstall` cannot report
+  failure; `vale update`'s receipt result is discarded; the staging guard is a
+  REGION; the CLI's fallback roots differ from the agent's; `autostart off` prints
+  a success sentence after a per-task failure; a backgrounded command's exit code
+  is memory-only; the migration test's drive-letter fixtures; no Windows test job
+  in CI.
+  Gates: agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 766 (was 765) + format; CLI 31 (was 30); panel 504
+  (was 503) + build.
+
+Previous round: 2026-09-11 round 37 (the CLI's tunnel config pointed the ingress at
 an address the agent does not listen on, and dropped the guard against a stale
 REMOTE config doing the same — settled on the LIVE DEVICE, not by reading).
 Commit: 2fc6dc69, plus 1.2.343.
