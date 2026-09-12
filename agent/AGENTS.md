@@ -519,7 +519,38 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 79 (two more CLI findings: a destructive step that could
+Last updated: 2026-09-12 round 80 (three more CLI findings; the first closes a gap the
+guide itself documents — `vale update` reported the HANDOFF while `rollback` reported the
+OUTCOME, and that was the only reason they disagreed).
+Commit: 79567bcd. CI green.
+  (1) `vale update` EXITS 0 ON HANDOFF. `Win32_Process.Create` returning 0 means a process
+  was created; the migration gate, the 12x copy retry and the task restart all happen
+  after, in a WmiPrvSE-parented script whose exit code nobody reads. So "swap launched"
+  was printed, and 0 returned, for a swap that could fail a second later.
+  `rollback` HAS solved this for two rounds — it reads `etc\.vale-release` back and
+  requires the staged version. `update` did not, WHICH IS THE ONLY REASON THE TWO
+  COMMANDS DISAGREED ABOUT WHETHER AN UPDATE TOOK. It now uses the same bounded helper
+  (`awaitReleaseMarker`, 90 s) and the same verdict, reporting "COMPLETE (the device
+  reported the new release)" or exiting 1 naming the version found. The READ is a file,
+  not the network, so the dropped connection is irrelevant; a good swap finishes in ~10 s
+  and the bound only elapses on failure. `update` is `async` now — the dispatcher already
+  wrapped every command in `Promise.resolve(...).catch(...)`.
+  (2) `vale stop` PRINTED "stopped" UNCONDITIONALLY: `svc()` discarded the schtasks
+  result, so a missing task or access-denied produced the success sentence and exit 0.
+  `svc` returns the status now; `stop` fails on it (the pattern `autostart` already used).
+  (3) `vale run` PRINTED THE BANNER AND EXITED 0 WHEN THE EXE WAS MISSING: `EXE_DST ||
+  EXE_SRC` was dead code (EXE_DST is always truthy), no existence check, and ENOENT's
+  `status: null` became 0 via `?? 0`.
+  (4) VERIFIED BY EFFECT on the two failure modes this box has:
+      stop (no schtasks) -> "schtasks /End failed (status 127)", exit 1  [was "stopped", 0]
+      run  (no exe)      -> "agent binary not found at ...", exit 1       [was banner, 0]
+  (5) STILL OPEN: F5 `tunnel start` claims success from an unobserved async spawn; F10 the
+  release marker is written BEFORE the fatal setup paths (an aborted setup reports the new
+  version as installed); F12 "node_modules verified" without checking node_modules; F9
+  `setup --reg-key` without `--tunnel` never spends the key it says it is registering.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 79 (two more CLI findings: a destructive step that could
 purge the WRONG directory, and a failed delete reported as an absent pin).
 Commit: 780f356c. CI green.
   (1) `uninstall` COMPUTED THE DATA DIR ITSELF INSTEAD OF USING ITS OWN RESOLVER. `setup`
