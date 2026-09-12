@@ -123,15 +123,24 @@ pub(crate) fn panel_token_response(token: &str) -> Response {
     resp
 }
 
-/// Cheap shape check on a `?grant=` code BEFORE any network work: the gateway
-/// mints 32 lowercase hex chars (store/grants.ts randomHex(16)); anything
-/// else is a probe and must not cost a redeem round-trip (a probe that
-/// reached the gateway would burn a KV read + a request per attempt). Pure
-/// and offline-testable; the 16..=128 window stays forward-compatible if the
-/// gateway ever lengthens codes (worst case then: the gateway 404s and the
-/// panel falls back to the plain no-token page).
+/// Cheap shape check on a `?grant=` code BEFORE any network work.
+///
+/// THE WIDTH IS THE GATEWAY'S CONTRACT, NOT A GUESS. `store/grants.ts` mints
+/// `randomHex(PANELGRANT_CODE_LEN / 2)` and its own read gate is
+/// `/^[0-9a-f]{32}$/` — exactly 32 LOWERCASE hex, no `i` flag. This used to accept
+/// `16..=128` "for forward-compatibility", which directly contradicted the sentence
+/// above it: a 16-hex probe DID cost a redeem round-trip, and that route is
+/// unauthenticated, unrate-limited and builds a fresh reqwest client (a new TLS
+/// handshake) per attempt. `is_ascii_hexdigit()` also accepted UPPERCASE, which the
+/// gateway rejects outright — costing a round-trip for a code that could never be valid.
+///
+/// If the gateway ever lengthens codes, this bound moves with it; the two are one
+/// contract and `panel_grant_shape_matches_the_gateway` pins the pair.
 pub(crate) fn plausible_grant(code: &str) -> bool {
-    (16..=128).contains(&code.len()) && code.chars().all(|c| c.is_ascii_hexdigit())
+    code.len() == 32
+        && code
+            .bytes()
+            .all(|b| b.is_ascii_digit() || (b'a'..=b'f').contains(&b))
 }
 
 /// Redeem a one-time panel grant at the gateway: POST
@@ -155,6 +164,17 @@ pub(crate) async fn redeem_panel_grant(console_url: &str, device_token: &str, gr
         "{}/api/devices/panel-grant/redeem",
         console_url.trim_end_matches('/')
     );
+    // AUDIT. This returned a bool and logged NOTHING, so a redemption left no device-side
+    // trace at all — and the grant is exactly the credential an attacker would rather
+    // steal than forge (it is redeemed unauthenticated by whoever holds the URL, and its
+    // single-use property is only best-effort over eventually-consistent KV). The operator
+    // could not tell that anyone had redeemed one.
+    //
+    // The grant itself is NOT logged: it is a live credential until the gateway deletes
+    // it, and logs outlive that window. A short prefix correlates with the gateway's own
+    // record without being replayable.
+    let tag = &grant[..grant.len().min(8)];
+    tracing::info!(grant_prefix = %tag, "panel grant redemption attempted");
     let client = match reqwest::Client::builder()
         .timeout(std::time::Duration::from_secs(5))
         .build()
@@ -170,13 +190,36 @@ pub(crate) async fn redeem_panel_grant(console_url: &str, device_token: &str, gr
         .send()
         .await
     {
-        Ok(r) if r.status().is_success() => r
-            .json::<serde_json::Value>()
-            .await
-            .ok()
-            .and_then(|v| v.get("ok").and_then(|b| b.as_bool()))
-            .unwrap_or(false),
-        _ => false,
+        Ok(r) if r.status().is_success() => {
+            let ok = r
+                .json::<serde_json::Value>()
+                .await
+                .ok()
+                .and_then(|v| v.get("ok").and_then(|b| b.as_bool()))
+                .unwrap_or(false);
+            if ok {
+                tracing::warn!(
+                    grant_prefix = %tag,
+                    "panel grant REDEEMED -- a permanent device token was just injected \
+                     into a browser; if this was not the operator, the grant URL leaked"
+                );
+            } else {
+                tracing::info!(grant_prefix = %tag, "panel grant rejected by the gateway");
+            }
+            ok
+        }
+        Ok(r) => {
+            tracing::info!(
+                grant_prefix = %tag,
+                status = r.status().as_u16(),
+                "panel grant redeem failed"
+            );
+            false
+        }
+        Err(e) => {
+            tracing::info!(grant_prefix = %tag, error = %e, "panel grant redeem errored");
+            false
+        }
     }
 }
 
@@ -325,12 +368,27 @@ mod panel_tests {
 
     #[test]
     fn grant_shape_check() {
-        assert!(plausible_grant(&"a".repeat(32)));
         assert!(
-            plausible_grant(&"A".repeat(16)),
-            "uppercase hex + lower bound"
+            plausible_grant(&"a".repeat(32)),
+            "the gateway's exact shape"
         );
-        assert!(plausible_grant(&"f".repeat(128)), "upper bound");
+        // THESE TWO USED TO ASSERT THE LOOSENESS: `"A".repeat(16)` as "uppercase hex +
+        // lower bound" and `"f".repeat(128)` as "upper bound". Both are shapes the
+        // gateway REJECTS (`/^[0-9a-f]{32}$/`, no `i`), so accepting them bought a
+        // redeem round-trip per probe on an unauthenticated, unrate-limited route that
+        // opens a fresh TLS connection each time. The test was pinning the defect.
+        assert!(
+            !plausible_grant(&"A".repeat(32)),
+            "uppercase must be rejected: the gateway's regex has no `i` flag"
+        );
+        assert!(
+            !plausible_grant(&"A".repeat(16)),
+            "and a 16-char code is not the gateway's shape at all"
+        );
+        assert!(
+            !plausible_grant(&"f".repeat(128)),
+            "nor is 128: the width is the contract, not a window"
+        );
         for bad in [
             "",
             "abc",

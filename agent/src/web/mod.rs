@@ -2225,15 +2225,51 @@ mod tests {
             plausible_grant(&"a".repeat(32)),
             "gateway-minted shape (32 hex)"
         );
-        assert!(plausible_grant(&"a".repeat(16)), "floor accepted");
+        // WAS: `plausible_grant(&"a".repeat(16))` as "floor accepted" and an uppercase
+        // 32 as "uppercase hex ok". Both pin the OLD permissive window, and the gateway
+        // rejects both shapes — so each probe cost a redeem round-trip against an
+        // unauthenticated, unrate-limited route with a fresh TLS client per attempt.
         assert!(
-            plausible_grant("ABCDEF0123456789ABCDEF0123456789"),
-            "uppercase hex ok"
+            !plausible_grant(&"a".repeat(16)),
+            "16 chars is not the gateway's shape"
+        );
+        assert!(
+            !plausible_grant("ABCDEF0123456789ABCDEF0123456789"),
+            "uppercase is rejected by the gateway's regex (no `i` flag)"
         );
         assert!(!plausible_grant(""), "empty rejected");
         assert!(!plausible_grant("abcdefgh"), "too short rejected");
         assert!(!plausible_grant(&"g".repeat(32)), "non-hex rejected");
         assert!(!plausible_grant(&"a".repeat(129)), "over-long rejected");
+    }
+
+    /// The agent's grant shape and the gateway's gate are ONE contract, in two
+    /// languages and two repos-in-one. Drift means either probes that cost a
+    /// round-trip (agent looser) or codes that never redeem (agent tighter) — and
+    /// the looser direction is the expensive one, because the route is
+    /// unauthenticated and unrate-limited.
+    #[test]
+    fn panel_grant_shape_matches_the_gateway() {
+        // The gateway's own read gate, quoted from gateway/src/store/grants.ts:59.
+        // Kept as a literal so a change there is a change HERE, visibly.
+        const GATEWAY_CODE_LEN: usize = 32;
+        let minted = "0a1b2c3d4e5f60718293a4b5c6d7e8f9";
+        assert_eq!(
+            minted.len(),
+            GATEWAY_CODE_LEN,
+            "the sample is the real width"
+        );
+        assert!(plausible_grant(minted), "a gateway-minted code must pass");
+        assert!(
+            !plausible_grant(&minted.to_uppercase()),
+            "the gateway's regex is case-SENSITIVE; uppercase must not pass"
+        );
+        for n in [16usize, 31, 33, 64, 128] {
+            assert!(
+                !plausible_grant(&"a".repeat(n)),
+                "only the gateway's exact width may pass, and {n} is not it"
+            );
+        }
     }
 
     #[test]
