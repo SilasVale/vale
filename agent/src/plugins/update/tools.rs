@@ -126,13 +126,34 @@ fn pin_blocks(pin: &str, remote: &str, force: bool) -> bool {
 /// later boot/swap apply a MIX of the failed release's components under
 /// the old (consistent) version marker. Never touches live files.
 fn cleanup_staged(dir: &std::path::Path) {
-    // dir-relative (NOT the global components_dir() — this runs against the
-    // passed install root, and tests pin it with temp dirs).
+    for p in staged_leftovers(dir) {
+        let _ = std::fs::remove_file(&p);
+        let _ = std::fs::remove_dir_all(&p);
+    }
+}
+
+/// EVERY path a failed or interrupted staging can leave behind, dir-relative.
+///
+/// THE ONE LIST, and it exists because there were two. `winmain`'s boot sweep
+/// kept its own copy and two of its three entries were PRE-V2 spellings —
+/// `<install>\vale-playwright.new.zip` and `<install>\tools\cloudflared.new.exe`
+/// where staging writes `<install>\components\...` (and `tools\` is a directory
+/// the v2 layout removed). So the boot sweep deleted the executable and MISSED
+/// both boxed components, which is precisely the outcome its own comment warned
+/// about: "a stranded boxed `.new` would otherwise be picked up by the NEXT
+/// successful swap — version skew". A comment that names a hazard, next to code
+/// that fails to prevent it, is this project's most productive defect family.
+///
+/// dir-relative on purpose (NOT the global `components_dir()`): callers pass an
+/// install root, and tests pin it with temp dirs.
+pub fn staged_leftovers(dir: &std::path::Path) -> Vec<std::path::PathBuf> {
     let comp = dir.join("components");
-    let _ = std::fs::remove_file(dir.join("vale-agent.new.exe"));
-    let _ = std::fs::remove_file(comp.join("vale-playwright.new.zip"));
-    let _ = std::fs::remove_file(comp.join("cloudflared.new.exe"));
-    let _ = std::fs::remove_dir_all(dir.join(".vale-update"));
+    vec![
+        dir.join("vale-agent.new.exe"),
+        comp.join("vale-playwright.new.zip"),
+        comp.join("cloudflared.new.exe"),
+        dir.join(".vale-update"),
+    ]
 }
 
 // ── Update busy marker ───────────────────────────────────────
@@ -830,11 +851,24 @@ mod tests {
         for p in &live {
             std::fs::write(p, b"live").unwrap();
         }
-        let staged = [
-            dir.join("vale-agent.new.exe"),
-            dir.join("components").join("vale-playwright.new.zip"),
-            dir.join("components").join("cloudflared.new.exe"),
-        ];
+        // THE LIST UNDER TEST, not a copy of it. This test used to spell the
+        // three filenames out a THIRD time; a list that must agree in three
+        // places is a list that will eventually disagree, which is exactly how
+        // the boot sweep came to use two pre-v2 paths.
+        let staged: Vec<_> = staged_leftovers(&dir)
+            .into_iter()
+            .filter(|p| {
+                p.file_name().is_some_and(|n| {
+                    n.to_string_lossy().ends_with(".new.exe")
+                        || n.to_string_lossy().ends_with(".new.zip")
+                })
+            })
+            .collect();
+        assert_eq!(
+            staged.len(),
+            3,
+            "the list holds the three staged files: {staged:?}"
+        );
         for p in &staged {
             std::fs::write(p, b"staged").unwrap();
         }
@@ -857,6 +891,67 @@ mod tests {
             );
         }
         let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE BOXED LEFTOVERS LIVE UNDER `components/`, AND THE LIST HAS ONE OWNER.
+    ///
+    /// `winmain`'s boot sweep carried its own copy of this list with two PRE-V2
+    /// spellings — `<install>\vale-playwright.new.zip` and
+    /// `<install>\tools\cloudflared.new.exe` — while staging writes
+    /// `<install>\components\...`, and `tools\` is a directory the v2 layout
+    /// removed. So the sweep deleted the executable and missed BOTH boxed
+    /// components, which is the version skew its own comment promised to prevent.
+    #[test]
+    fn the_staged_leftover_paths_match_where_staging_writes() {
+        let root = std::path::Path::new("X:/install");
+        let names: Vec<String> = staged_leftovers(root)
+            .iter()
+            .map(|p| {
+                p.strip_prefix(root)
+                    .expect("every entry is under the install root")
+                    .to_string_lossy()
+                    .replace('\\', "/")
+            })
+            .collect();
+        assert!(
+            names.contains(&"components/vale-playwright.new.zip".to_string()),
+            "the playwright bundle stages under components/ — a bare \
+             `vale-playwright.new.zip` at the root is the pre-v2 spelling that \
+             made the boot sweep miss it: {names:?}"
+        );
+        assert!(
+            names.contains(&"components/cloudflared.new.exe".to_string()),
+            "and so does cloudflared — `tools/` no longer exists: {names:?}"
+        );
+        assert!(
+            !names.iter().any(|n| n.starts_with("tools/")),
+            "no entry may name the removed `tools/` directory: {names:?}"
+        );
+    }
+
+    /// THE LIST IS NOT COPIED BACK INTO THE BOOT SWEEP.
+    ///
+    /// The defect was a DUPLICATION, so a behavioural test on either copy would
+    /// have passed while they disagreed. This pins the wiring the way the
+    /// approval-gate position is pinned: `winmain` must CALL the one owner rather
+    /// than restate its filenames. The boot sweep needs a real Windows boot, so no
+    /// behavioural test can reach it.
+    #[test]
+    fn the_boot_sweep_uses_the_shared_list() {
+        let src = include_str!("../../winmain.rs");
+        let production = src.split("#[cfg(test)]").next().unwrap_or(src);
+        assert!(
+            production.contains("staged_leftovers(&install_dir)"),
+            "the boot sweep no longer calls `staged_leftovers` — the list has been \
+             copied back into winmain, and two copies is how it drifted the first \
+             time (two of three entries were pre-v2 spellings)"
+        );
+        for ghost in ["vale-playwright.new.zip", "cloudflared.new.exe"] {
+            assert!(
+                !production.contains(ghost),
+                "winmain hardcodes `{ghost}` again; it must come from the shared list"
+            );
+        }
     }
 
     #[test]

@@ -249,11 +249,13 @@ pub(crate) fn self_heal() {
     // (a stranded boxed `.new` would otherwise be picked up by the
     // NEXT successful swap — version skew). Delete best-effort; the next
     // agent_update re-downloads + re-stages from scratch (safe + retryable).
-    for stale in [
-        install_dir.join("vale-agent.new.exe"),
-        install_dir.join("vale-playwright.new.zip"),
-        install_dir.join("tools").join("cloudflared.new.exe"),
-    ] {
+    // THE LIST IS NOT REPEATED HERE. It used to be, and two of its three entries
+    // were pre-v2 spellings while staging writes `components\...` — so this sweep
+    // deleted the executable and MISSED both boxed components, which is exactly
+    // the version skew the paragraph above promises to prevent. One owner now
+    // (`plugins::update::tools::staged_leftovers`), the same one the in-process
+    // cleanup uses, so the two cannot disagree about filenames again.
+    for stale in vale_agent::plugins::update::staged_leftovers(&install_dir) {
         if stale.exists() {
             match std::fs::remove_file(&stale) {
                 Ok(()) => log_line(&format!(

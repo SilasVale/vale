@@ -8,6 +8,15 @@
 
 mod tools;
 
+// The staged-leftover list, re-exported for the BOOT sweep in `winmain.rs`. That
+// sweep is part of the binary crate, so it cannot reach a private module — and
+// re-exporting one function is the honest way to share it, rather than making the
+// whole `tools` module public to hand out a path list.
+// PUB, not pub(crate): the boot sweep that consumes this lives in the BINARY
+// crate (`winmain.rs`), and the binary cannot see anything the lib keeps
+// crate-private. Same reason `paths`, `state` and `register` are public.
+pub use tools::staged_leftovers;
+
 use vale_agent_core::ToolDef;
 
 /// Plugin struct — stateless; every tool closes over what it needs.
