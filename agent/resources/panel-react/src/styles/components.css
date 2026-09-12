@@ -1715,10 +1715,12 @@
 .plug-tag[data-state="muted"] { color: var(--muted); background: var(--state-muted-soft); }
 .plug-card {
   flex: none;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
   border: 1px solid var(--line);
   border-radius: 10px;
   padding: 10px 12px;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
 }
 .plug-card-head { display: flex; align-items: center; gap: 8px; }
 .plug-card-title { font-size: 13px; font-weight: 600; }
@@ -1798,8 +1800,10 @@
 .mem-card {
   border: 1px solid var(--line);
   border-radius: 12px;
-  background: var(--surface);
+  background: color-mix(in srgb, var(--surface) 84%, transparent);
   padding: 12px 14px;
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
 }
 .mem-card[data-deleted] { opacity: 0.55; }
 .mem-card-head { display: flex; align-items: center; gap: 10px; }

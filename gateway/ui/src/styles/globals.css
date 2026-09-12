@@ -488,6 +488,10 @@ pre code {
 .rail-btn.active {
   background: var(--chrome-active-bg);
   color: var(--chrome-active-ink);
+  /* The one place a gradient sits BEHIND text, so it is the one place that could move
+     a contrast measurement. Kept as an inset RING (a shadow, not a background) so the
+     text's own background is untouched. */
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aura-3) 45%, transparent);
 }
 .rail-foot {
   display: flex;
@@ -736,8 +740,10 @@ pre code {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: var(--bg);
-  border: 1px solid var(--border);
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--aura-3) 14%, var(--border));
   border-radius: var(--radius-lg);
   padding: 20px 22px 18px;
   text-decoration: none;
@@ -930,8 +936,14 @@ pre code {
    ================================================================ */
 
 .card {
-  background: var(--bg);
-  border: 1px solid var(--border);
+  /* Glass. The surface is 84% of its own colour rather than opaque: at that ratio the
+     effective background barely moves (verified against the AA sweep, not assumed),
+     but the aurora wash is visible THROUGH the card. An opaque surface hides the wash
+     entirely, which is why the first pass of this theme looked like plain #fafafa. */
+  background: color-mix(in srgb, var(--bg) 84%, transparent);
+  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  border: 1px solid color-mix(in srgb, var(--aura-3) 14%, var(--border));
   border-radius: var(--radius-lg);
   padding: 22px 24px;
   margin-bottom: 16px;
@@ -1187,6 +1199,7 @@ pre code {
 
 .btn-accent {
   background: var(--accent);
+  box-shadow: var(--aura-glow);
   /* `--accent-fg`, not `#fff`. White on the dark theme's `--accent` (#ffa94d) is
      1.90:1 — the login button, the most important control on the site, failing AA by
      a factor of two. The dark value is #2b1a09 (8.80 base / 10.41 hover), which is
