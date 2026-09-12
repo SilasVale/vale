@@ -18,6 +18,7 @@
 use std::sync::atomic::{AtomicU64, Ordering};
 use std::sync::{Arc, LazyLock};
 
+use super::store::SearchQuery;
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
 
@@ -168,6 +169,7 @@ fn tool_search(store: Arc<MemoryStore>) -> ToolDef {
             "properties": {
                 "query": {"type": "string", "description": "Search text (required)."},
                 "namespace": {"type": "string", "description": "Optional namespace filter."},
+                "tag": {"type": "string", "description": "Optional exact tag filter (case-insensitive). Without it, a tag the caller sends is IGNORED and the unfiltered results look filtered."},
                 "limit": {"type": "integer", "description": "Max results (default 20, max 50)."}
             },
             "required": ["query"]
@@ -180,12 +182,22 @@ fn tool_search(store: Arc<MemoryStore>) -> ToolDef {
                     return Ok(tool_error("query is required"));
                 }
                 let namespace = params.get("namespace").and_then(|v| v.as_str());
+                // DECLARED AND READ. The panel has sent `tag` since round 161 and
+                // this handler dropped it on the floor: a filtered search returned
+                // everything, presented as though the filter had been applied.
+                // The store could filter by tag all along.
+                let tag = params.get("tag").and_then(|v| v.as_str());
                 let limit = params
                     .get("limit")
                     .and_then(|v| v.as_u64())
                     .unwrap_or(20)
                     .min(50) as usize;
-                let hits = store.search(&query, namespace, limit);
+                let hits = store.search(SearchQuery {
+                    text: &query,
+                    namespace,
+                    tag,
+                    limit,
+                });
                 Ok(json!({"ok": true, "results": hits}))
             }
         },

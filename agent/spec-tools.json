@@ -113,7 +113,8 @@
     "params": [
       "limit",
       "namespace",
-      "query"
+      "query",
+      "tag"
     ],
     "plugin": "memory",
     "required": [

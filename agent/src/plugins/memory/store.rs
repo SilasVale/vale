@@ -177,6 +177,21 @@ struct Inner {
     dirty: bool,
 }
 
+/// What to search for. A STRUCT rather than positional arguments because
+/// `namespace` and `tag` are both `Option<&str>` and directly adjacent — a caller
+/// swapping them would filter on the wrong axis and get results that look
+/// plausible. The panel sends both together, so the hazard is live rather than
+/// theoretical, and this repo has already chosen named shapes over tuples three
+/// times for the same reason.
+pub struct SearchQuery<'a> {
+    /// Case-insensitive multi-word AND over title, content and tags.
+    pub text: &'a str,
+    pub namespace: Option<&'a str>,
+    /// Exact, case-insensitive tag match. `None` does not filter.
+    pub tag: Option<&'a str>,
+    pub limit: usize,
+}
+
 impl MemoryStore {
     /// Open (or create) the store under `dir` (e.g. `<install>/memory/`).
     pub fn new(dir: PathBuf, limits: MemoryLimits) -> Self {
@@ -543,7 +558,13 @@ impl MemoryStore {
     /// Case-insensitive substring search over title+content+tags.
     /// Returns records ordered updated_at desc, content truncated to
     /// `snippet_bytes` for the wire.
-    pub fn search(&self, query: &str, namespace: Option<&str>, limit: usize) -> Vec<MemoryRecord> {
+    pub fn search(&self, q: SearchQuery<'_>) -> Vec<MemoryRecord> {
+        let SearchQuery {
+            text: query,
+            namespace,
+            tag,
+            limit,
+        } = q;
         // limit=0 must return 0 hits, not the first match (the old
         // check-AFTER-push semantics pushed one before comparing).
         if limit == 0 {
@@ -571,6 +592,21 @@ impl MemoryStore {
             }
             if !ns_matches(rec, namespace) {
                 continue;
+            }
+            // THE TAG FILTER THE PANEL HAS BEEN SENDING SINCE round 161.
+            // `MemoryPage` passes `params.tag` to `memory_search`, the tool never
+            // declared it, and the handler never read it — so a filtered search
+            // returned UNFILTERED results that looked filtered. The store could
+            // always do this (`list` has filtered by tag for longer); `search`
+            // simply had no way to be asked.
+            //
+            // Case-insensitive and exact-per-tag, matching `list`'s rule, so the
+            // two surfaces cannot disagree about what "tag = x" means.
+            if let Some(t) = tag {
+                let want = t.to_lowercase();
+                if !rec.tags.iter().any(|rt| rt.to_lowercase() == want) {
+                    continue;
+                }
             }
             let hay = format!(
                 "{} {} {}",
@@ -791,6 +827,80 @@ mod tests {
         (MemoryStore::new(dir.clone(), MemoryLimits::default()), dir)
     }
 
+    /// `memory_search` MUST BE ABLE TO FILTER BY TAG.
+    ///
+    /// The panel has sent `params.tag` to `memory_search` since round 161, and it
+    /// was a SILENT NO-OP: the tool did not declare the parameter and the handler
+    /// never read it, so a filtered search returned every match and presented them
+    /// as filtered. The store could do it all along — `list` has filtered by tag
+    /// for longer — and `search` simply had no way to be asked.
+    ///
+    /// Both surfaces must agree about what "tag = x" means, so this pins the rule
+    /// they share: exact and case-insensitive, NOT a substring.
+    #[test]
+    fn search_filters_by_tag() {
+        let (store, _dir) = tmp_store("searchtag");
+        let mk = |title: &str, tags: &[&str]| MemoryRecord {
+            id: format!("m-{title}"),
+            title: title.to_string(),
+            content: "shared body text".to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            namespace: "shared".to_string(),
+            source: "test".to_string(),
+            run_id: None,
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
+            deleted: false,
+        };
+        store.insert(mk("alpha", &["net", "urgent"]));
+        store.insert(mk("beta", &["net"]));
+        store.insert(mk("gamma", &["db"]));
+
+        let all = store.search(SearchQuery {
+            text: "shared",
+            namespace: None,
+            tag: None,
+            limit: 10,
+        });
+        assert_eq!(all.len(), 3, "no filter returns everything that matches");
+
+        let net = store.search(SearchQuery {
+            text: "shared",
+            namespace: None,
+            tag: Some("net"),
+            limit: 10,
+        });
+        assert_eq!(net.len(), 2, "only the tagged records");
+        assert!(net.iter().all(|r| r.tags.iter().any(|t| t == "net")));
+
+        let urgent = store.search(SearchQuery {
+            text: "shared",
+            namespace: None,
+            tag: Some("URGENT"),
+            limit: 10,
+        });
+        assert_eq!(urgent.len(), 1, "case-insensitive, like `list`");
+        assert_eq!(urgent[0].title, "alpha");
+
+        // EXACT, not a substring: "ne" must not match the tag "net", or the two
+        // surfaces would disagree about the same filter.
+        let sub = store.search(SearchQuery {
+            text: "shared",
+            namespace: None,
+            tag: Some("ne"),
+            limit: 10,
+        });
+        assert!(sub.is_empty(), "tag matching is exact: {sub:?}");
+
+        let none = store.search(SearchQuery {
+            text: "shared",
+            namespace: None,
+            tag: Some("nope"),
+            limit: 10,
+        });
+        assert!(none.is_empty(), "a tag nothing carries returns nothing");
+    }
+
     // ---- review regression tests (round: memory durability audit) ----
 
     #[test]
@@ -808,7 +918,12 @@ mod tests {
         // Reload: "b" must be present (its line survived the repair), the
         // torn fragment is simply skipped.
         let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        let hits = store2.search("body-b", None, 10);
+        let hits = store2.search(SearchQuery {
+            text: "body-b",
+            namespace: None,
+            tag: None,
+            limit: 10,
+        });
         assert!(
             hits.iter().any(|r| r.title == "b"),
             "post-repair append must be loadable"
@@ -827,7 +942,12 @@ mod tests {
         bytes.extend_from_slice(&[0xf0, 0x9f, 0x94]); // truncated emoji, no newline
         std::fs::write(dir.join("memory.jsonl"), &bytes).unwrap();
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        let hits = store.search("keep", None, 10);
+        let hits = store.search(SearchQuery {
+            text: "keep",
+            namespace: None,
+            tag: None,
+            limit: 10,
+        });
         assert!(
             hits.iter().any(|r| r.title == "ok"),
             "valid records must load despite a trailing invalid byte"
@@ -1217,10 +1337,46 @@ mod tests {
         a.tags = vec!["net".to_string()];
         let _ = s.insert(a);
         let _ = s.insert(rec("Beta", "unrelated"));
-        assert_eq!(s.search("quick", None, 10).len(), 1);
-        assert_eq!(s.search("alpha", None, 10).len(), 1);
-        assert_eq!(s.search("net", None, 10).len(), 1);
-        assert_eq!(s.search("nope", None, 10).len(), 0);
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "quick",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            1
+        );
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "alpha",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            1
+        );
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "net",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            1
+        );
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "nope",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            0
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 
@@ -1233,31 +1389,74 @@ mod tests {
         let _ = s.insert(rec("ConPTY resize", "window reflow handling"));
         // Two terms in different fields (title + content) → match (AND).
         assert_eq!(
-            s.search("conpty exit", None, 10).len(),
+            s.search(SearchQuery {
+                text: "conpty exit",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
             1,
             "title+content AND"
         );
         // Terms spanning title/tags → match.
         assert_eq!(
-            s.search("conpty terminal", None, 10).len(),
+            s.search(SearchQuery {
+                text: "conpty terminal",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
             1,
             "title+tag AND"
         );
         // Order-independent.
-        assert_eq!(s.search("exit conpty", None, 10).len(), 1, "reversed order");
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "exit conpty",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            1,
+            "reversed order"
+        );
         // One term missing → no match (AND semantics).
         assert_eq!(
-            s.search("conpty resize", None, 10).len(),
+            s.search(SearchQuery {
+                text: "conpty resize",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
             1,
             "both words present in one rec"
         );
         assert_eq!(
-            s.search("conpty nope", None, 10).len(),
+            s.search(SearchQuery {
+                text: "conpty nope",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
             0,
             "missing term excludes"
         );
         // Single word still works (backward compat).
-        assert_eq!(s.search("hang", None, 10).len(), 1);
+        assert_eq!(
+            s.search(SearchQuery {
+                text: "hang",
+                namespace: None,
+                tag: None,
+                limit: 10
+            })
+            .len(),
+            1
+        );
         let _ = std::fs::remove_dir_all(&dir);
     }
 

@@ -64,6 +64,107 @@ mod tests {
     use super::*;
     use store::MemoryLimits;
 
+    /// THE TOOL MUST DECLARE THE PARAMETER IT IS EXPECTED TO HONOUR.
+    ///
+    /// `MemoryPage` has passed `params.tag` to `memory_search` since round 161,
+    /// and the tool neither declared nor read it — a silent no-op that returned
+    /// UNFILTERED results which looked filtered. A declared parameter that is
+    /// ignored and an undeclared one that is sent are the same defect from two
+    /// sides, so this pins the declaration and the test above pins the behaviour.
+    #[test]
+    fn memory_search_declares_its_tag_filter() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-tagdecl-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let p = MemoryPlugin::new(Arc::new(MemoryStore::new(
+            dir.clone(),
+            MemoryLimits::default(),
+        )));
+        let tools = p.tools();
+        let search = tools
+            .iter()
+            .find(|t| t.name == "memory_search")
+            .expect("memory_search must exist");
+        let props = search
+            .input_schema
+            .get("properties")
+            .and_then(|v| v.as_object())
+            .expect("schema properties");
+        assert!(
+            props.contains_key("tag"),
+            "memory_search must declare `tag`: the panel sends it, and an \
+             undeclared parameter is dropped without a word. Declared: {:?}",
+            props.keys().collect::<Vec<_>>()
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE HANDLER MUST ACTUALLY PASS THE TAG THROUGH.
+    ///
+    /// The store test pins that `search` CAN filter by tag; this pins that the
+    /// TOOL asks it to. Both are needed, and only this one would have caught the
+    /// original defect: `MemoryPage` sent `params.tag`, the handler read three
+    /// parameters and dropped the fourth, and the filter was a silent no-op for
+    /// as long as it existed. A test on the store passes happily either way —
+    /// the helpers were perfect and the bug was in how they were CALLED.
+    #[tokio::test]
+    async fn memory_search_honours_the_tag_the_panel_sends() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-tagwire-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        let store = Arc::new(MemoryStore::new(dir.clone(), MemoryLimits::default()));
+        let mk = |title: &str, tags: &[&str]| store::MemoryRecord {
+            id: format!("m-{title}"),
+            title: title.to_string(),
+            content: "shared body".to_string(),
+            tags: tags.iter().map(|t| t.to_string()).collect(),
+            namespace: "shared".to_string(),
+            source: "test".to_string(),
+            run_id: None,
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
+            deleted: false,
+        };
+        store.insert(mk("alpha", &["net"]));
+        store.insert(mk("beta", &["db"]));
+
+        let p = MemoryPlugin::new(store);
+        let tools = p.tools();
+        let search = tools
+            .iter()
+            .find(|t| t.name == "memory_search")
+            .expect("memory_search must exist");
+
+        // WITHOUT a tag: both records match the body text.
+        let all = search
+            .handler
+            .call(serde_json::json!({"query": "shared"}))
+            .await
+            .expect("call");
+        assert_eq!(
+            all["results"].as_array().map(|a| a.len()),
+            Some(2),
+            "the unfiltered search sees both: {all}"
+        );
+
+        // WITH the tag the panel sends: exactly the tagged one. If the handler
+        // drops `tag`, this returns 2 and the operator is shown unfiltered
+        // results as though the filter had been applied.
+        let tagged = search
+            .handler
+            .call(serde_json::json!({"query": "shared", "tag": "net"}))
+            .await
+            .expect("call");
+        let hits = tagged["results"].as_array().expect("results");
+        assert_eq!(
+            hits.len(),
+            1,
+            "the tag filter must reach the store — dropping it is a silent \
+             no-op that shows unfiltered results as filtered: {tagged}"
+        );
+        assert_eq!(hits[0]["title"], "alpha");
+
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
     #[test]
     fn plugin_exposes_six_tools() {
         let dir = std::env::temp_dir().join(format!("vale-mem-plugin-{}", std::process::id()));
