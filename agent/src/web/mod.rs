@@ -1231,16 +1231,24 @@ async fn api_session_control(
 /// mid-character, which this crate has paid for three times).
 fn api_logs() -> serde_json::Value {
     let dir = crate::paths::logs_dir();
-    // The update log is the one this route was invented for; the other two are
-    // the agent's own narration (55 `tracing::` sites land in agent.log and
-    // nothing read it before) and the MCP bridge's diagnostics. Names, not
-    // paths: adding a fourth is one entry here.
+    // The update log is the one this route was invented for; the others are the
+    // agent's own narration (55 `tracing::` sites land in agent.log and nothing
+    // read it before), the MCP bridge's diagnostics, and BOOT.
+    //
+    // `startup.log` IS THE ONE THAT ANSWERS "WHY IS EVERY CLIENT 401ing". The
+    // quarantine/rotation narration goes through `out!`/`eout!` (`main.rs`), which
+    // writes there — and this doc comment has listed `startup.log` among the files
+    // layout v2 moved into this directory since the route was written, while the
+    // served set did not include it. So the one place that records a rotated
+    // `device_token` was the one place the operator's log card could not read, and
+    // the symptom it explains is total and confusing. Names, not paths: adding a
+    // fifth is one entry here.
     let read = |name: &str| -> serde_json::Value {
         match std::fs::read_to_string(dir.join(name)) {
             Ok(text) => serde_json::json!({
                 "name": name,
                 "present": true,
-                // 64 KiB per file: three files fit comfortably in one reply
+                // 64 KiB per file: four files fit comfortably in one reply
                 // while staying far below the clip budget the panel renders.
                 "log": crate::text::tail(&text, 64 * 1024),
             }),
@@ -1257,6 +1265,7 @@ fn api_logs() -> serde_json::Value {
             read("agent.log"),
             read("vale-update.log"),
             read("mcp_diag.log"),
+            read("startup.log"),
         ],
     })
 }
@@ -4399,6 +4408,27 @@ mod tests {
              of there, so that path is empty on every real device and the route \
              silently answered '' forever. Reply head: {}",
             crate::text::clip(&body, 400)
+        );
+
+        // STARTUP.LOG IS SERVED, AND IT IS THE ONE THAT EXPLAINS A MASS 401.
+        // The doc comment above has listed `startup.log` among the files layout
+        // v2 moved into this directory since the route was written, while the
+        // served set was three files without it — so the only record of a
+        // rotated `device_token` was the one the operator's log card could not
+        // read, and the symptom it explains is total (every client 401s) and
+        // otherwise unexplained. Asserted by NAME, not by count: a count would
+        // pass if a different file were dropped to make room.
+        let names: Vec<String> = v["logs"]
+            .as_array()
+            .expect("logs array")
+            .iter()
+            .filter_map(|l| l["name"].as_str().map(|n| n.to_string()))
+            .collect();
+        assert!(
+            names.iter().any(|n| n == "startup.log"),
+            "api_logs must serve startup.log — it carries the quarantine and \
+             token-rotation narration, which is the only account of why every \
+             client starts failing auth: {names:?}"
         );
 
         // Restore whatever was there, so a test run does not leave a fake log.

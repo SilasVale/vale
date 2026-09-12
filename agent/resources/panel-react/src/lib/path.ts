@@ -33,7 +33,9 @@ import type { TrajRound } from "../hooks/useTrajectory";
 
 /** The five-state vocabulary, re-exported so the path view and the command
  *  cards cannot drift apart on what a state is called. */
-export type PathState = "running" | "ok" | "fail" | "warn" | "bg" | "muted";
+export const PATH_STATES = ["running", "ok", "fail", "warn", "bg", "muted"] as const;
+
+export type PathState = (typeof PATH_STATES)[number];
 
 export type Owner = "ai" | "human";
 

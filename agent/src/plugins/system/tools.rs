@@ -595,7 +595,7 @@ fn tool_process_list() -> ToolDef {
 fn tool_process_kill() -> ToolDef {
     ToolDef::new(
         "system_process_kill",
-        "Kill a process on THIS device (the agent host) by PID or by name (kills all matching). Use system_process_list first to find the target. Returns what was killed.",
+        "Kill a process on THIS device (the agent host) by PID or by name (kills all matching). Use system_process_list first to find the target. Returns what was killed. Uses taskkill on Windows and kill/pgrep elsewhere; if a kill cannot be ATTEMPTED at all it says so rather than reporting that nothing matched.",
         json!({
             "type": "object",
             "properties": {
@@ -631,19 +631,47 @@ fn tool_process_kill() -> ToolDef {
                         .args(["/IM", &name, "/F"])
                         .output()
                         .await;
-                    if let Ok(o) = &r {
-                        if o.status.success() {
-                            killed.push(json!({"name": name}));
-                        } else {
-                            // ps fallback: find pids and kill each.
-                            if let Ok(o) = tokio::process::Command::new("pgrep").arg("-f").arg(&name).output().await {
+                    if matches!(&r, Ok(o) if o.status.success()) {
+                        killed.push(json!({"name": name}));
+                    } else {
+                        // THE FALLBACK MUST COVER THE SPAWN ERROR TOO, and the
+                        // pid branch above already does (`!ok` catches both a
+                        // failed taskkill and one that could not start). This is
+                        // the same rule applied to its TWIN, and it was not:
+                        // `if let Ok(o) = &r` entered only when taskkill RAN, so
+                        // where it cannot be spawned at all — any non-Windows
+                        // host — `killed` stayed empty and the tool answered
+                        // "no process matched <name>". That is not a failure to
+                        // act; it is a FALSE STATEMENT ABOUT THE PROCESS TABLE,
+                        // made from a command that never ran.
+                        match tokio::process::Command::new("pgrep")
+                            .arg("-f")
+                            .arg(&name)
+                            .output()
+                            .await
+                        {
+                            Ok(o) => {
                                 let text = String::from_utf8_lossy(&o.stdout).to_string();
                                 for line in text.lines() {
                                     if let Ok(p) = line.trim().parse::<u64>() {
-                                        let _ = tokio::process::Command::new("kill").arg("-9").arg(p.to_string()).output().await;
+                                        let _ =
+                                            tokio::process::Command::new("kill")
+                                                .arg("-9")
+                                                .arg(p.to_string())
+                                                .output()
+                                                .await;
                                         killed.push(json!({"pid": p, "name": name}));
                                     }
                                 }
+                            }
+                            // NEITHER TOOL EXISTS. Say that, rather than letting
+                            // the empty `killed` fall through to "no process
+                            // matched" — the same false claim in a smaller dose.
+                            Err(e) => {
+                                return Ok(to_value_or_empty(tool_error(format!(
+                                    "cannot kill by name on this device: neither \
+                                     taskkill nor pgrep is available ({e})"
+                                ))))
                             }
                         }
                     }
@@ -1141,8 +1169,13 @@ mod file_tool_tests {
         let out = run(&tool_process_kill(), json!({ "pid": 99999999 })).await;
         assert_eq!(out["ok"], false);
         assert!(out["error"].as_str().unwrap().contains("failed"));
-        // A name matching nothing: pgrep finds no pids (and taskkill is
-        // absent outside Windows) → "no process matched", nothing killed.
+        // A name matching nothing: the fallback matcher RUNS and finds no pids,
+        // so "no process matched" is a true statement about the process table.
+        // (This comment used to say "and taskkill is absent outside Windows →
+        // no process matched" — reading the ABSENCE of the Windows tool as the
+        // reason for that answer. It is not the reason, and treating it as one is
+        // how the tool came to say "no process matched" on a host where NO
+        // matcher had run at all.)
         let out = run(
             &tool_process_kill(),
             json!({ "name": "vale-definitely-no-such-proc-xyz-123" }),
@@ -1153,6 +1186,70 @@ mod file_tool_tests {
             .as_str()
             .unwrap()
             .contains("no process matched"));
+    }
+
+    /// "NO PROCESS MATCHED" IS ONLY SAYABLE WHEN SOMETHING LOOKED.
+    ///
+    /// The name branch's fallback sat inside `if let Ok(o) = &r`, so it ran only
+    /// when `taskkill` RAN and failed. Where `taskkill` cannot be spawned at all
+    /// — any non-Windows host — nothing looked, `killed` stayed empty, and the
+    /// operator was told "no process matched <name>". That is not a failure to
+    /// act: it is a FALSE STATEMENT ABOUT THE PROCESS TABLE, manufactured from a
+    /// command that never ran. The pid branch above never had this bug, so it is
+    /// the twin rule applied to one branch and not the other.
+    ///
+    /// WHY THIS IS A STRUCTURAL PIN AND NOT A BEHAVIOURAL TEST. Provoking "no
+    /// matcher exists" means emptying `PATH` — process-global state, in a suite
+    /// that runs its tests in PARALLEL THREADS of one process. My first version
+    /// did exactly that behind the module's env lock and BROKE EIGHT UNRELATED
+    /// TESTS, because the lock only excludes the tests that also take it and the
+    /// terminal tests spawn shells. This is the third time this log has recorded
+    /// process-global state colliding with parallel tests; the fix is not a wider
+    /// lock but not reaching for the global at all.
+    ///
+    /// So the pin is on the SHAPE that was wrong: the fallback must not be gated
+    /// on `taskkill` having run.
+    #[test]
+    fn kill_by_name_falls_back_even_when_taskkill_cannot_be_spawned() {
+        // Scope the window to THIS tool: from `fn tool_process_kill` to the next
+        // `fn tool_`. A fixed-length slice from a bare `if !name.is_empty() {`
+        // ran past the end of the function and read a NEIGHBOURING tool's code —
+        // which is how my first version of this pin failed against the FIXED
+        // source. A window that is not bounded by what it is about is a window
+        // that reports on something else.
+        // THE TEST MODULE IS STRIPPED FIRST. `include_str!` reads this file whole,
+        // and the assertion below QUOTES the string it forbids — so without this
+        // the pin finds its own failure message and reports a defect in code that
+        // is correct. A check that reads its own text is a check that will always
+        // find what it is looking for.
+        let whole = include_str!("tools.rs");
+        let src = whole.split("#[cfg(test)]").next().unwrap_or(whole);
+        let start = src
+            .find("fn tool_process_kill()")
+            .expect("tool_process_kill");
+        let tail = &src[start + 10..];
+        let end = tail.find("\nfn tool_").unwrap_or(tail.len());
+        let region = &tail[..end];
+        assert!(
+            region.contains("pgrep"),
+            "the name branch must try a non-Windows matcher"
+        );
+        // PIN THE CORRECT CONSTRUCT, NOT THE ABSENCE OF THE WRONG ONE. My first
+        // version asserted `!region.contains("if let Ok(o) = &r")` — and FAILED
+        // AGAINST THE FIXED SOURCE, because the explanatory comment three lines
+        // above the fix quotes that expression while describing it. A check that
+        // reads prose cannot tell a description of a defect from the defect.
+        assert!(
+            region.contains("if matches!(&r, Ok(o) if o.status.success()) {"),
+            "the name branch must take the fallback when `taskkill` fails OR \
+             cannot be spawned — the `matches!` gate is what does that. The pid \
+             branch above has always had it; this is the twin."
+        );
+        assert!(
+            region.contains("cannot kill by name"),
+            "and when NO matcher exists it must say the kill could not be \
+             attempted, rather than falling through to the same false claim"
+        );
     }
 
     #[tokio::test]

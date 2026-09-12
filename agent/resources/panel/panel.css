@@ -1315,7 +1315,7 @@ code {
 #modal-status.error { color: var(--danger); }
 
 /* ---------- command cards / details ---------- */
-/* FIVE states, TWO channels — and BOTH were needed (see --state-* in
+/* SIX states, TWO channels — and BOTH were needed (see --state-* in
    tokens.css): three of the five hues share one red-orange band, and
    "running" vs "ok" used to differ ONLY by the pulse animation, which
    prefers-reduced-motion removes. That made "still working" and "finished"
@@ -1331,6 +1331,15 @@ code {
      fail     solid red + halo    (the exception you must not miss)
      warn     solid amber + halo
      muted    hollow ring         (ended without a verdict)
+     bg       HALF fill + ring    (handed off to run on; not a verdict at all)
+
+   `bg` ARRIVED WITHOUT A CHANNEL and this legend is where that was visible: the
+   count said five, the palette contract iterated five names, and there was no
+   `[data-state="bg"]` rule anywhere — so a backgrounded command's dot rendered
+   NOTHING. Not an unstyled dot: no dot. Half-fill is the honest reading of the
+   state (part of it is still going) and it keeps the circle + FILL vocabulary
+   above; src/lib/statePalette.test.ts now iterates `PATH_STATES` and fails if any
+   state has no rule in the built sheet, so the next one cannot slip through.
 
    Halos are box-shadow, NOT border: this sheet has no global
    `box-sizing: border-box`, so a border would grow the dot and shift the row
@@ -1356,6 +1365,10 @@ code {
 }
 .cmd-dot[data-state="muted"] {
   background: transparent;
+  box-shadow: inset 0 0 0 1.5px var(--state-muted);
+}
+.cmd-dot[data-state="bg"] {
+  background: linear-gradient(90deg, var(--state-running) 50%, transparent 50%);
   box-shadow: inset 0 0 0 1.5px var(--state-muted);
 }
 @keyframes cmd-pulse { 50% { opacity: 0.35; } }
@@ -1747,6 +1760,9 @@ code {
    verdict — so it earns the ring. Both choices are pinned by
    src/lib/statePalette.test.ts. */
 .traj-ev-dot[data-state="muted"] { background: var(--ds-neutral-300); }
+.traj-ev-dot[data-state="bg"] {
+  background: linear-gradient(90deg, var(--state-running) 50%, var(--ds-neutral-300) 50%);
+}
 .traj-ev-dot[data-state="ok"] { background: var(--state-ok); }
 .traj-ev-dot[data-state="fail"] {
   background: var(--state-fail);

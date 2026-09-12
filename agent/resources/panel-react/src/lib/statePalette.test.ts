@@ -1,5 +1,5 @@
 // ============================================================================
-// Discrete state palette — the visual contract for the five AI/command states.
+// Discrete state palette — the visual contract for the SIX AI/command states.
 //
 // WHY THIS FILE EXISTS. "running" and "ok" used to be the SAME colour
 // (`var(--accent)`) and differed ONLY by the `cmd-pulse` animation. The panel
@@ -23,6 +23,7 @@
 // nearby rules back into one shared colour.
 // ============================================================================
 
+import { PATH_STATES } from "./path";
 import { describe, it, expect } from "vitest";
 import { readFileSync } from "node:fs";
 import path from "node:path";
@@ -126,6 +127,32 @@ describe("discrete state palette", () => {
     }
   });
 
+  it("EVERY state has a visual channel in the BUILT sheet", () => {
+    // THE TEST THAT WAS MISSING, and its absence is why round 31 shipped a state
+    // with no dot. `bg` was added to `PathState`, returned by `cardState`, and
+    // rendered as `data-state` — while `data-state="bg"` occurred ZERO times in
+    // every stylesheet AND in the built artifact. The dot did not render
+    // UNSTYLED, it rendered NOTHING: base `.cmd-dot` sets only size and
+    // border-radius, so an unmatched state is an invisible 8px circle. The
+    // round-31 tests asserted words and counts, which is exactly the layer where
+    // the bug was not.
+    //
+    // Read the BUILT css (the tracked artifact the agent embeds), not src: a rule
+    // that never made it through the build is not a channel.
+    const css = builtCss();
+    for (const c of [".cmd-dot", ".traj-ev-dot"]) {
+      for (const state of PATH_STATES) {
+        const b = blockOf(css, `${c}[data-state="${state}"]`);
+        expect(
+          b,
+          `${c}[data-state="${state}"] has NO rule, so a step in that state \
+           renders an invisible dot. Every PathState needs a channel — add it to \
+           src/styles/components.css beside its siblings.`,
+        ).not.toBeNull();
+      }
+    }
+  });
+
   it("no two states collapse onto one colour in either renderer", () => {
     // Colour alone cannot carry five states in this palette (three of the five
     // hues share one red-orange band), which is why SHAPE carries part of the
@@ -133,7 +160,12 @@ describe("discrete state palette", () => {
     // work would be doing all the lifting on its own.
     const css = builtCss();
     for (const c of [".cmd-dot", ".traj-ev-dot"]) {
-      const seen = ["running", "ok", "fail", "warn", "muted"].map((s) => {
+      // THE LIST COMES FROM THE SOURCE, NOT FROM THIS TEST. It used to be a
+      // hardcoded five names, so the state added in round 31 (`bg`) sat OUTSIDE
+      // the guarantee this test exists to state — and it had no CSS rule at all
+      // while this test passed. A contract that enumerates its own subjects
+      // cannot notice a new one.
+      const seen = PATH_STATES.map((s) => {
         const b = blockOf(css, `${c}[data-state="${s}"]`);
         expect(b, `${c}[data-state="${s}"] missing`).not.toBeNull();
         return (b!.match(/background\s*:\s*([^;]+)/) || [, "<none>"])[1].trim();
