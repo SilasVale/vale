@@ -519,7 +519,41 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 63 (three more audit findings fixed AND SHIPPED —
+Last updated: 2026-09-11 round 64 (the console rendered "I could not read it" as a
+definite negative, and the console already had the pattern that fixes it — one file
+over). Commit: 467b1a30. Worker deployed; three states verified live.
+  (1) THE DEFECT: `Users.tsx`'s loader swallowed BOTH reads into `/* noop */`. A failed
+  password read rendered "— (not set)" when the truth was "could not read it" — a
+  different fact, and the one that matters when you are about to set a password. A
+  failed user list rendered as a card titled "Users" with nothing under it,
+  INDISTINGUISHABLE from "there are no users".
+  (2) THE PATTERN ALREADY EXISTED IN THE CONSOLE, one file over: `DevicesPanel` keeps
+  three states — `devices === null` -> skeleton, `length === 0` -> Empty, `loadError`
+  -> a banner with Retry. Users had two. "A fix that already existed, applied to one of
+  a pair" again (rounds 45, 47, 55, 63) — the most repeated shape in this log.
+  (3) THE TYPE-CHECK ENFORCED IT: `users` is `User[] | null` and `pwSet` is
+  `boolean | null`, so the compiler REJECTED the two-state version rather than letting
+  it compile and lie. Declaring the states in the types is what makes the rendering
+  honest, and it caught my first attempt.
+  (4) VERIFIED BY EFFECT, all three states in one probe on the live worker:
+      failed -> "could not read — state unknown" + "Failed to load the user list" + Retry
+      empty  -> "set" + "No other users yet"
+      ok     -> the user listed, password "not set" (truthful)
+  Before the fix the failed case rendered "— (not set)" with a blank list.
+  (5) A STALE-BUNDLE REMINDER, recorded because it nearly produced a false conclusion:
+  the first probe of this fix showed the OLD behaviour, because I had built but not
+  deployed. Round 46 recorded the same trap for the panel; this is the console's.
+  (6) STILL OPEN, from the two audits: console — the Overview's false zeros for failed
+  reads plus `/devices` links that dead-end for non-admins, the `none` Models card that
+  can only show 0, "Restore default (ds)" naming a default the server contradicts, the
+  8-key status shown twice. Panel — DesktopShell shadowing App's sessionViews
+  (Ctrl+Shift+Y is a no-op), the rail's ✕ mislabelled "Archive session" with no undo,
+  the Memory empty state contradicting its own +New, Logs panel-only while accelerators
+  are desktop-only, and the landing page's `--dsw-alias-*` rename.
+  Gates: gateway-ui 11 + build + deploy; custom-property green; token contract green;
+  CI green on main; d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 63 (three more audit findings fixed AND SHIPPED —
 released 1.2.355 because the panel is compiled into the exe, so a panel fix that is
 not released is not a fix). Commits: c918f3f7, 58aaadc6. Tag v1.2.355; d1 on 1.2.355.
 Audit CLEAN (`CDN == GitHub asset byte-for-byte`); keep-latest applied (v1.2.353/354
