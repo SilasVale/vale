@@ -488,7 +488,99 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 25 (the console really did keep serving a
+Last updated: 2026-09-11 round 26 (`/api/logs` got its first consumer; then a
+scout proved the console ships a browser tool family that CANNOT work — verified
+against the bundle the device installs — and it was fixed on the LIVE worker).
+Commits: 49563387 (logs) + da788294 (browser contract), plus 1.2.330.
+  (1) `/api/logs` HAD ZERO CONSUMERS. Built so a remote client could see why the
+  agent behaved oddly "without asking someone to open files (or guessing a path
+  and cat-ing it over a PTY)" — then nothing read it (verified by grep across the
+  panel, gateway, CLI and scripts). Same shape as `/api/sessions` before round 21.
+  The concrete question it unblocks is the one the release docs answer with a
+  four-way table: after `vale update` the connection ALWAYS drops for ~10s, and
+  that drop is the DOCUMENTED signature of a successful swap, which makes it
+  useless as evidence because a command that never arrived looks identical.
+  `lib/updateDiagnosis.ts` is PURE (no fetch, no clock) and the tests assert the
+  VERDICT, not the presence of lines, since each verdict drives a different
+  operator action. Two distinctions it refuses to collapse: "launched" is not
+  "replaced" (a swap whose `copy ok=false` leaves the old binary, and a summary
+  stopping at "launched" reads as success), and an ABSENT log is `no-log`, NOT
+  `never-arrived` (telling an operator their update was lost on a device that has
+  never been updated is a worse failure than saying nothing). Presence is decided
+  PER KIND, not by which line is last: a device whose earlier update used the CLI
+  and whose latest used the Rust path has both, and ordering by index would
+  report `cli-only` and hide that a swap ran.
+  (2) BUILDING THE FAILED-READ TEST FOUND A REAL GAP IN MY OWN COMPONENT: it
+  checked only the promise rejection, so a device answering `{ok:false}` fell
+  through to `setLogs([])` and rendered EXACTLY like a healthy device that has
+  written nothing — a claim about the device made from a response that refused to
+  make it. Mutation-proven. HONEST NOTE: driving the failure through a rejected
+  promise makes vitest attribute an "unhandled rejection" to the test even though
+  the component catches it (the DOM proved the catch ran and a call-count
+  assertion pinned one request); I could not attribute the harness report and
+  would not suppress it, so the test drives the SAME branch through the
+  `{ok:false}` path instead. I spent more calls on this than it deserved.
+  (3) A SHIPPED CONSOLE TOOL FAMILY COULD NOT WORK, and a scout proved it by
+  reading the bundle the agent INSTALLS rather than the repo. `browser_*` is the
+  one family the gateway TRANSLATES rather than relays: `mcp-browser.ts` maps the
+  name and forwards arguments VERBATIM. `browser_wait` advertised `condition` —
+  **and marked it REQUIRED** — while the shipped `@playwright/mcp` 0.0.79 has no
+  such parameter (`browser_wait_for` takes `time`/`text`/`textGone`, all
+  optional), so the console's only required argument for that tool was one the
+  server does not have and a schema-validating client could not have made a
+  working call. `browser_screenshot` advertised `full_page` where the server
+  declares `fullPage`, so a full-page request returned a viewport shot silently.
+  Both fixed, and the description now says what the server does instead of
+  promising a selector wait that does not exist.
+  (4) WHY NOTHING CAUGHT IT — the round-25 lesson one level over. The
+  parameter-name contract tests compare the gateway against the DEVICE
+  (`spec-tools.json`), but these tools are bridge-routed and never reach the
+  device's registry, so that axis does not cover them. `mcp-browser.test.mjs`
+  pinned only `browser_open -> browser_navigate`; the other six mappings were
+  pinned by NOTHING. And the round-25 mirror gate proves mirror == src and CANNOT
+  see src == the server: A TEST ON A COPY CAN ONLY COMPARE COPIES.
+  `browser-contract.test.mjs` compares the console against the BUNDLE — the third
+  party in the contract — and pins all seven mappings against the tools the
+  server actually defines.
+  (5) A TEST PARSER THAT READS NOTHING REPORTS NO PROBLEMS. My first two
+  extraction attempts (a lazy regex, then a brace walk) both returned EMPTY
+  parameter sets for every tool while reporting they had found the tools — "no
+  problems found" for everything they failed to read. The third uses a window
+  between one tool's `name:` and the next and ASSERTS every window is
+  substantial, so a change in the bundle's shape fails loudly instead of turning
+  the suite into a no-op. Same failure mode as round 25's wrong-premise test, in
+  a new costume.
+  (6) THE ROUND-25 MIRROR GATE EARNED ITS KEEP IMMEDIATELY: it fired on this very
+  commit and caught the two edited gateway files before I did — the first time in
+  this log that a gate added in one round has caught work in the next.
+  (7) RELEASED 1.2.330 and DEPLOYED the gateway. CI and the release workflow
+  green on the tag; keep-latest left ONE release and ONE tag; the dual-builder
+  audit reported the STRONGER WARN verdict for the SIXTH consecutive release.
+  VERIFIED ON THE LIVE WORKER (not the repo): the served
+  `/code/files/vale-gate/src/mcp-tools.ts` no longer contains the bogus
+  `condition` parameter, carries the `text_gone` translation, and is BYTE-EQUAL
+  to the repo mirror (same sha256) — the check round 24 lacked.
+  (8) SCOUT FINDINGS NOT ACTED ON, with evidence, so the next round does not
+  re-derive them. A1 is the sharpest and is MY OWN round-23 sentence being FALSE:
+  `ArchivePage.tsx` tells the operator "the device keeps roughly the last 2000
+  lines of a closed session", but `trim_file` DRAINS EVERYTHING BEFORE THE LAST
+  `command/start` — the 2000-line cap only applies if that window is still over
+  it (its own test asserts the drain: `!content.contains("first-cmd")`). Round
+  23's own d1 evidence (`first_seq=34 events=26`) is 33 discarded, 26 surviving,
+  operator told ~2000 were kept. Worse, `useSessionEventsWithState` DOES return
+  `firstSeq` but `App.tsx` passes only `{cards, events}` to `TrajectoryView`, so
+  the LIVE view is structurally silent about the trim while its own comment
+  states the obligation. Also open: `useOperationRuns.ts` claims the session
+  route "carries no `run_id` at all" and it does (`SessionEvent.run_id`), so the
+  panel's trail reader drops the attribution that is already on the wire;
+  `evidence.rs` and four `runs.rs` readers still `read_to_string` while
+  `jsonl.rs`'s header claims "every append-only, line-oriented file in this crate
+  shares" the crash-safety rules; and `memory_search` silently ignores `tag`
+  while `MemoryPage.tsx` says round 161 fixed exactly that.
+  Gates: agent 570 default / 621 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; gateway 764 (was 762) + format; panel 481 + build.
+
+Previous round: 2026-09-11 round 25 (the console really did keep serving a
 disproven claim — I checked the LIVE URL this time — plus the `required` axis,
 off-plan visibility, and a format gate I skipped). Commits: 71aabe17, 5124e8aa,
 plus 1.2.329.
