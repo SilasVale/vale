@@ -519,7 +519,32 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 80 (three more CLI findings; the first closes a gap the
+Last updated: 2026-09-12 round 81 (two more CLI findings; the first is a claim written
+before its own evidence — a version marker written ~20 lines ABOVE the step that can
+abort setup, while its comment said it was written after).
+Commit: 81dd9778. CI green.
+  (1) THE RELEASE MARKER WAS WRITTEN BEFORE THE TASK REGISTRATION, and the comment beside
+  it claimed the opposite: "Write after the exe copy + task registration (setup provably
+  succeeded)". The registration exits 1 on failure, so an aborted setup had ALREADY
+  written `etc\.vale-release` — and the consequences chain: `vale status` prints
+  `release: <ver>` and, when the CDN agrees, "latest: <ver> (this device is current)" for
+  a device with NO BOOT TASK, and `agent_update`'s `local` reads the same marker so it
+  believes it too. Moved to after the registration; VERIFIED BY POSITION, not by reading
+  the comment — fatal exit line 1400, marker line 1414.
+  (2) "playwright bundle staged (node.exe + node_modules verified)" verified only
+  node.exe. `node_modules` was never examined and it is where the entry point the agent
+  actually runs lives (`components\playwright\node_modules\@playwright\mcp\cli.js`,
+  the same path the swap uses). A half-expanded bundle passed and failed at first use.
+  The check tests that path now and stays NON-FATAL, as documented beside it — making the
+  optional browser bundle fatal once broke installs on AV interference.
+  (3) STILL OPEN from the CLI audit: F5 `tunnel start` claims success from an unobserved
+  async spawn (no 'error'/'exit' listener, stdio ignored, exits 0 immediately); F9
+  `setup --reg-key` without `--tunnel` never spends the key its own message says it is
+  registering with; L1/L2 stat/read errors other than ENOENT reported as "nothing there";
+  L4 the 90 s read-back timeout stated as fact rather than as a timeout.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 80 (three more CLI findings; the first closes a gap the
 guide itself documents — `vale update` reported the HANDOFF while `rollback` reported the
 OUTCOME, and that was the only reason they disagreed).
 Commit: 79567bcd. CI green.
