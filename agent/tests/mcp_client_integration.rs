@@ -144,3 +144,43 @@ async fn connect_to_dead_server_fails_fast() {
         "connect must fail fast (bounded), took {elapsed:?}"
     );
 }
+
+/// THE LOOPBACK TOKEN HANDOUT DEPENDS ON `ConnectInfo` ACTUALLY BEING INJECTED.
+///
+/// `handle_panel_home` now admits the token-injection branch only when the PEER socket is
+/// loopback, not merely when the client sent `Host: 127.0.0.1` (a header costs an attacker
+/// nothing). That check reads a `ConnectInfo<SocketAddr>` REQUEST EXTENSION, which
+/// `axum::serve(...into_make_service_with_connect_info())` is supposed to inject.
+///
+/// If that wiring is wrong the extension is absent, the check FAILS CLOSED, and the panel
+/// silently stops receiving its token — a regression that breaks the panel for the
+/// operator. Every unit test inserts the extension by hand, so NONE of them can catch it.
+/// This one goes over a REAL TCP CONNECTION to the REAL serve path, which is the only way
+/// to prove the wiring, and it is the check that makes the fix safe to release.
+#[tokio::test]
+async fn panel_token_is_injected_to_a_real_loopback_peer() {
+    let mut cfg = Config::default();
+    cfg.server.host = "127.0.0.1".into();
+    cfg.server.port = 0; // ephemeral — bind() reports the actual port
+    cfg.server.device_token = Some("cafebabe".repeat(8));
+    let state = Arc::new(AppState::new(cfg.clone()));
+    let (addr, _handle) = vale_agent::mcp::bind(cfg, state, CancellationToken::new())
+        .await
+        .expect("bind server");
+
+    let body = reqwest::Client::new()
+        .get(format!("http://{addr}/panel/"))
+        .send()
+        .await
+        .expect("panel request over a real loopback socket")
+        .text()
+        .await
+        .expect("panel body");
+
+    assert!(
+        body.contains("window.__PANEL_TOKEN__"),
+        "a REAL loopback connection must still receive the token -- if this fails, \
+         `into_make_service_with_connect_info` is not wired on the serve path and the \
+         panel is broken for every operator (the check fails closed)"
+    );
+}
