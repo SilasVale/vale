@@ -519,7 +519,44 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 75 (the accent failed AA in BOTH directions in BOTH
+Last updated: 2026-09-12 round 76 (the token contract checked TWO of the three
+frontends — the landing page's 9 shared names were never compared, and two of them meant
+different things). CI green; landing deployed; no release needed (worker-only).
+  (1) THE BLIND SPOT WAS THE CHECK'S OWN. `token-contract-check.mjs` compared console vs
+  panel. The landing declares 28 names of its own AND shares 9; nothing looked at them.
+  `--ds-font-family` carried the CONSOLE's name with a DIFFERENT STACK ("SF Pro Text"
+  vs "Segoe UI") — on Windows, the only OS this targets, that is one name and two
+  visibly different fonts; the landing now adopts the console's stack.
+  `--ds-transition-duration` carried the PANEL's name with a third value (0.15 vs 0.2) —
+  aligned to the panel's, per the contract's own rule.
+  (2) AND ONE NAME THAT SHOULD NOT BE SHARED: `--aura-wash` differed BY DESIGN (the
+  landing starts dark and carries lower alphas than the console's #fafafa). A shared name
+  holding two deliberate values is what this contract forbids, so it is composed where it
+  is used now — the same resolution `--glass-bg` got. The PALETTE stays shared.
+  (3) THE COMPARISON IS WHITESPACE-INSENSITIVE, because it has to be: the first three-way
+  probe reported FOUR divergences and TWO were formatting — prettier reflows one side
+  across lines, and a naively squashed comparison still differed inside parentheses. That
+  is the "raw name diffing reports false drift" problem model-drift.mjs documents, and
+  shipping it would train a reader to ignore the check.
+  (4) TWO THINGS I GOT WRONG WRITING IT, both caught by asserting: I fed `page.js` — a JS
+  MODULE with a `<style>` block — to a CSS parser, which matched JS braces too and read
+  `:root` correctly ANYWAY (the accidental success that hides a parser pointed at the
+  wrong input); the stylesheet is extracted first now and a missing `<style>` FAILS. And I
+  compared the two DARK OVERRIDE blocks, whose intersection is exactly ZERO because each
+  re-namespaces — it would have reported "no disagreement" for the worst reason. Tokens
+  are compared as EFFECTIVE sets (`:root` ∪ override), and each read asserts >= 8 shared
+  names so a comparison over nothing cannot pass.
+  (5) MUTATION-PROVEN (reverting the font fails naming both stacks) and VERIFIED LIVE on
+  agent.saisi.online: the font carries "Segoe UI", the duration is 0.2s, the wash is
+  composed inline with the token gone, `--aura-1` still `#22d3ee`.
+  (6) STILL OPEN: Logs is panel-only while the accelerators are desktop-only (a design
+  asymmetry, not a defect); the landing's 9 DEAD token names (bg-mask-1, border-l3,
+  brand-primary, label-dimmed, interactive-bg-active, the 3 state colours, shadow-lv3)
+  are still declared with no consumer.
+  Gates: token contract green across 3 surfaces × 2 themes; custom-property green; CI
+  green on main; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 75 (the accent failed AA in BOTH directions in BOTH
 frontends, and nothing watched it — the ladder moved one rung, and a guard now measures
 it). Released 1.2.359; d1 on 1.2.359; audit CLEAN; keep-latest applied.
   (1) THE VALUE, NOT THE INK. Light `--accent: #d9480f` was under AA TWICE:
