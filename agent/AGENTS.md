@@ -519,7 +519,42 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 72-73 (the 炫彩 art direction, asked for by the user:
+Last updated: 2026-09-12 round 74 (Ctrl+Shift+Y did nothing AND round 61's PathView "jump
+to step" fix was inert — three copies of one state, none authoritative). Released
+1.2.358; d1 on 1.2.358; audit CLEAN; keep-latest applied.
+  (1) THE DEFECT: `sessionViews` existed in THREE places (App.tsx:82, DesktopShell:179,
+  TerminalWorkspace:110) and APP'S COPY WAS WRITE-ONLY. The shortcut hook lives in App
+  and wrote it; PathView's `onJumpToStep` wrote it; NOTHING RENDERED FROM IT, because
+  each shell rendered its own `useState`. So the accelerator was a no-op — and round 61's
+  "jump to step" wiring, which I reported fixed, never worked in EITHER shell.
+  (2) ONE OWNER: App, because that is where the shortcut hook is. It travels in the
+  `shared` object App already spreads into both shells, so the two CANNOT get different
+  answers. Both shells read it; neither keeps a copy.
+  (3) THE WIRING IS COMPILER-ENFORCED: `sessionViews` is a REQUIRED prop on both shells,
+  so omitting it at a mount is a type error rather than a silently dead shortcut.
+  (4) WHY NO TEST SAW IT — three separate blind spots, and the third is the lesson:
+  `useDesktopCommands.test` INJECTS `onSetView` and asserts the mock was called (the
+  injected-handler trap, the same one that hid `onJumpToStep`); `DesktopShell.test` had
+  no `sessionViews` prop at all because `Props` had no such input; and
+  `TerminalWorkspace.test` clicked "Trajectory" and asserted the view RENDERED — which
+  passed ONLY because the component kept its own copy. THE TEST WAS ASSERTING THE BUG.
+  It is split now: one test owns the notify wire, another owns the render, and the render
+  test drives the component the way the app does.
+  (5) MUTATION-PROVEN: reinstating the shadow copy fails the new test with "the terminal
+  container must be hidden while the trajectory view is active: expected '' to be
+  'hidden'" — the original defect, named.
+  (6) VERIFIED ON THE DEVICE (1.2.358), which is the whole point: before the keystroke
+  `selectedView: ["Terminal"], containerHidden: false`; after Ctrl+Shift+Y
+  `["Trajectory"], containerHidden: true`. The accelerator moves the view.
+  (7) STILL OPEN: the console's light `--accent` is 4.30:1 with white and NO ink fixes it
+  (the accent must darken to ~#bf3a0a — a palette decision across every accent usage);
+  the landing page's `--ds-font-family`/`--ds-transition-duration` hold other frontends'
+  names with different values, outside the contract which compares console vs panel only;
+  and Logs remains panel-only while the accelerators are desktop-only.
+  Gates: panel 524 (was 522, 60 files) + build; tsc clean; CI + release.yml green;
+  release audit CLEAN; d1 on 1.2.358.
+
+Previous round: 2026-09-12 round 72-73 (the 炫彩 art direction, asked for by the user:
 a new mark, an iridescent token layer, the wash, and glass surfaces — across all THREE
 frontends, then released as 1.2.357). Commits: d29e3138, 654c990b, 472c4bc2, 494723da,
 5efd7d5e. d1 on 1.2.357; audit CLEAN; keep-latest applied (v1.2.357 alone).
