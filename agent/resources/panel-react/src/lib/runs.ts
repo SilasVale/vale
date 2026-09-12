@@ -69,9 +69,21 @@ export interface OperationEvent {
 }
 
 /** One record of `GET /api/operation`'s `runs` array: a `run/begin` or a
- *  `run/end`. `label`, `goal` and `outcome` are ABSENT (a missing key, not
- *  `null` and not `""`) when the client supplied nothing — the device collapses
- *  blank to absent deliberately, so presence is read, never truthiness. */
+ *  `run/end`.
+ *
+ *  `label`, `goal` and `outcome` ARRIVE AS `null` WHEN THE CLIENT SUPPLIED
+ *  NOTHING — the key is PRESENT. This said the opposite ("ABSENT — a missing key,
+ *  not `null` and not `""` … so presence is read, never truthiness"), and the
+ *  device's own comment is explicit about which is true: "`json!` renders `None`
+ *  as `null`, so the JSONL — and `recent`, which passes it straight through —
+ *  carries `"label": null` rather than omitting the key … Every consumer must
+ *  therefore treat null, missing AND blank alike."
+ *
+ *  So there are THREE kinds of nothing on this wire, and the discipline is to
+ *  collapse all three rather than to test for one of them. `value()` below is
+ *  that collapse and is what the code has always used; the sentence above was
+ *  the wrong half, and a future reader would have taken it as licence to write a
+ *  key-existence check that silently misses every real case. */
 export interface RunBoundary {
   kind?: string | null;
   run_id?: string | null;

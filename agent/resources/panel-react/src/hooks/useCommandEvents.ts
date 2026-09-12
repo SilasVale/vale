@@ -169,8 +169,11 @@ export function groupEvents(events: CommandEvent[]): CommandCard[] {
 export type SessionReadState = "reading" | "ok" | "unreadable";
 
 /**
- * Poll the audit log of one session and return the RAW events (in seq order)
- * together with the read state above.
+ * READ the audit log of one session and return the RAW events (in seq order)
+ * together with the read state above. Not "poll": there is no timer — the 5 s
+ * cadence was removed in round 163, and `pollMs` survives only as an effect
+ * dependency, so a caller-supplied value has no effect on anything. Kept as a
+ * parameter because removing it is a wider change than correcting the sentence.
  * Shared by the command-card grouping (useCommandEvents) and the trajectory
  * timeline (useTrajectory) — both consume /api/sessions/{sid} with the same
  * polling semantics. A FAILED poll (tunnel blip, agent restarting) keeps the
@@ -337,13 +340,21 @@ export function useSessionEvents(sid: string | null, pollMs = 2000): CommandEven
 }
 
 /**
- * Command card stream for one session: poll the audit log (useSessionEvents)
- * and group the raw events into cards. Cards update every poll; a FAILED
- * poll keeps the last good cards instead of blanking the stream.
+ * Command card stream for one session: READ the audit log (useSessionEvents) and
+ * group the raw events into cards. A FAILED read keeps the last good cards
+ * instead of blanking the stream.
+ *
+ * NOTHING HERE IS POLLED, and both sentences above used to say otherwise ("Cards
+ * update every poll", "a FAILED poll"). The 5 s cadence was removed in round 163;
+ * what re-reads is the SSE-driven path in `App` and the caller's own effect. The
+ * `pollMs` parameter is inert — it appears only in one effect's dependency array,
+ * so passing a different value changes no schedule. It is kept because removing a
+ * parameter is a wider change than telling the truth about it, and a test that
+ * "polls" at 30 ms cannot be used as evidence of a cadence that does not exist.
  */
 export function useCommandEvents(sid: string | null, pollMs = 2000) {
   // round-128: the raw events are exposed so the trajectory view reuses THIS
-  // poll instead of mounting a second one (double fetch every 2s). `readState`
+  // read instead of mounting a second one (double fetch every 2s). `readState`
   // is the third thing the same read knows (see SessionReadState) — the archive
   // viewer needs it to tell an empty trail from an unreadable one.
   const { events, readState, firstSeq } = useSessionEventsWithState(sid, pollMs);

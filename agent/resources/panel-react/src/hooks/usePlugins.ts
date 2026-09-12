@@ -62,7 +62,14 @@ export function usePlugins(active: boolean) {
   const [spec, setSpec] = useState<SpecPlugin[]>([]);
   const [specLoaded, setSpecLoaded] = useState(false);
   const [playwright, setPlaywright] = useState<PlaywrightStatus | null>(null);
-  const [loadError, setLoadError] = useState("");
+  // TWO READS, TWO ERRORS. These were one `loadError`, and the status fetch's
+  // success cleared whatever the SPEC fetch had just set — so the failure this
+  // hook most needed to report was wiped microseconds later by an unrelated
+  // success, and the page went on saying "Loading inventory…". My own first fix
+  // introduced that shape and the test caught it; a single cell cannot carry two
+  // independent facts.
+  const [specError, setSpecError] = useState("");
+  const [statusError, setStatusError] = useState("");
   const [busy, setBusy] = useState<"start" | "stop" | null>(null);
   const [actionError, setActionError] = useState("");
   const [log, setLog] = useState<LogLine[]>([]);
@@ -71,30 +78,53 @@ export function usePlugins(active: boolean) {
   const busyRef = useRef(busy);
   busyRef.current = busy;
 
-  // One status+spec refresh: the registry is static per agent process, so
-  // the spec fetch runs once (specLoaded gates it; a transient failure just
-  // retries on the next tick). A FAILED status poll keeps the last good
-  // state instead of blanking it (same stance as useSessions).
+  // One status+spec refresh: the registry is static per agent process, so the
+  // spec fetch runs once and `specLoaded` gates it.
+  //
+  // A FAILED SPEC FETCH IS NOT "TRANSIENT — RETRY NEXT TICK", which is what this
+  // said and what the catch below did. THERE IS NO TICK: the 5 s poll was removed
+  // in round 163 (see the effect below) and `specLoaded` is the only thing that
+  // re-arms the fetch, so a failure left it FALSE FOREVER — the inventory
+  // rendered "Loading inventory…" permanently, with no error, and the only
+  // recoveries were a tab refocus or a `playwright-changed` event. The status
+  // fetch in the SAME hook does the right thing (its catch sets `loadError`);
+  // this is the twin rule applied to one branch and not the other, inside one
+  // function. It now reports the failure so the page can say what happened.
   const refresh = useCallback(async () => {
     if (!activeRef.current) return;
     if (!specLoaded) {
       try {
         const specRes = await callApi("/api/spec");
-        if (Array.isArray(specRes?.plugins)) {
-          setSpec((specRes.plugins as SpecPlugin[]).filter((p) => p && typeof p.name === "string"));
-          setSpecLoaded(true);
+        // AN UNUSABLE BODY IS A FAILURE, NOT A SILENT NO-OP. This used to be
+        // `if (Array.isArray(...)) { ... }` with NO else: a 200 whose body the
+        // panel cannot use (a proxy's error page, an empty reply) fell straight
+        // through, set nothing, and left `specLoaded` false — the same permanent
+        // "Loading inventory…" the catch below was fixed for, reached without a
+        // throw. Routing it through the ONE failure path means both kinds are
+        // reported and there is a single place that decides what a failed read
+        // says.
+        if (!Array.isArray(specRes?.plugins)) {
+          throw new Error("the spec route answered without a plugins list");
         }
-      } catch { /* transient — retry next tick */ }
+        setSpec((specRes.plugins as SpecPlugin[]).filter((p) => p && typeof p.name === "string"));
+        setSpecLoaded(true);
+      } catch (e: any) {
+        if (!activeRef.current) return;
+        // Said out loud, and NOT as a permanent "Loading…". The id is left
+        // unset so the next refocus/event retries, but the surface must not
+        // imply progress that stopped.
+        setSpecError(e?.message ? `inventory: ${e.message}` : "inventory could not be read");
+      }
     }
     try {
       const res = await callApi("/api/plugins/status");
       if (!activeRef.current) return;
       if (res && typeof res === "object" && res.ok === false) throw new Error(res.error || "status failed");
       setPlaywright(res?.playwright && typeof res.playwright === "object" ? res.playwright : null);
-      setLoadError("");
+      setStatusError("");
     } catch (e: any) {
       if (!activeRef.current) return;
-      setLoadError(e?.message ? `status: ${e.message}` : "status poll failed");
+      setStatusError(e?.message ? `status: ${e.message}` : "status poll failed");
     }
   }, [specLoaded]);
 
@@ -131,7 +161,10 @@ export function usePlugins(active: boolean) {
       pushLog(`${which} FAILED: ${e?.message || "unknown error"}`, true);
     } finally {
       setBusy(null);
-      refresh(); // re-sync immediately — don't wait for the poll
+      // Re-read NOW: with no poll (round 163) nothing else would re-read after
+      // an action, so the row would keep showing the pre-action state until a
+      // refocus or a `playwright-changed` event.
+      refresh();
     }
   }, [pushLog, refresh]);
 
@@ -176,5 +209,7 @@ export function usePlugins(active: boolean) {
     return null;
   }, [playwright, actionError]);
 
-  return { rows, specLoaded, playwright, playwrightRow, loadError, busy, log, start, stop };
+  // One line for the caller, in the order the reads happen: the inventory is
+  // the page's body, the status is a row inside it.
+  return { rows, specLoaded, playwright, playwrightRow, loadError: specError || statusError, busy, log, start, stop };
 }

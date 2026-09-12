@@ -10,7 +10,7 @@
 //   2. INVENTING AN END. An open run's span is [begin, its newest event]. A
 //      `[begin, now]` span grows on every render and asserts "still running",
 //      which nobody recorded.
-//   3. INVENTING A VALUE. Absent label/goal/outcome are ABSENT; `""` and
+//   3. INVENTING A VALUE. label/goal/outcome arrive as null (key present); `""` and
 //      whitespace are the same absence; neither becomes a placeholder.
 //   4. HIDING A RUN. An id with no `run/begin` is still shown, under its raw id.
 //   5. DISCARDING THE RECORD. Grouping once kept counts and extents and dropped
@@ -249,9 +249,11 @@ describe("groupOperation — the unattributed bucket", () => {
 
 describe("groupOperation — absent values", () => {
   it("reads absent label/goal/outcome as null, and blank as absent too", () => {
-    // The device collapses blank to ABSENT (`label` is a missing key, not "").
-    // A reader that rendered the key's absence as "" would put an empty label
-    // where a name belongs, and one that rendered "   " would put a blank there.
+    // The device collapses blank to NULL WITH THE KEY PRESENT (`"label": null`,
+    // which `agent/src/runs.rs` states outright) — NOT to a missing key, which is
+    // what this comment and the type's doc both claimed. The reader must handle
+    // all three kinds of nothing: null, a missing key, and "   ". A reader that
+    // rendered any of them as "" would put an empty label where a name belongs.
     const g = groupOperation([], [
       begin("r-none", T0),
       { kind: "run/begin", run_id: "r-blank", ts_ms: T0 + 1, label: "", goal: "  " },

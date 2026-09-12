@@ -62,7 +62,14 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
       </div>
       <div className="plug-inventory">
         {!plugins.specLoaded ? (
-          <p className="plug-empty">Loading inventory…</p>
+          // A FAILED READ IS NOT A READ IN PROGRESS. `specLoaded` stays false
+          // when the fetch fails, so this said "Loading inventory…" FOR EVER —
+          // a claim of progress that had stopped, which is the same shape as an
+          // empty trail standing in for a failed read (lib/trailRead.ts). The
+          // error line below carries the device's own words.
+          <p className="plug-empty">
+            {plugins.loadError ? "Inventory unavailable." : "Loading inventory…"}
+          </p>
         ) : rows.length === 0 ? (
           <p className="plug-empty">No plugins match “{q}”</p>
         ) : rows.map((r) => (
