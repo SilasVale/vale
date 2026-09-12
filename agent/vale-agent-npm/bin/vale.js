@@ -827,16 +827,21 @@ function writeReleaseMarker(installDir) {
  * update writes `*.new` so the swap script can atomically replace them. The
  * two flows used to each inline this block.
  */
+/** @returns how many files were actually staged — 0 means the sources were not
+ *  present, which the caller MUST NOT report as "staged". */
 function stageDesktopShell(installDir, suffix) {
     const DESK_SRC = path.join(__dirname, "..", "vale-desktop-electron", "src");
     if (!fs.existsSync(DESK_SRC))
-        return;
+        return 0;
     const desDst = path.join(installDir, "components", "vale-desktop-electron", "src");
     fs.mkdirSync(desDst, { recursive: true });
+    let staged = 0;
     for (const f of ["main.js", "preload.js", "url-policy.js"]) {
         const s = path.join(DESK_SRC, f);
-        if (fs.existsSync(s))
+        if (fs.existsSync(s)) {
             fs.copyFileSync(s, path.join(desDst, f + suffix));
+            staged += 1;
+        }
     }
     // icon.png/.ico go next to src/ (Electron loads from ../icon.png;
     // Windows Tray requires the .ico).
@@ -865,6 +870,7 @@ function stageDesktopShell(installDir, suffix) {
     catch {
         /* best-effort — a failed write must not break staging */
     }
+    return staged;
 }
 function svc(action) {
     // RETURN the status. It used to be discarded, which is why `stop` printed "stopped"
@@ -1209,8 +1215,13 @@ const commands = {
         // round-330: Tauri vale-desktop staging removed (retired).
         // stage-l: stage the Electron shell sources (main/preload) so the desktop
         // app picks up menu/command features on a fresh install too.
-        stageDesktopShell(DIR, "");
-        console.log("setup: vale-desktop-electron sources staged");
+        const deskStaged = stageDesktopShell(DIR, "");
+        // The claim follows the FACT. `stageDesktopShell` returns early when the sources
+        // are not present, and this printed "sources staged" regardless — so a package that
+        // did not ship them claimed they were staged.
+        console.log(deskStaged > 0
+            ? `setup: vale-desktop-electron sources staged (${deskStaged} files)`
+            : "setup: vale-desktop-electron sources NOT staged -- the package did not ship them; the desktop shell will not update");
         // Layout v2: write the start-desktop.ps1 launcher into scripts\ (the
         // ValeDesktop onlogon task + desktop Vale.lnk both call it). Was never
         // written before — a real gap that left the shell unlaunchable.
@@ -1956,15 +1967,15 @@ const commands = {
             console.error(verdict.message);
             process.exit(verdict.exitCode);
         }
+        // TWO OPERATIONS, TWO VERDICTS. They shared one try, so a CLEANUP failure
+        // (rmSync) printed "pin write failed ... agent_update is NOT blocked" — the exact
+        // inverse of the truth: the pin HAD been written and agent_update WAS blocked. It
+        // also swallowed the success line, because that was inside the same try.
+        let pinned = false;
         try {
             fs.mkdirSync(ETC_DIR, { recursive: true });
             fs.writeFileSync(PIN, val);
-            // Heal a pre-v2 swap's split-brain marker (old CLI wrote ROOT
-            // .vale-release; the agent reads etc\). Root leftover is garbage.
-            // NOTE: etc\.vale-release is NOT written here — the swap script wrote it
-            // from a provable copy, and overwriting it would erase that proof.
-            fs.rmSync(path.join(DIR, ".vale-release"), { force: true });
-            console.log(verdict.message);
+            pinned = true;
         }
         catch (e) {
             console.error("rollback: WARNING -- pin write failed (" +
@@ -1972,6 +1983,34 @@ const commands = {
                 "); device runs " +
                 val +
                 " but agent_update is NOT blocked");
+        }
+        if (pinned) {
+            // Decided on a READ-BACK, like `--clear` and the marker check: the write not
+            // throwing is not the same as the pin being in place.
+            let back = null;
+            try {
+                back = fs.readFileSync(PIN, "utf8").trim();
+            }
+            catch {
+                /* reported below */
+            }
+            if (back !== val) {
+                console.error(`rollback: WARNING -- wrote ${PIN} but read back ${back ?? "nothing"}; agent_update may not be blocked`);
+            }
+            else {
+                console.log(verdict.message);
+            }
+            // Heal a pre-v2 swap's split-brain marker (old CLI wrote ROOT .vale-release;
+            // the agent reads etc\). Root leftover is garbage. Cleanup only — it can never
+            // change whether the pin exists, so it gets its OWN message.
+            // NOTE: etc\.vale-release is NOT written here — the swap script wrote it from a
+            // provable copy, and overwriting it would erase that proof.
+            try {
+                fs.rmSync(path.join(DIR, ".vale-release"), { force: true });
+            }
+            catch (e) {
+                console.error(`rollback: note -- the pin is in place, but the pre-v2 root marker could not be removed (${e.message}); it is inert`);
+            }
         }
     },
     // The ONLY uninstall path (NSIS installer is retired — npm CLI is the
