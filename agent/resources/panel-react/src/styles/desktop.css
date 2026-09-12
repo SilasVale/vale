@@ -92,12 +92,12 @@
   width: 7px;
   height: 7px;
   border-radius: 50%;
-  background: var(--lane-ds, #4f6bed);
+  background: var(--lane-ds);
   flex: none;
 }
 .dtab-dot[data-kind="pty"] { background: var(--chrome-ink-faint); }
-.dtab-dot[data-kind="ssh"] { background: var(--lane-ds, #4f6bed); }
-.dtab-dot[data-kind="serial"] { background: var(--lane-or, #d97706); }
+.dtab-dot[data-kind="ssh"] { background: var(--lane-ds); }
+.dtab-dot[data-kind="serial"] { background: var(--lane-or); }
 .dtab-name {
   /* 112px, not 150px (R131). Measured budget: a 1840px window leaves ~1412px
      for the strip and a tab costs (name + dot + gaps + padding + close), so
@@ -216,8 +216,8 @@
   background: var(--chrome-bg);
   color: var(--chrome-ink-dim);
 }
-.nm-ico[data-kind="ssh"] { color: var(--lane-ds, #4f6bed); }
-.nm-ico[data-kind="serial"] { color: var(--lane-or, #d97706); }
+.nm-ico[data-kind="ssh"] { color: var(--lane-ds); }
+.nm-ico[data-kind="serial"] { color: var(--lane-or); }
 
 /* ── Content card ──────────────────────────────────────────── */
 .desktop-content {

@@ -1659,7 +1659,7 @@
    status tag and Enabled pill so the eye reads state first. */
 .plug-tools {
   flex: none;
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 10.5px;
   color: var(--muted);
   background: var(--surface-chip);
@@ -1798,7 +1798,7 @@
   font-size: 12.5px;
 }
 .mem-edit-content {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   resize: vertical;
 }
 .mem-edit-actions {
@@ -1921,13 +1921,13 @@
   border-bottom: none;
   transition: background 0.12s ease;
 }
-.browser-tab:hover { background: var(--chrome-bg-3, #ececef); }
+.browser-tab:hover { background: var(--chrome-bg-3); }
 /* stage-n: selected tab — Chrome-style: raised, accent top bar, connected
    to the content below it (no bottom border → merges with the urlbar row). */
 .browser-tab.sel {
-  background: var(--chrome-bg-2, #ffffff);
-  border-color: var(--chrome-line, rgba(0,0,0,0.08));
-  box-shadow: inset 0 2px 0 var(--accent, #4f7cff);
+  background: var(--chrome-bg-2);
+  border-color: var(--chrome-line);
+  box-shadow: inset 0 2px 0 var(--accent);
   font-weight: 600;
 }
 .browser-tab-label { overflow: hidden; text-overflow: ellipsis; }
@@ -1948,7 +1948,7 @@
   padding: 6px 10px;
   /* stage-n: same surface as the SELECTED tab so the active tab visually
      merges into the address row (Chrome's connected look). */
-  background: var(--chrome-bg-2, #23262c);
+  background: var(--chrome-bg-2);
   border-bottom: 1px solid var(--chrome-line);
   flex: none;
 }
@@ -2087,7 +2087,7 @@
 .browser-action-badge.run { background: rgba(200, 160, 40, 0.18); color: #d0b24e; }
 .browser-action-dur, .browser-action-shots { color: var(--faint); font-size: 10px; }
 .browser-action-script {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 10px;
   color: var(--ink);
   margin-top: 2px;
@@ -2098,14 +2098,14 @@
   cursor: pointer;
   transition: max-height 0.15s ease;
 }
-.browser-action-script:hover { color: var(--accent, #4f7cff); }
+.browser-action-script:hover { color: var(--accent); }
 /* stage-n: expanded script preview — full text, scrollable. */
 .browser-action-script.expanded {
   max-height: 240px;
   overflow-y: auto;
 }
 .browser-action-err {
-  font-family: var(--font-mono, monospace);
+  font-family: var(--font-mono);
   font-size: 10px;
   color: #e06c6c;
   margin-top: 2px;
@@ -2121,8 +2121,8 @@
   flex: none;
   display: flex;
   flex-direction: column;
-  background: var(--chrome-bg-2, #23262c);
-  border-bottom: 1px solid var(--chrome-line, #333);
+  background: var(--chrome-bg-2);
+  border-bottom: 1px solid var(--chrome-line);
   /* stage-n: subtle elevation so the toolbar reads as the browser chrome
      above the page (light theme: soft shadow; dark theme: barely visible). */
   box-shadow: 0 1px 3px rgba(0, 0, 0, 0.12);
@@ -2142,7 +2142,7 @@
   flex: none;
   font-size: 11px;
   line-height: 1;
-  color: var(--muted, #999);
+  color: var(--muted);
   padding-right: 2px;
 }
 /* Navigation buttons (back / forward / reload) — Chrome-style, left of URL. */
@@ -2158,13 +2158,13 @@
   padding: 2px 5px;
   font-size: 13px;
   line-height: 1;
-  color: var(--ink, #eee);
+  color: var(--ink);
   border: 1px solid transparent;
   border-radius: 5px;
   background: transparent;
   cursor: pointer;
 }
-.browser-nav:hover:not(:disabled) { background: var(--chrome-bg-3, #2a2d34); }
+.browser-nav:hover:not(:disabled) { background: var(--chrome-bg-3); }
 .browser-nav:disabled { opacity: 0.35; cursor: default; }
 /* Bottom status bar: evidence toggle + errors left, AI chip + live right. */
 .browser-statusbar {
@@ -2174,10 +2174,10 @@
   justify-content: space-between;
   gap: 8px;
   padding: 3px 10px;
-  background: var(--chrome-bg, #1c1e22);
-  border-top: 1px solid var(--chrome-line, #333);
+  background: var(--chrome-bg);
+  border-top: 1px solid var(--chrome-line);
   font-size: 11px;
-  color: var(--muted, #999);
+  color: var(--muted);
 }
 .browser-status-left {
   display: flex;
@@ -2193,11 +2193,11 @@
   border-radius: 5px;
   border: 1px solid transparent;
   background: transparent;
-  color: var(--muted, #999);
+  color: var(--muted);
   font-size: 11px;
   cursor: pointer;
 }
-.browser-ev-toggle:hover { background: var(--chrome-bg-3, #2a2d34); color: var(--ink, #eee); }
+.browser-ev-toggle:hover { background: var(--chrome-bg-3); color: var(--ink); }
 .browser-ev-toggle.active {
   background: rgba(90, 130, 240, 0.15);
   color: #7aa2ff;
@@ -2217,19 +2217,19 @@
 }
 .browser-fps {
   font-variant-numeric: tabular-nums;
-  color: var(--faint, #666);
+  color: var(--faint);
 }
 /* round-246: embedded REAL-browser slot (Electron shell) — the main process
    overlays a WebContentsView on this area; the div itself stays empty. */
 .browser-embedded-slot {
-  background: var(--browser-stage-bg, #111);
+  background: var(--browser-stage-bg);
 }
 .browser-embedded-badge {
   font-size: 10px;
   text-transform: uppercase;
   letter-spacing: 0.4px;
-  color: var(--success, #4caf50);
-  border: 1px solid var(--chrome-line, #333);
+  color: var(--success);
+  border: 1px solid var(--chrome-line);
   border-radius: 4px;
   padding: 1px 6px;
 }
@@ -2246,8 +2246,8 @@
   flex-direction: column;
   gap: 8px;
   padding: 10px;
-  background: var(--chrome-bg-2, #23262c);
-  border-left: 1px solid var(--chrome-line, #333);
+  background: var(--chrome-bg-2);
+  border-left: 1px solid var(--chrome-line);
   box-shadow: -8px 0 24px rgba(0, 0, 0, 0.35);
   overflow-y: auto;
   z-index: 30;
@@ -3097,9 +3097,9 @@ input[type="password"],
 input:not([type]),
 select,
 textarea {
-  background: var(--surface, #ffffff);
-  color: var(--ink, #111);
-  border: 1px solid var(--line, rgba(0,0,0,0.15));
+  background: var(--surface);
+  color: var(--ink);
+  border: 1px solid var(--line);
   border-radius: 6px;
   padding: 5px 8px;
   font-size: 12.5px;
@@ -3113,10 +3113,10 @@ input[type="password"]:focus,
 input:not([type]):focus,
 select:focus,
 textarea:focus {
-  border-color: var(--accent, #4f7cff);
-  box-shadow: 0 0 0 3px var(--focus-ring-soft, rgba(79,124,255,0.2));
+  border-color: var(--accent);
+  box-shadow: 0 0 0 3px var(--focus-ring-soft);
 }
-input::placeholder, textarea::placeholder { color: var(--faint, #999); }
+input::placeholder, textarea::placeholder { color: var(--faint); }
 
 /* live-AI dot on the Evidence drawer toggle (aiActive without screenshots) */
 .browser-ev-live {

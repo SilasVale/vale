@@ -95,6 +95,73 @@ export function offScaleNeutrals(consoleVars, panelVars, isColour) {
 
 const isColour = (v) => /^#|^rgba?\(/.test(String(v));
 
+/**
+ * A fallback on a token the system DECLARES is dead code.
+ *
+ * `var(--accent, #4f7cff)` never applies, because `--accent` is always defined —
+ * so it is not a safety net, it is a description of a design the surface no
+ * longer has. The panel carried THIRTY-EIGHT of these, and together they spelled
+ * out an entire abandoned palette: a BLUE accent (#4f7cff / #4f6bed /
+ * rgba(79,124,255,0.2)) where the panel's accent is orange, plus a darker grey
+ * family (#1c1e22/#23262c/#2a2d34) and #4caf50/#d97706. The console has ZERO, so
+ * the two surfaces disagreed on this too — and the panel's dead values are a
+ * TRAP, not just noise: delete a token and the design silently reverts to a
+ * palette nobody has looked at in months, with every gate green.
+ *
+ * Removing them all was verified RENDERING-NEUTRAL rather than argued: the
+ * previously built panel.css with its fallbacks mechanically stripped is
+ * BYTE-IDENTICAL to the newly built one.
+ *
+ * A fallback on a token the system does NOT declare is a different thing and is
+ * deliberately NOT reported — that is how a caller supplies a default for a
+ * variable someone else owns.
+ */
+export function deadFallbacks(cssText, defined, skipFile = "") {
+  void skipFile;
+  const out = [];
+  for (const m of cssText.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,\s*([\s\S]*?)\)\s*[,;)]/g)) {
+    if (defined.has(m[1])) out.push({ token: m[1], fallback: m[2].trim().slice(0, 40) });
+  }
+  return out;
+}
+
+// Declared BEFORE its first use. It was not, and the result is worth recording:
+// `failures += dead` sat above this line, so a clean tree never reached it and
+// the check passed — while a tree WITH a dead fallback crashed on a
+// ReferenceError (TDZ) instead of reporting. A gate that only breaks when it has
+// something to say is the worst possible shape, and the exit code being non-zero
+// anyway is exactly what would have hidden it from CI.
+let failures = 0;
+
+// --- dead fallbacks, both frontends ----------------------------------------
+for (const [label, dir, tokenFile] of [
+  ["console", "gateway/ui/src/", "styles/globals.css"],
+  ["panel", "agent/resources/panel-react/src/", "styles/tokens.css"],
+]) {
+  const tokText = blocks(readFileSync(`${ROOT}${dir}${tokenFile}`, "utf8"));
+  const defined = new Set(Object.values(tokText).flatMap((b) => Object.keys(b)));
+  const { readdirSync, statSync } = await import("node:fs");
+  const walk = (d) => readdirSync(d).flatMap((e) => {
+    const f = `${d}/${e}`;
+    if (statSync(f).isDirectory()) return e === "node_modules" ? [] : walk(f);
+    return /\.(css|tsx|ts)$/.test(f) && !f.endsWith(tokenFile) ? [f] : [];
+  });
+  let dead = 0;
+  for (const f of walk(`${ROOT}${dir}`)) {
+    const hits = deadFallbacks(readFileSync(f, "utf8"), defined);
+    for (const h of hits) {
+      dead += 1;
+      if (dead <= 3) console.log(`    ${f.replace(ROOT, "")}: var(${h.token}, ${h.fallback}…) can never apply`);
+    }
+  }
+  if (dead) {
+    failures += dead;
+    console.log(`  ${label}: ${dead} DEAD fallback(s) — a token the system declares always wins`);
+  } else {
+    console.log(`  ${label}: no dead fallbacks`);
+  }
+}
+
 const cases = [
   ["light", ":root", ":root"],
   ["dark", 'body[data-theme="dark"]', 'body[data-theme="dark"]'],
@@ -102,7 +169,6 @@ const cases = [
 const gc = blocks(readFileSync(`${ROOT}${CONSOLE}`, "utf8"));
 const pc = blocks(readFileSync(`${ROOT}${PANEL}`, "utf8"));
 
-let failures = 0;
 for (const [label, gsel, psel] of cases) {
   const g = gc[gsel] || {};
   const p = pc[psel] || {};
@@ -132,8 +198,15 @@ for (const [label, gsel, psel] of cases) {
   }
 }
 if (failures) {
-  console.error(`\ntoken contract FAILED: ${failures} token(s) mean different things on the two surfaces.`);
-  console.error("Pick ONE value: the panel is the device's primary operator surface, so the console follows it.");
+  // The count covers TWO different causes and the old summary named only one —
+  // a dead fallback was reported as "N token(s) mean different things on the two
+  // surfaces", which sends a reader looking for a value mismatch that is not
+  // there. Say which.
+  console.error(`\ntoken contract FAILED (${failures}):`);
+  console.error("  * a shared token holding DIFFERENT VALUES on the two surfaces -> the panel is");
+  console.error("    the device's primary operator surface, so pick ITS value for the console;");
+  console.error("  * or a DEAD fallback (`var(--x, v)` where the system declares --x) -> drop the");
+  console.error("    fallback, it can never apply and it describes a design that is gone.");
   process.exit(1);
 }
 console.log("token contract: the console and the panel agree on every shared token name.");
