@@ -119,14 +119,19 @@ vale update
 #    release" holds BY CONSTRUCTION and scripts/lib/release-audit.sh reports
 #    byte-for-byte equality instead of listing an exe difference.
 #
-#    Why it exists: the two builders provably pack the same SOURCE (that part
-#    is audited, fail-closed), but their exes are NOT byte-identical and
-#    cannot easily be made so. Every toolchain input is already pinned AND
-#    verified identical by hash (rustc 1.98.1, clang-18, lld, llvm-ar,
-#    cargo-xwin 0.23.0), the embedded panel.js matches, and the sizes match —
-#    yet ~800 bytes of .data layout still differ, which puts the cause in the
-#    compile ENVIRONMENT (the unreproducible-build long tail). Convergence
-#    removes the question instead of chasing it.
+#    Why it exists: the two builders produce the same artifact, and this makes
+#    that structural instead of audited.
+#
+#    THE "EXES ARE NOT BYTE-IDENTICAL" STORY WAS FALSE, AND IT WAS MEASURED. On
+#    the live release pair the two tarballs differ by exactly 3 bytes out of
+#    17,774,080, and the 17.5 MB vale-agent.exe is BYTE-IDENTICAL between the two
+#    builders — as it has been for at least twenty consecutive releases, since the
+#    audit's WARN arm is reachable ONLY when the exes match. The 3 bytes were a
+#    FILE MODE: `package/README.md` packed -rw------- here and -rw-r--r-- in CI,
+#    because npm pack preserves the worktree's permissions while git tracks only
+#    the executable bit. The compile environment was never the problem.
+#    publish-release.sh now REFUSES to pack on that difference and
+#    release-audit.sh compares modes and FAILS on any drift.
 #
 #    Opt-in on purpose: making the DEFAULT publish wait on CI would put the
 #    delivery channel behind a pipeline that still fails on environment

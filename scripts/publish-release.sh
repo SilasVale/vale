@@ -230,6 +230,37 @@ if [ -n "$DIRTY_INPUTS" ]; then
 fi
 echo "pack inputs committed-clean OK"
 
+# P1-6b MODE PARITY — the check `git status` STRUCTURALLY CANNOT MAKE.
+#
+# Git tracks only the EXECUTABLE BIT (100644 vs 100755), so a file whose content
+# is unchanged reports clean however its permissions sit on disk. `npm pack`
+# preserves each file's WORKTREE mode, while CI packs a fresh checkout at 0644.
+# So a 0600 worktree file packs a tarball that differs from CI's by its HEADER
+# alone — and the P1-6 gate above says the tree is clean.
+#
+# THAT IS THE MEASURED CAUSE OF TWENTY CONSECUTIVE "packaging metadata" WARNs.
+# On the live 1.2.348 pair the two tarballs differ by exactly 3 bytes out of
+# 17,774,080 — README.md's mode field and its header checksum — while EVERY
+# file's sha256 matches, the 17.5 MB vale-agent.exe included. Blaming "the
+# unreproducible-build long tail" for that was wrong, and this is where it is
+# actually decided.
+MODE_BAD=""
+while IFS= read -r f; do
+  [ -f "$f" ] || continue
+  idx=$(git ls-files -s -- "$f" | awk '{print $1}')
+  [ -n "$idx" ] || continue
+  want=644; [ "$idx" = "100755" ] && want=755
+  have=$(stat -c '%a' "$f" 2>/dev/null || echo '?')
+  [ "$have" = "$want" ] || MODE_BAD="${MODE_BAD}  $f (worktree $have, this checkout should be $want)\n"
+done < <(git ls-files -- "$NPM_DIR/bin" "$NPM_DIR/src" "$NPM_DIR/test" "$NPM_DIR/README.md" "$NPM_DIR/vale-desktop-electron" "agent/vale-desktop-electron")
+if [ -n "$MODE_BAD" ]; then
+  echo "::error::pack inputs have WORKTREE PERMISSIONS that differ from a fresh checkout — npm pack preserves them, so this tgz would differ from CI's by its tar headers alone:" >&2
+  printf '%b' "$MODE_BAD" >&2
+  echo "  Fix: chmod each file to the mode git records (e.g. \`chmod 644 <file>\`)." >&2
+  exit 1
+fi
+echo "pack input modes match a fresh checkout OK"
+
 echo "== pack =="
 (cd "$NPM_DIR" && npm pack >/dev/null)
 TGZ="$NPM_DIR/vale-agent-$VER.tgz"

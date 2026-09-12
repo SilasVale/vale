@@ -225,6 +225,14 @@ jobs:
       # writer that publish-release.sh sources (extracted for testability).
       - name: release-lib regression checks
         run: bash scripts/test/release-lib.bash
+      # The P0 dual-builder verdict. It was the only lib in the toolbox with NO
+      # TEST, and two defects lived in it through twenty consecutive releases: a
+      # one-file MODE difference reported as "packaging metadata" and PASSED, and
+      # a comparison that could pass while comparing ZERO files. Both are pinned
+      # here by driving the real function with `curl` stubbed (functions beat
+      # PATH), so nothing about the comparison is re-implemented in the test.
+      - name: release-audit regression checks
+        run: bash scripts/test/release-audit.bash
       # Smoke-helper guards: assert_want_sha256 (shared pre-publish sha gate,
       # twin of the worker's SHA256_RE) — same convention, zero new tooling.
       - name: smoke-helper regression checks

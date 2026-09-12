@@ -1,19 +1,27 @@
 #!/usr/bin/env bash
 # publish-cdn-from-ci.sh <ver> — make the CDN serve the CI-BUILT artifact.
 #
-# Why this exists. Today two builders produce the release artifact: this box
-# packs it onto the CDN, release.yml packs it onto the GitHub release. Their
-# SOURCE-derived files are identical (release-audit.sh enforces that), but the
-# exe is not byte-identical and cannot easily be made so — every toolchain
-# input is already pinned and verified identical (rustc/clang/lld/llvm-ar/
-# cargo-xwin by hash), the embedded panel.js matches, yet ~800 bytes of .data
-# layout still differ, which puts the cause in the compile ENVIRONMENT (the
-# classic unreproducible-build long tail).
+# Why this exists. Two builders produce the release artifact: this box packs it
+# onto the CDN, release.yml packs it onto the GitHub release. Run this to collapse
+# them into one — the CDN stops serving the locally packed tgz and starts serving
+# the artifact CI built, so "CDN == GitHub release" holds BY CONSTRUCTION.
 #
-# Rather than chase that tail, run this to collapse the two builders into one:
-# the CDN stops serving the locally packed tgz and starts serving the artifact
-# CI built, so "CDN == GitHub release" holds by construction and the audit has
-# nothing left to compare but itself.
+# THE RATIONALE ABOVE USED TO BE FALSE, AND MEASURABLY SO. It said "the exe is
+# not byte-identical and cannot easily be made so … ~800 bytes of .data layout
+# still differ, which puts the cause in the compile ENVIRONMENT". On the live
+# release pair the two tarballs differ by exactly 3 bytes out of 17,774,080, and
+# the 17.5 MB `vale-agent.exe` is BYTE-IDENTICAL between the two builders — as it
+# has been for at least twenty consecutive releases, because the audit's WARN
+# arm is reachable ONLY when the exes match. The 3 bytes were a FILE MODE:
+# `package/README.md` packed `-rw-------` here and `-rw-r--r--` in CI, because
+# `npm pack` preserves the worktree's permissions and git tracks only the
+# executable bit. The compile environment was never the problem.
+#
+# So the two builders already agree on the artifact; this script remains useful
+# as a way to make that agreement structural rather than audited, but nothing
+# here needs the toolchain tail chased. `publish-release.sh` now REFUSES to pack
+# when a worktree mode differs from a fresh checkout, and `release-audit.sh`
+# compares modes and fails on any difference.
 #
 # Opt-in per release, deliberately. Making the DEFAULT publish flow depend on
 # CI would block the delivery channel on a pipeline that still fails on
