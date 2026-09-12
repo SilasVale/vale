@@ -1,11 +1,23 @@
 // useOperationRuns — the device's operation timeline, polled for the run strip.
 //
-// WHY A SECOND POLL RATHER THAN A PROP. `useCommandEvents` reads ONE session's
-// audit log (`/api/sessions/{sid}`), which carries no `run_id` at all; a run is
-// DEVICE-level and crosses sessions (the same AI execution may open three
-// sessions and drive the browser in between). So the strip has its own source:
-// `GET /api/operation`, which merges the terminal audit trail and the browser
+// WHY A SECOND POLL RATHER THAN A PROP. A run is DEVICE-level and crosses
+// sessions — the same AI execution may open three terminals and drive the
+// browser in between — so the strip needs a source that is not one session's
+// file: `GET /api/operation` merges the terminal audit trail and the browser
 // action feed onto one ordered axis and reports the run boundaries beside them.
+//
+// THIS COMMENT USED TO SAY the session route "carries no `run_id` at all". It
+// does: `run_id` is written onto every `command/start` the device executes under
+// a run, and the route serves the event verbatim. What was missing was on THIS
+// side — `CommandEvent` did not declare the field, so the panel dropped an
+// attribution the device had already recorded. A stated absence that is not true
+// is worse than an unknown one: it explains the second poll away and stops
+// anyone looking for the value that is already on the wire.
+//
+// The two sources are still both needed, for the reason that survives the
+// correction: `/api/operation` is retained for a DAY and read-capped, while the
+// session trail is the 30-day record. The strip shows what is HAPPENING; the
+// trail shows what HAPPENED, and it can now say which run it belonged to.
 //
 // Polling follows the panel's established discipline:
 //   * `since_ms` is the reply's own `cursor_ms`, so each poll asks only for what

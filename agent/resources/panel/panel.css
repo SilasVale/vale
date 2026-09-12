@@ -3663,6 +3663,19 @@ button.dtab-close:hover { opacity: 1; }
   color: var(--chrome-ink-dim);
 }
 
+/* The run a command CLAIMED to belong to. Deliberately quiet and monospaced: it
+   is an attribution the device records verbatim and never verifies, so it must
+   read as a label rather than as a fact the UI has confirmed. */
+.path-step-run {
+  display: flex;
+  gap: 6px;
+  align-items: baseline;
+  margin: 2px 0 0;
+  font: 400 10px var(--font);
+  color: var(--chrome-ink-dim);
+}
+.path-step-run-id { font: 400 10px var(--font-mono); overflow-wrap: anywhere; }
+
 
 /* ============ layout.css ============ */
 /* ============================================================

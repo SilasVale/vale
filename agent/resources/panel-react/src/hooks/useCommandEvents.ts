@@ -31,6 +31,15 @@ export interface CommandEvent {
   considered?: string[] | null;
   /** command/start only: the 1-based plan step this command advances. */
   plan_step?: number | null;
+  /** command/start only: the run this command was executed under, as the AI
+   *  named it via `run_begin`. Present on the wire since runs were introduced;
+   *  undeclared here until round 30, which is why the trail silently dropped an
+   *  attribution the device had already recorded.
+   *
+   *  A LABEL, NEVER A CREDENTIAL (`runs.rs` pins this twice): it says which
+   *  execution the AI CLAIMED this belonged to, and it is presented as that
+   *  claim — never as a verified grouping. */
+  run_id?: string | null;
 }
 
 export interface CommandCard {

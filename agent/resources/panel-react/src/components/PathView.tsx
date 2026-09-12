@@ -356,6 +356,24 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                 {s.intent}
               </p>
             )}
+            {s.runId && (
+              // WHICH EXECUTION THIS BELONGED TO, as the AI claimed it. Rendered
+              // as a claim — "the agent says" in the title — because `run_id` is
+              // recorded VERBATIM and the device never verifies it. It is a
+              // LABEL, NEVER A CREDENTIAL (`runs.rs` pins that twice), so it
+              // groups nothing here: real grouping lives in `lib/runs.ts` on the
+              // device-level timeline, and a second implementation would be two
+              // reads of one fact.
+              //
+              // It is worth showing at all because this trail is the 30-day
+              // record while `/api/operation` keeps a DAY: "which execution was
+              // this?" is answerable only from here once the run strip's window
+              // has passed.
+              <p className="path-step-run" title="The run the agent says this command belonged to">
+                <span className="path-step-run-label">run</span>
+                <code className="path-step-run-id">{s.runId}</code>
+              </p>
+            )}
             {s.considered.length > 0 && (
               <p className="path-step-alt" title="Alternatives the agent says it passed over">
                 <span className="path-step-alt-label">instead of</span>

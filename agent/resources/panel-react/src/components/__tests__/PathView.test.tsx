@@ -110,7 +110,7 @@ describe("summarizePath", () => {
   const step = (o: Partial<PathStep>): PathStep => ({
     id: "x", index: 1, command: "c", state: "ok", owner: "ai", stateLabel: "0",
     startedAt: 0, durationMs: 1000, exitCode: 0, reason: null, outputChars: 0,
-    intent: null, considered: [], planStep: null, ...o,
+    intent: null, considered: [], planStep: null, runId: null, ...o,
   });
 
   it("reports the total as a FLOOR when some steps have no duration", () => {
@@ -151,7 +151,7 @@ describe("attentionSteps", () => {
     const step = (id: string, state: PathStep["state"], index: number): PathStep => ({
       id, index, command: id, state, owner: "ai", stateLabel: "", startedAt: 0,
       durationMs: null, exitCode: null, reason: null, outputChars: 0,
-      intent: null, considered: [], planStep: null,
+      intent: null, considered: [], planStep: null, runId: null,
     });
     const out = attentionSteps([
       step("ok1", "ok", 1),
@@ -502,5 +502,49 @@ describe("the plan in the path", () => {
     render(<PathView events={evs} plan={["the only step"]} />);
     expect(document.querySelector(".path-plan-count")!.textContent).toBe("0");
     expect(document.querySelector(".path-plan-count")!.getAttribute("data-zero")).toBe("yes");
+  });
+});
+
+describe("PathView — the run a command claims to belong to", () => {
+  // THE PANEL DROPPED THIS UNTIL ROUND 30. `run_id` has been on the wire since
+  // runs were introduced — written onto every `command/start` executed under a
+  // run — but `CommandEvent` did not declare it, so the trail reader discarded an
+  // attribution the device had already recorded. `useOperationRuns.ts` even
+  // stated the opposite in a comment ("carries no `run_id` at all"), which
+  // explained its own second poll away and stopped anyone looking.
+  const withRun = (runId: string | null) => [
+    {
+      seq: 1, ts: 100, kind: "command/start", command: "echo hi",
+      ...(runId == null ? {} : { run_id: runId }),
+    },
+    { seq: 2, ts: 101, kind: "command/end", exit_code: 0, duration_ms: 5 },
+  ];
+
+  it("derives the claimed run from the event", () => {
+    const p = derivePath(groupRounds(withRun("run-1789-b50f43")));
+    expect(p.steps[0].runId).toBe("run-1789-b50f43");
+  });
+
+  it("treats an ABSENT or blank id as no claim, not as a run named ''", () => {
+    // The device omits a blank id rather than storing it; the panel must not
+    // invent a run from whitespace.
+    expect(derivePath(groupRounds(withRun(null))).steps[0].runId).toBeNull();
+    expect(derivePath(groupRounds(withRun("   "))).steps[0].runId).toBeNull();
+  });
+
+  it("renders it as a CLAIM, and groups nothing", () => {
+    const { container } = render(<PathView events={withRun("run-1789-b50f43")} />);
+    const el = container.querySelector(".path-step-run")!;
+    expect(el).not.toBeNull();
+    expect(el.textContent).toContain("run-1789-b50f43");
+    // The title says whose claim it is. It is recorded verbatim and the device
+    // never verifies it, so presenting it as a confirmed grouping would assert
+    // something nobody checked.
+    expect(el.getAttribute("title")).toMatch(/agent says/i);
+  });
+
+  it("draws nothing when no run was claimed", () => {
+    const { container } = render(<PathView events={withRun(null)} />);
+    expect(container.querySelector(".path-step-run")).toBeNull();
   });
 });

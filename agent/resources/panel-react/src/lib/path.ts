@@ -70,6 +70,12 @@ export interface PathStep {
    *  Null is the interesting case as much as a number: an unclaimed step is how
    *  a run visibly departs from what the agent said it would do. */
   planStep: number | null;
+  /** The run this command claimed to belong to, or null. A LABEL, NEVER A
+   *  CREDENTIAL — it is the AI's own attribution, recorded verbatim because the
+   *  device does not verify it — so it is rendered as a claim and never used to
+   *  GROUP anything. Grouping lives in `lib/runs.ts` on the device-level
+   *  timeline; a second grouping here would be two implementations of one read. */
+  runId: string | null;
 }
 
 export interface PathSummary {
@@ -179,6 +185,10 @@ export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = 
         typeof start?.plan_step === "number" && start.plan_step > 0
           ? start.plan_step
           : null,
+      // Blank is ABSENT, not a run named "" — the same rule the device applies
+      // when it writes the field (a blank id is omitted from the JSONL rather
+      // than stored).
+      runId: typeof start?.run_id === "string" && start.run_id.trim() !== "" ? start.run_id : null,
     });
   }
 
