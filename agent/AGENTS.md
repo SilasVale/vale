@@ -519,7 +519,40 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 78 (TWO subagent audits of surfaces nobody had looked at
+Last updated: 2026-09-12 round 79 (two more CLI findings: a destructive step that could
+purge the WRONG directory, and a failed delete reported as an absent pin).
+Commit: 780f356c. CI green.
+  (1) `uninstall` COMPUTED THE DATA DIR ITSELF INSTEAD OF USING ITS OWN RESOLVER. `setup`
+  uses `DATA_DIR` (registry-first, `HKLM\...\DataDir`); uninstall recomputed it from
+  `%ProgramData%` — so on a REGISTRY-REMAPPED install it deleted a different directory
+  than the device uses and named that wrong one in "data kept at", while `--purge-data`
+  printed "data dir purged" over whatever `rmdir` did (`sh()` discards its result at
+  every call site). Three verifications added — and the pattern for all three was ALREADY
+  five lines above in the same function (the legacy-dir loop checks `fs.existsSync` and
+  warns). A failed purge now exits 1 naming the survivor.
+  (2) `rollback --clear` REPORTED A FAILED DELETE AS "no pin present": `rmSync(force)`
+  ignores only ENOENT, so EPERM/EACCES/EBUSY/EISDIR shared a `catch` with the READ
+  failure and the command returned 0 — while the pin was still there, `rollback status`
+  said "pinned", and agent_update kept refusing every release. The pin is the state that
+  governs auto-updates. It now separates a read error from absence and DECIDES ON A
+  READ-BACK rather than on the absence of a throw.
+  (3) ALSO CHECKED, NOT CHANGED: the four remaining `%ProgramData%` computations are all
+  correct — the resolver's own fallback, the `update-busy` path (a cross-language contract
+  with the Rust BUSY_MARKER_REL, pinned by tests), and the registry WRITE whose value the
+  resolver's fallback then reads back, so they agree by construction.
+  (4) VERIFIED BY EFFECT: `node bin/vale.js rollback --clear` with no pin prints "no pin
+  present (nothing to clear)" and exits 0 — the new read-back path. Freshness gate passes
+  after rebuild; 35 tests pass.
+  (5) STILL OPEN from the CLI audit: F1 `vale update` exits 0 on HANDOFF not outcome (the
+  guide documents this as deliberate, and `rollback` already has the bounded read-back —
+  `awaitReleaseMarker` — to reuse); F5 `tunnel start` claims success from an unobserved
+  async spawn; F6 `vale stop` prints "stopped" unconditionally; F7 `vale run` exits 0 when
+  the exe is missing; F10 the release marker is written BEFORE the fatal setup paths, so
+  an aborted setup reports the new version as installed; F12 "node_modules verified"
+  without checking node_modules.
+  Gates: CLI 35 + freshness gate; CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 78 (TWO subagent audits of surfaces nobody had looked at
 — the CLI and the gateway's MCP registry — and both found reasons that state something
 false). Commits: d271cdba, 6dd8c820, 65ec4133. CI green; gateway deployed; panel audit
 CLOSED (the Logs/accelerators split is a coverage difference, not a defect).
