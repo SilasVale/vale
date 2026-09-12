@@ -78,29 +78,44 @@ export default function ModelsView() {
     }
   }, []);
 
-  useEffect(() => { void load(); }, [load]);
+  useEffect(() => {
+    void load();
+  }, [load]);
 
-  const switchTo = useCallback(async (model: string) => {
-    setSwitching(model);
-    try {
-      await api.setRoute(model);
-      setCurrent(model);
-      toast(t("models.switched"));
-    } catch {
-      toast(t("route.fail"));
-    } finally {
-      setSwitching(null);
-    }
-  }, [t, toast]);
+  const switchTo = useCallback(
+    async (model: string) => {
+      setSwitching(model);
+      try {
+        await api.setRoute(model);
+        setCurrent(model);
+        toast(t("models.switched"));
+      } catch {
+        toast(t("route.fail"));
+      } finally {
+        setSwitching(null);
+      }
+    },
+    [t, toast],
+  );
 
   const total = allModels.length;
-  // The prefixes that actually route somewhere. `"none"` is the server's sentinel
-  // for the DEFAULT channel (unprefixed names), not a prefix to match on.
-  const realPrefixes = routes.map((r) => r.prefix).filter((p) => p && p !== "none");
-  const modelsFor = (prefix: string): string[] =>
-    prefix && prefix !== "none"
-      ? allModels.filter((m) => m.startsWith(prefix))
-      : allModels.filter((m) => !realPrefixes.some((p) => m.startsWith(p)));
+  /**
+   * The models belonging to one channel card.
+   *
+   * THE DEFAULT CHANNEL CANNOT BE DERIVED FROM THE PREFIXED CATALOGUE. `"none"` is the
+   * server's sentinel for "no prefix -> Command Code (GOAT), model name passed through
+   * as-is", and every advertised id in that catalogue is PREFIXED — so filtering it for
+   * "ids matching no known prefix" always yields NOTHING. The card rendered `0` and an
+   * empty list while the server's own entry for it lists models and the header badge
+   * said 21.
+   *
+   * For that card the server's `routes[].models` ARE the right source, and they are the
+   * right FORM too: they are bare names, and a bare name is exactly what routes there.
+   * (For every other card, `routes[].models` is the trap — bare where the catalogue is
+   * prefixed, which is what set the wrong channel in round 58.)
+   */
+  const modelsFor = (prefix: string, fallback: string[]): string[] =>
+    prefix && prefix !== "none" ? allModels.filter((m) => m.startsWith(prefix)) : fallback;
   // Health is reported per channel PREFIX; the catalogue is the authority on which
   // channels exist, so an id with no health entry is "not checked", not "down".
   const healthFor = (prefix: string) =>
@@ -111,48 +126,59 @@ export default function ModelsView() {
       <PageHeader
         title={t("nav.models")}
         description={t("models.lede")}
-        actions={<Badge tone="muted">{loading ? t("loading") : `${total} ${t("models.count")}`}</Badge>}
+        actions={
+          <Badge tone="muted">{loading ? t("loading") : `${total} ${t("models.count")}`}</Badge>
+        }
       />
 
-      {failed && <Card><p className="models-failed">{t("models.unavailable")}</p></Card>}
+      {failed && (
+        <Card>
+          <p className="models-failed">{t("models.unavailable")}</p>
+        </Card>
+      )}
 
-      {!loading && !failed && routes.map((r) => {
-        const h = healthFor(r.prefix);
-        const models = modelsFor(r.prefix);
-        return (
-          <Card key={r.prefix} className="models-card">
-            <div className="models-head">
-              <span className={`models-prefix ${laneClass(r.prefix)}`}>
-                {r.prefix && r.prefix !== "none" ? r.prefix : t("models.noPrefix")}
-              </span>
-              <span className="models-backend">{r.backend}</span>
-              {h ? (
-                <span className={`models-health ${h.ok ? "ok" : "bad"}`} title={h.reason || h.model}>
-                  {h.ok ? t("models.up") : t("models.down")}
+      {!loading &&
+        !failed &&
+        routes.map((r) => {
+          const h = healthFor(r.prefix);
+          const models = modelsFor(r.prefix, r.models || []);
+          return (
+            <Card key={r.prefix} className="models-card">
+              <div className="models-head">
+                <span className={`models-prefix ${laneClass(r.prefix)}`}>
+                  {r.prefix && r.prefix !== "none" ? r.prefix : t("models.noPrefix")}
                 </span>
-              ) : (
-                <span className="models-health unknown">{t("models.notChecked")}</span>
-              )}
-              <span className="models-n">{models.length}</span>
-            </div>
-            <p className="models-desc">{r.desc}</p>
-            <div className="models-list">
-              {models.map((id) => (
-                <button
-                  key={id}
-                  type="button"
-                  className={`model-chip${current === id ? " current" : ""}`}
-                  disabled={switching !== null}
-                  title={current === id ? t("models.isCurrent") : t("models.setCurrent")}
-                  onClick={() => void switchTo(id)}
-                >
-                  {id}
-                </button>
-              ))}
-            </div>
-          </Card>
-        );
-      })}
+                <span className="models-backend">{r.backend}</span>
+                {h ? (
+                  <span
+                    className={`models-health ${h.ok ? "ok" : "bad"}`}
+                    title={h.reason || h.model}
+                  >
+                    {h.ok ? t("models.up") : t("models.down")}
+                  </span>
+                ) : (
+                  <span className="models-health unknown">{t("models.notChecked")}</span>
+                )}
+                <span className="models-n">{models.length}</span>
+              </div>
+              <p className="models-desc">{r.desc}</p>
+              <div className="models-list">
+                {models.map((id) => (
+                  <button
+                    key={id}
+                    type="button"
+                    className={`model-chip${current === id ? " current" : ""}`}
+                    disabled={switching !== null}
+                    title={current === id ? t("models.isCurrent") : t("models.setCurrent")}
+                    onClick={() => void switchTo(id)}
+                  >
+                    {id}
+                  </button>
+                ))}
+              </div>
+            </Card>
+          );
+        })}
     </>
   );
 }
