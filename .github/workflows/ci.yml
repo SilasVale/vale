@@ -241,6 +241,14 @@ jobs:
       # prefix-stripped names and reported false drift on every channel.
       - name: model-drift regression checks
         run: node scripts/test/model-drift-check.mjs
+      # ONE design vocabulary across the two frontends. They shared 16 token
+      # NAMES and 12 of them held different VALUES — the console's frame was
+      # Bootstrap's gray scale while the panel's was zinc/Apple — and the
+      # console's own comment claimed they shared a vocabulary, which is what
+      # stopped anyone checking. Needs no network and no build: it reads both
+      # stylesheets.
+      - name: token contract (console vs panel)
+        run: node scripts/test/token-contract-check.mjs
       # Smoke-helper guards: assert_want_sha256 (shared pre-publish sha gate,
       # twin of the worker's SHA256_RE) — same convention, zero new tooling.
       - name: smoke-helper regression checks

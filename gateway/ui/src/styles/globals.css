@@ -18,7 +18,7 @@
   --ds-dur: 0.18s;
 
   /* Light mode */
-  --bg: #ffffff;
+  --bg: #fafafa;
   --bg-secondary: #f8f9fa;
   --bg-tertiary: #f1f3f5;
   --border: #e9ecef;
@@ -49,26 +49,48 @@
   /* Elevation */
   --shadow-sm: 0 1px 2px rgba(0, 0, 0, 0.05);
   --shadow-md: 0 4px 12px rgba(0, 0, 0, 0.08);
-  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.14);
+  --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
 
   /* Frame chrome — the sidebar + topbar surface. LIGHT by default (the
      user's preference); body[data-theme="dark"] below flips the whole set.
-     Same vocabulary as the device panel's frame. */
-  --chrome-bg: #f8f9fa;
+     Same vocabulary AS THE DEVICE PANEL'S FRAME, and now the same VALUES.
+  
+     THIS COMMENT USED TO BE HALF TRUE, which is this repo's most common defect
+     seen from a new angle: 16 token names were shared with
+     `agent/resources/panel-react/src/styles/tokens.css` and TWELVE of them held
+     different values — this frame was Bootstrap's gray scale (#f8f9fa/#212529/
+     #adb5bd) while the panel's was zinc/Apple (#f4f4f5/#1d1d1f/#a1a1aa), and the
+     radii were 6/14px against 10/20px. So a shared name meant two different
+     things depending on which surface you were looking at, and the sentence
+     claiming otherwise is what stopped anyone checking. The dark sets had
+     already been aligned (only 2 of 11 differed), which is exactly why the
+     divergence survived: whoever built dark mode compared, and light mode was
+     never compared.
+  
+     The console now FOLLOWS the panel, deliberately: the panel is the device's
+     primary operator surface and carries the more developed system. A literal is
+     used where the panel points at its own scale (`--ds-neutral-50` -> #fafafa,
+     `--accent-soft`/`--accent-ink` for the active pair) because this file has no
+     `--ds-neutral-*` scale of its own. `scripts/test/token-contract-check.mjs`
+     RESOLVES one `var()` level on both sides and fails on any future drift. */
+  --chrome-bg: #f4f4f5;
   --chrome-bg-2: #ffffff;
-  --chrome-bg-3: #f1f3f5;
-  --chrome-ink: #212529;
-  --chrome-ink-dim: #495057;
-  --chrome-ink-faint: #adb5bd;
-  --chrome-line: #e9ecef;
+  --chrome-bg-3: #ececef;
+  --chrome-ink: #1d1d1f;
+  --chrome-ink-dim: #52525b;
+  --chrome-ink-faint: #a1a1aa;
+  --chrome-line: rgba(0, 0, 0, 0.08);
   --chrome-hover: rgba(0, 0, 0, 0.05);
-  --chrome-active-bg: var(--accent-light);
-  --chrome-active-ink: var(--accent);
+  --chrome-active-bg: #ffefe5;
+  --chrome-active-ink: #d9480f;
 
-  /* Radius */
-  --radius-sm: 6px;
+  /* Radius — the panel's scale, so a card in the console and a card in the
+     device panel are the same object. `--radius-md`/`--radius-xl` keep their
+     console-only values: the panel reaches them through `--radius-lg`, so
+     changing them here would MOVE the panel's geometry, not match it. */
+  --radius-sm: 10px;
   --radius-md: 10px;
-  --radius-lg: 14px;
+  --radius-lg: 20px;
   --radius-xl: 20px;
   --radius-pill: 99px;
 
@@ -78,7 +100,10 @@
 
 /* Dark mode — body[data-theme="dark"], persisted in localStorage */
 body[data-theme="dark"] {
-  --bg: #1a1b1e;
+  /* Aligned with the panel's midnight (#131418), not Mantine's #1a1b1e — the
+     dark sets were already close, which is why their two remaining differences
+     went unnoticed while light mode differed in twelve places. */
+  --bg: #131418;
   --bg-secondary: #25262b;
   --bg-tertiary: #2c2e33;
   --border: #373a40;
@@ -116,7 +141,7 @@ body[data-theme="dark"] {
   --chrome-ink-dim: #a2a3ac;
   --chrome-ink-faint: #6f707a;
   --chrome-line: rgba(255, 255, 255, 0.07);
-  --chrome-hover: rgba(255, 255, 255, 0.06);
+  --chrome-hover: rgba(255, 255, 255, 0.08);
   --chrome-active-bg: rgba(217, 72, 15, 0.9);
   --chrome-active-ink: #ffffff;
 }
