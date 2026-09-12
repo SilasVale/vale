@@ -22,31 +22,42 @@ return `<!doctype html>
 <link rel="icon" href="${FAVICON}">
 <style>
   :root {
-    /* DSH-aligned design tokens — light theme */
-    --dsw-alias-bg-base: #ffffff;
-    --dsw-alias-bg-layer-1: #f7f8f9;
-    --dsw-alias-bg-layer-2: #f0f1f3;
+    /* THE PRODUCT'S TOKENS, not a third set. This page carried its own
+       --dsw-alias-* namespace whose BRAND WAS BLUE (#4d6bfe) and whose primary
+       button was near-BLACK (#0f1115) — while the console and the device panel
+       are ORANGE (#d9480f) with an accent primary. It was the last holdout of a
+       brand the rest of the product had already left: the panel's own dead
+       fallbacks still spelled that blue (#4f7cff / #4f6bed) until round 43
+       removed them.
+       The NAMES below are kept so the rest of this file did not have to be
+       rewritten at the same time; the VALUES are the panel's scale, so all three
+       surfaces finally resolve to the same colours. */
+    --dsw-alias-bg-base: #fafafa;
+    --dsw-alias-bg-layer-1: #ffffff;
+    --dsw-alias-bg-layer-2: #f4f4f5;
     --dsw-alias-bg-mask-1: rgba(0,0,0,0.4);
-    --dsw-alias-label-primary: #0f1115;
-    --dsw-alias-label-secondary: #5f666b;
-    --dsw-alias-label-tertiary: #81858c;
-    --dsw-alias-label-dimmed: #b0b4ba;
-    --dsw-alias-border-l1: rgba(0,0,0,0.06);
-    --dsw-alias-border-l2: rgba(0,0,0,0.10);
-    --dsw-alias-border-l3: rgba(0,0,0,0.14);
-    --dsw-alias-brand-primary: #4d6bfe;
-    --dsw-alias-button-primary-fill: #0f1115;
-    --dsw-alias-button-primary-hover: #2a2d33;
+    --dsw-alias-label-primary: #1d1d1f;
+    --dsw-alias-label-secondary: #52525b;
+    --dsw-alias-label-tertiary: #71717a;
+    --dsw-alias-label-dimmed: #a1a1aa;
+    --dsw-alias-border-l1: rgba(0,0,0,0.08);
+    --dsw-alias-border-l2: rgba(0,0,0,0.12);
+    --dsw-alias-border-l3: #d4d4d8;
+    --dsw-alias-brand-primary: #d9480f;
+    /* WHITE ON --accent measures 4.30 and is under AA; the solid weight clears
+       it at 6.05. The panel learned this for .btn-new and .goal-save. */
+    --dsw-alias-button-primary-fill: #b03a0a;
+    --dsw-alias-button-primary-hover: #9c3a0a;
     --dsw-alias-button-primary-foreground: #ffffff;
-    --dsw-alias-state-business-primary: #4d6bfe;
-    --dsw-alias-state-success-primary: #22c55e;
-    --dsw-alias-state-error-primary: #ef4444;
-    --dsw-alias-state-warn-primary: #f59e0b;
+    --dsw-alias-state-business-primary: #9c3a0a;
+    --dsw-alias-state-success-primary: #1e7a33;
+    --dsw-alias-state-error-primary: #a51d1d;
+    --dsw-alias-state-warn-primary: #b45309;
     --dsw-alias-interactive-bg-hover: rgba(0,0,0,0.04);
     --dsw-alias-interactive-bg-active: rgba(0,0,0,0.06);
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
-    --dsw-shadow-lv3: 0 8px 24px rgba(0,0,0,0.12), 0 2px 6px rgba(0,0,0,0.06);
+    --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.12);
     --ds-font-family: -apple-system, BlinkMacSystemFont, "SF Pro Text", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
     --ds-font-family-code: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, "PingFang SC", "Microsoft YaHei";
     --ds-transition-duration: 0.15s;
@@ -54,27 +65,29 @@ return `<!doctype html>
   }
 
   body[data-ds-dark-theme] {
-    --dsw-alias-bg-base: #151517;
-    --dsw-alias-bg-layer-1: #1c1c1f;
-    --dsw-alias-bg-layer-2: #232326;
+    --dsw-alias-bg-base: #131418;
+    --dsw-alias-bg-layer-1: #17181d;
+    --dsw-alias-bg-layer-2: #1f2026;
     --dsw-alias-bg-mask-1: rgba(0,0,0,0.6);
-    --dsw-alias-label-primary: #f9fafb;
-    --dsw-alias-label-secondary: #cfd3d6;
-    --dsw-alias-label-tertiary: #adb2b8;
-    --dsw-alias-label-dimmed: #6b7078;
-    --dsw-alias-border-l1: rgba(255,255,255,0.06);
+    --dsw-alias-label-primary: #ecedef;
+    --dsw-alias-label-secondary: #a2a3ac;
+    --dsw-alias-label-tertiary: #a2a3ac;
+    --dsw-alias-label-dimmed: #6f707a;
+    --dsw-alias-border-l1: rgba(255,255,255,0.07);
     --dsw-alias-border-l2: rgba(255,255,255,0.10);
     --dsw-alias-border-l3: rgba(255,255,255,0.14);
-    --dsw-alias-brand-primary: #6b8aff;
-    --dsw-alias-button-primary-fill: #f9fafb;
-    --dsw-alias-button-primary-hover: #e5e7eb;
-    --dsw-alias-button-primary-foreground: #0f1115;
-    --dsw-alias-state-business-primary: #6b8aff;
-    --dsw-alias-interactive-bg-hover: rgba(255,255,255,0.06);
-    --dsw-alias-interactive-bg-active: rgba(255,255,255,0.10);
+    --dsw-alias-brand-primary: #ffa94d;
+    /* On the dark surface the accent itself carries dark ink, so the button is
+       the accent and the FOREGROUND is what changes. */
+    --dsw-alias-button-primary-fill: #ffa94d;
+    --dsw-alias-button-primary-hover: #ffc078;
+    --dsw-alias-button-primary-foreground: #2b1a09;
+    --dsw-alias-state-business-primary: #ffa94d;
+    --dsw-alias-interactive-bg-hover: rgba(255,255,255,0.05);
+    --dsw-alias-interactive-bg-active: rgba(255,255,255,0.08);
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.24);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.32);
-    --dsw-shadow-lv3: 0 8px 24px rgba(0,0,0,0.40), 0 2px 6px rgba(0,0,0,0.24);
+    --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.45);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
@@ -91,9 +104,25 @@ return `<!doctype html>
   }
 
   /* ── Layout ─────────────────────────────────────── */
+  /* A SPLIT PAGE. Measured before: the content column was 440px on a 1440px
+     screen — a narrow ribbon in a void, with the install steps as bare text
+     rows. The brand and the "what is this" sentence now own the left half and
+     the things you actually DO own the right, the same composition the console's
+     login page uses, so the two surfaces read as one product. */
   .app { display: flex; flex-direction: column; min-height: 100vh; }
-  .main { flex: 1; display: flex; align-items: center; justify-content: center; padding: 40px 24px; }
-  .card { width: 100%; max-width: 440px; }
+  .main {
+    flex: 1;
+    display: grid;
+    grid-template-columns: minmax(0, 1fr) minmax(0, 1fr);
+    align-items: center;
+    gap: 56px;
+    width: 100%;
+    max-width: 1120px;
+    margin: 0 auto;
+    padding: 56px 40px;
+  }
+  .aside { display: flex; flex-direction: column; gap: 20px; }
+  .card { width: 100%; max-width: 520px; justify-self: end; }
 
   /* ── Brand ──────────────────────────────────────── */
   .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
@@ -155,7 +184,10 @@ return `<!doctype html>
   .hint { font-size: 12px; color: var(--dsw-alias-label-tertiary); line-height: 1.5; }
 
   /* ── Steps ──────────────────────────────────────── */
-  .steps { display: flex; flex-direction: column; gap: 2px; }
+  .steps { display: flex; flex-direction: column; gap: 8px; }
+  /* A URL is ONE token. Without this the installer URL broke across lines in the
+     middle of the path, which is unreadable and unpasteable. */
+  code, .cmd { overflow-wrap: anywhere; word-break: break-word; }
   .step {
     display: flex; align-items: flex-start; gap: 12px;
     padding: 12px 14px;
@@ -217,8 +249,18 @@ return `<!doctype html>
   body[data-ds-dark-theme] .theme-toggle .icon-sun { display: block; }
 
   /* ── Responsive ─────────────────────────────────── */
+  @media (max-width: 860px) {
+    .main {
+      grid-template-columns: minmax(0, 1fr);
+      gap: 32px;
+      align-items: start;
+      padding: 40px 24px;
+      max-width: 620px;
+    }
+    .card { max-width: none; justify-self: stretch; }
+  }
   @media (max-width: 480px) {
-    .main { padding: 32px 16px; }
+    .main { padding: 28px 16px; }
     footer { padding: 12px 16px; }
   }
 </style>
@@ -243,7 +285,7 @@ return `<!doctype html>
   </button>
 
   <main class="main">
-    <div class="card">
+    <div class="aside">
       <div class="brand">
         <img class="brand-mark" src="${FAVICON}" alt="Vale">
         <div class="brand-text">
@@ -253,7 +295,9 @@ return `<!doctype html>
       </div>
 
       <p class="desc">Vale Agent is a device command center (serial / terminal / browser + MCP) that runs on a Windows machine. Each device is exposed over a Cloudflare Tunnel and managed from the <a href="${safeConsole}">Vale console</a>.</p>
+    </div>
 
+    <div class="card">
       <div class="actions">
         <a class="btn-primary" href="${safeSetup}">Download Windows installer</a>
         <span class="hint">Easiest path: one setup.exe (needs admin + internet, no Node.js required). Or the manual channel below.</span>
