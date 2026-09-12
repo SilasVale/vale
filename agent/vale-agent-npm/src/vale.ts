@@ -517,7 +517,9 @@ export function busyIsFresh(mtimeMs: number, nowMs: number): boolean {
 //   fresh (<10m) → a swap is running right now
 //   stale (≥10m) → an update STARTED AND DID NOT FINISH — the incident's shape
 export interface StatusFacts {
-  agentRunning: boolean;
+  /** `null` when the process list could not be READ — which is NOT "stopped". The
+   *  neighbours follow the same rule ("null is NOT 'up to date'"). */
+  agentRunning: boolean | null;
   installDir: string;
   exeExists: boolean;
   port: number;
@@ -569,7 +571,13 @@ export function latestCdnVersion(): string | null {
 
 export function statusReport(f: StatusFacts): string[] {
   const out: string[] = [];
-  out.push(f.agentRunning ? "status: RUNNING" : "status: STOPPED");
+  out.push(
+    f.agentRunning === null
+      ? "status: UNKNOWN -- the process list could not be read (tasklist failed); this is not a verdict"
+      : f.agentRunning
+        ? "status: RUNNING"
+        : "status: STOPPED",
+  );
   out.push("install dir: " + f.installDir);
   out.push(
     "panel: " +
@@ -1002,6 +1010,31 @@ function stageDesktopShell(installDir: string, suffix: "" | ".new"): number {
     /* best-effort — a failed write must not break staging */
   }
   return staged;
+}
+
+/**
+ * Is a Windows process running? THREE answers, because two of them are not the same.
+ *
+ * `tasklist` failing (missing, refused, erroring) leaves stdout EMPTY, and every caller
+ * here used to read that as "not running" — a claim of ABSENCE from a failed READ. That
+ * is the fourth instance of this shape in this file (`statusReport`, `rollback status`,
+ * `autostart status`), and it matters most for the AGENT itself: `vale status` reporting
+ * STOPPED for a device that is serving is the worst possible answer.
+ */
+function processRunning(image: string): "yes" | "no" | "unknown" {
+  // No shell: `shell: true` concatenates argv into one cmd.exe string, so the unquoted
+  // filter "IMAGENAME eq ..." was split at its spaces, tasklist rejected it, and the
+  // probe always answered "no" even with the process running. (IMAGENAME also takes no
+  // wildcard — the old `vale-agent*` never matched.)
+  const r = spawnSync("tasklist", ["/FI", `IMAGENAME eq ${image}`], {
+    encoding: "utf8",
+  });
+  if (r.error || r.status === null || r.status !== 0) return "unknown";
+  return String(r.stdout || "")
+    .toLowerCase()
+    .includes(image.toLowerCase())
+    ? "yes"
+    : "no";
 }
 
 function svc(action) {
@@ -1531,10 +1564,7 @@ const commands = {
     // so the unquoted filter "IMAGENAME eq …" was split at its spaces, tasklist
     // rejected it, and this ALWAYS printed STOPPED even with the agent running.
     // (IMAGENAME also takes no wildcard — the old `vale-agent*` never matched.)
-    const out =
-      spawnSync("tasklist", ["/FI", "IMAGENAME eq vale-agent.exe"], {
-        encoding: "utf8",
-      }).stdout || "";
+    const agentState = processRunning("vale-agent.exe");
     // The report answers "where is this device, and is a swap still pending" —
     // the question that cost four hand reads (and one wrong conclusion) in the
     // incident. Gathering the facts is thin I/O; the SHAPE lives in the pure
@@ -1574,7 +1604,7 @@ const commands = {
     const latestVersion = latestCdnVersion();
 
     for (const line of statusReport({
-      agentRunning: out.includes("vale-agent"),
+      agentRunning: agentState === "unknown" ? null : agentState === "yes",
       installDir: DIR,
       exeExists: fs.existsSync(EXE_DST),
       port: agentPort(ETC_DIR),
@@ -2476,14 +2506,13 @@ const commands = {
         }
         // No shell:true — see status(): an unquoted filter through cmd.exe is
         // split at its spaces, so this reported STOPPED while cloudflared ran.
-        const out =
-          spawnSync("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], {
-            encoding: "utf8",
-          }).stdout || "";
+        const cfState = processRunning("cloudflared.exe");
         console.log(
-          out.toLowerCase().includes("cloudflared")
-            ? "tunnel: RUNNING"
-            : "tunnel: STOPPED",
+          cfState === "unknown"
+            ? "tunnel: state UNKNOWN -- could not list processes (tasklist failed); do not assume it is down"
+            : cfState === "yes"
+              ? "tunnel: RUNNING"
+              : "tunnel: STOPPED",
         );
         console.log("  binary:", cf);
         console.log("  config:", cfg);
@@ -2541,16 +2570,14 @@ const commands = {
           );
           process.exit(1);
         }
-        const running = (
-          spawnSync("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], {
-            encoding: "utf8",
-          }).stdout || ""
-        )
-          .toLowerCase()
-          .includes("cloudflared");
-        if (!running) {
+        const started = processRunning("cloudflared.exe");
+        if (started !== "yes") {
           console.error(
-            "tunnel: cloudflared did not come up -- see the tunnel log; the agent still auto-spawns it on boot",
+            "tunnel: cloudflared did not come up" +
+              (started === "unknown"
+                ? " (and the process list could not be read, so this is not a verdict)"
+                : "") +
+              " -- see the tunnel log; the agent still auto-spawns it on boot",
           );
           process.exit(1);
         }

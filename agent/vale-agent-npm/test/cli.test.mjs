@@ -599,6 +599,62 @@ test("writeBoxedVersions: writes a parseable manifest; hostile dirs stay silent"
 // These tests pin the report's CONTENT, because the failure mode is an
 // omission: a `status` that prints three plausible lines while leaving out the
 // release version looks perfectly healthy.
+test("statusReport: an UNREADABLE process list is not 'STOPPED'", () => {
+  const { statusReport } = require("../bin/vale.js");
+  // `agentRunning: null` means the process list could not be READ. Reporting STOPPED
+  // there is a claim of ABSENCE from a failed read — and for the agent itself that is
+  // the worst possible answer ("your device is down" when nobody looked). Fourth
+  // instance of this shape; the field follows the rule its neighbours state.
+  const unknown = statusReport({
+    agentRunning: null,
+    installDir: "D:\\Vale",
+    exeExists: true,
+    port: 18080,
+    releaseVersion: "1.2.359",
+    updateMarkerMs: null,
+    updateMarkerUnreadable: false,
+    packageVersion: "1.2.359",
+    latestVersion: "1.2.359",
+    nowMs: 1_700_000_000_000,
+  }).join("\n");
+  assert.match(
+    unknown,
+    /UNKNOWN/,
+    "an unreadable process list is reported as UNKNOWN",
+  );
+  assert.match(
+    unknown,
+    /not a verdict/,
+    "and says so, rather than implying STOPPED",
+  );
+  assert.doesNotMatch(
+    unknown,
+    /status: STOPPED/,
+    "must not claim the agent is stopped when the probe never answered",
+  );
+
+  // The two real answers must still be exact.
+  const facts = {
+    installDir: "D:\\Vale",
+    exeExists: true,
+    port: 18080,
+    releaseVersion: "1.2.359",
+    updateMarkerMs: null,
+    updateMarkerUnreadable: false,
+    packageVersion: "1.2.359",
+    latestVersion: "1.2.359",
+    nowMs: 1_700_000_000_000,
+  };
+  assert.match(
+    statusReport({ ...facts, agentRunning: true }).join("\n"),
+    /status: RUNNING/,
+  );
+  assert.match(
+    statusReport({ ...facts, agentRunning: false }).join("\n"),
+    /status: STOPPED/,
+  );
+});
+
 test("statusReport: reports the running release and a FAILED update, not just RUNNING", () => {
   const { statusReport } = require("../bin/vale.js");
   const now = 1_700_000_000_000;
