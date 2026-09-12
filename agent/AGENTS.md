@@ -488,7 +488,94 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 33 (a fresh audit of `system_*` found two
+Last updated: 2026-09-11 round 34 (a tool that answered "no process matched"
+from a command that never ran; a state I shipped with no dot; and `startup.log`
+finally served). Commit: 9de7034c, plus 1.2.340.
+  (1) `system_process_kill` BY NAME WAS A SILENT NO-OP OFF WINDOWS, AND IT LIED
+  ABOUT IT. The `pgrep` fallback sat inside `if let Ok(o) = &r`, so it ran only
+  when `taskkill` RAN and failed. Where `taskkill` cannot be spawned at all —
+  any non-Windows host — nothing looked, `killed` stayed empty, and the operator
+  was told "no process matched <name>". That is not a failure to act: it is a
+  FALSE STATEMENT ABOUT THE PROCESS TABLE, manufactured from a command that never
+  ran. The pid branch above has always done it correctly (`!ok` catches both a
+  failed `taskkill` and one that could not start), so this is the TWIN RULE
+  applied to one branch and not the other. The fallback now covers the spawn
+  error, and when NEITHER tool exists the answer says the kill could not be
+  ATTEMPTED rather than falling through to the same false claim.
+  Its test's PREMISE was the defect: the comment read "pgrep finds no pids (and
+  taskkill is absent outside Windows) → no process matched" — treating the
+  ABSENCE of the Windows tool as the REASON for that answer, which is exactly the
+  reasoning that produced the bug.
+  WHY THE PIN IS STRUCTURAL, AND ITS HONEST LIMIT. Provoking "no matcher exists"
+  means emptying `PATH` — process-global state in a suite that runs its tests in
+  PARALLEL THREADS of one process. My first version did that behind the module's
+  env lock and BROKE EIGHT UNRELATED TESTS, because the lock only excludes tests
+  that also take it and the terminal tests spawn shells. That is the THIRD time
+  this log records process-global state colliding with parallel tests; the fix is
+  not a wider lock but not reaching for the global at all. The pin then took three
+  more attempts to get right, each failing against CORRECT code: a fixed-length
+  window read a NEIGHBOURING tool, and the next version read the TEST MODULE —
+  whose assertion message QUOTES the string it forbids. A check that reads its own
+  text always finds what it is looking for. It now pins the correct `matches!`
+  construct positively, in a window bounded to the function. LIMIT, STATED: I did
+  not produce a compiling mutation demonstrating this pin biting.
+  (2) I SHIPPED A STATE WITH NO VISUAL CHANNEL IN ROUND 31. `bg` was added to
+  `PathState`, returned by `cardState` and rendered as `data-state` — while
+  `data-state="bg"` occurred ZERO times in every stylesheet AND in the built
+  artifact. Base `.cmd-dot` sets only size and border-radius, so an unmatched state
+  is an INVISIBLE 8px circle: the dot did not render unstyled, it rendered NOTHING.
+  The round-31 tests asserted words and counts, which is exactly the layer where
+  the bug was not.
+  THE DURABLE FIX IS NOT THE TWO CSS RULES. `PATH_STATES` is now the ONE list with
+  `PathState` DERIVED from it, and `statePalette.test.ts` iterates it and requires
+  every state to have a rule in the BUILT sheet. That contract used to iterate a
+  HARDCODED five names — a contract that enumerates its own subjects cannot notice
+  a new one, which is why `bg` sat outside the guarantee the test exists to state.
+  The sheet's legend said "FIVE states" and now says six, naming the new channel
+  (half-fill + ring, keeping the circle-and-FILL vocabulary the legend describes).
+  Mutation-proven: deleting the rule fails two tests with "has NO rule, so a step
+  in that state renders an invisible dot" — my own regression, restored.
+  (3) `startup.log` IS NOW SERVED BY `/api/logs`. The route's own doc has listed it
+  among the files layout v2 moved into that directory since the route was written,
+  while the served set was three files without it — so the only record of a rotated
+  `device_token` was the one the operator's log card could not read, and the symptom
+  it explains (every client 401s) is total and otherwise unexplained. Pinned by
+  NAME, not by count, so dropping a different file to make room cannot pass.
+  VERIFIED ON d1: `names=agent.log,vale-update.log,mcp_diag.log,startup.log`,
+  `startup_present=True`.
+  (4) THE DEVICE WAS SIX RELEASES BEHIND AGAIN (1.2.334 vs 1.2.340) and the first
+  update attempt returned "fetch failed" — which the docs say looks identical to a
+  successful swap. Checked BY EFFECT: still 1.2.334, no `update requested` receipt,
+  nothing in flight, so the command never reached the device; retried and it took
+  (`release: 1.2.340`). THE DELIVERY GAP IS NOW THE MOST REPEATED FINDING IN THIS
+  LOG and it is caught only by looking — a future round should consider a check.
+  (5) RELEASED 1.2.340. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the FOURTEENTH consecutive release.
+  (6) PANEL AUDIT FINDINGS NOT ACTED ON, recorded with evidence so the next round
+  does not re-derive them. F1 is the sharpest and is ROUND 27's PATTERN EXACTLY:
+  `useCommandEvents` computes `readState` ("reading"|"ok"|"unreadable") and it has
+  ONE consumer (the Archive); the live slice drops it, so `TrajectoryView` renders
+  "No commands in this session yet." and `PathView` renders "This session has not
+  run a command." DURING EVERY SESSION SWITCH and on any failed read — while the
+  rule is written down twice ("must not stand in for a failed read") and honoured
+  once. Also open: a browser action that FAILED TO SPAWN renders as "running" in
+  `EvidenceDrawer` (`exit_code === null`, which is exactly what the device writes
+  for a spawn failure) and its `stderr_tail` is fetched and never rendered; the
+  panel's sixth state has no visual channel (FIXED here); `usePlugins` derives one
+  fact twice and reports "Stopped" for a status that was never read; the
+  SettingsPage names `<install>/memory/memory.jsonl` where the store is
+  `<data>/memory` (round 32 fixed six Rust paths of this family and missed the
+  operator-facing copy); `useSSE`'s comment guarantees a 5 s retry that was removed
+  in round 163; three hand-written "is this an error?" prefix lists, all different;
+  the device timeline silently drops the middle of a >500-event window and its one
+  comment claims the limit is "large enough that a run's events are not cut in
+  half" while the device keeps the NEWEST; and `lib/path.ts`'s header denies a
+  "who ran this" capability the same file implements 100 lines below.
+  Gates: agent 583 default / 634 feat-gated (was 582/633), clippy -D warnings clean
+  BOTH configs, fmt clean, xwin OK; gateway 764 + format; panel 492 (was 491) + build.
+
+Previous round: 2026-09-11 round 33 (a fresh audit of `system_*` found two
 descriptions stating behaviour the handlers do not have — binary reads that
 promised an error and returned mojibake, and an upload described as streamed that
 reads the whole file into memory). Commit: 32aaa353, plus 1.2.339.
