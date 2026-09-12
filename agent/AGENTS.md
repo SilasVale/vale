@@ -519,7 +519,39 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 65 (two more console items, both "the UI states
+Last updated: 2026-09-11 round 66 (the console's LAST structural audit item: the
+Overview asserted a false zero about a fleet it could not read, and linked non-admins
+at a page that bounces them — the same shape as round 64, and fixed the same way).
+Commit: 2107e396. Worker deployed; three cases verified live.
+  (1) WHAT IT SAID FROM A READ THAT NEVER SUCCEEDED: the tile read "0/0" because
+  `getDevices()`'s `.catch(() => {})` left `devices` at its `[]` initial value and the
+  tile computes `${online}/${length}`; and the fleet card said "No devices yet — add
+  your first one in Devices." — an INSTRUCTION built on a false premise about a fleet
+  the page could not see.
+  (2) FIXED THE WAY ROUND 64 FIXED `Users`, because the pattern is the console's own:
+  `devices` is `Device[] | null` (`null` = not read, or the read failed), the tile shows
+  `—` rather than a number it does not have, and the fleet card gained the error banner
+  + Retry that `DevicesPanel` already uses.
+  (3) AND THE LINKS WERE DEAD FOR NON-ADMINS: the tile and "View all ->" both pointed
+  at `/devices`, which `AdminOnly` redirects straight back to `/` — a click that appears
+  to do nothing. The tile is a `<div>`, not a `<Link>`, when there is nowhere to go, and
+  "View all" is not rendered for a non-admin. A card with no destination is not a link.
+  (4) VERIFIED BY EFFECT, three cases: admin+failed -> "—" plus "could not read the
+  device list" + Retry; admin+1 device -> "0/1" (truthful); non-admin+403 -> "—" and the
+  element is a DIV, not an ANCHOR. A genuinely EMPTY fleet still says "no devices yet" —
+  true when the read succeeded, which is exactly the distinction the old code could not
+  make.
+  (5) CONSOLE AUDIT IS NOW DOWN TO ONE ITEM: the 8-key status rendered twice (chips in
+  the token card and a full card below it), and the "Channels healthy" tile pointing at
+  `/keys`, a page with no channel information. PANEL REMAINS, and needs a release to
+  reach the device: DesktopShell shadowing App's sessionViews (Ctrl+Shift+Y is a no-op),
+  the rail's ✕ mislabelled "Archive session" with no undo, the Memory empty state
+  contradicting its own +New, Logs panel-only while accelerators are desktop-only, and
+  the landing page's `--dsw-alias-*` rename.
+  Gates: gateway-ui 11 + build + deploy + devices render smoke; custom-property green;
+  token contract green; CI green on main; d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 65 (two more console items, both "the UI states
 something the server contradicts" — including a button naming a channel that is not in
 the catalogue at all). Commit: da3575eb. Worker deployed; both verified live.
   (1) THE MODELS PAGE'S DEFAULT CARD WAS STRUCTURALLY ALWAYS EMPTY. `"none"` is the
