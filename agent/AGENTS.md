@@ -488,7 +488,73 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 38 (a 2xx the console could not read became a
+Last updated: 2026-09-11 round 39 (THE DELIVERY GAP FINALLY HAS A CHECK — the
+most repeated finding in this log, closed where an operator already looks).
+Commit: 156a991e, plus 1.2.346.
+  (1) IT IS THE MOST REPEATED FINDING HERE AND IT WAS NEVER CHECKED. Round after
+  round records a device found many releases behind the CDN — five, six, and once
+  THREE IN A SINGLE ROUND — and every time the only thing that noticed was a human
+  looking. The log has said for several rounds that "a future round should build
+  the check". `vale status` answered "what is this device running" and never "is
+  that current", and those two questions are answered by DIFFERENT MACHINES: the
+  device knows its own release, the CDN knows the newest one, and nothing had ever
+  put them side by side.
+  It does now, in the one command an operator already runs after every update.
+  (2) VERIFIED IN BOTH DIRECTIONS ON THE LIVE DEVICE, which is the strongest
+  evidence this log has produced for anything. With the CLI updated and the device
+  not yet:
+    `latest: 1.2.346 is on the CDN -- THIS DEVICE IS BEHIND by 1 release; run 'vale update'`
+  and after the swap:
+    `latest: 1.2.346 (this device is current)`
+  The feature caught the exact gap it was built for, on the device, in the
+  operator's own command — not in a test fixture.
+  (3) AN UNREADABLE CDN IS NOT AGREEMENT. A failed check prints "could NOT be
+  checked … this says nothing about whether the device is current", because
+  silence here is indistinguishable from "fine" and that is the failure mode this
+  whole log is about. NOT THEORETICAL: while verifying, the first live call
+  returned `null` from a transient blip and the line said so, then answered
+  `1.2.345` on the next three attempts. The fetch is `curl` with a 3 s cap — the
+  same tool `vale rollback` uses for its HEAD check — so `status`, which an
+  operator runs when something is ALREADY wrong, cannot hang on a bad network.
+  (4) `behindBy` COUNTS ONLY WHAT IT CAN COUNT. Patch distance within a minor is a
+  real number ("5 releases"); a cross-minor jump is "a release line, not a patch
+  count", because the CDN prunes last-5-per-minor and `vale rollback` refuses that
+  jump for the same reason; an unparseable version is "an unknown number of
+  releases". It never fabricates a figure a reader would act on.
+  (5) AND THE FIRST VERSION HAD THE BUG THIS LOG KEEPS FINDING — committed by me,
+  ONE ROUND AFTER fixing its twin in the panel. It tested `latestVersion === null`,
+  so a caller that merely OMITS the field fell through to the drift branch with
+  `undefined` and crashed reading `.split` of nothing; the PRE-EXISTING
+  `statusReport` test caught it immediately. Missing and null are both "we do not
+  know what the CDN has"; only a STRING is a comparison. The `undefined`-is-not-
+  `null` lesson, re-learned in a new language within one round.
+  (6) RELEASED 1.2.346, updated d1 and confirmed the line flipped to "current".
+  CI and the release workflow green on the tag; keep-latest left ONE release and
+  ONE tag; the dual-builder audit reported the STRONGER WARN verdict for the
+  NINETEENTH consecutive release. (The audit itself returned "Empty reply from
+  server" on the first attempt and passed on retry — a transient, noted because
+  this log records failures that were discarded as successes.)
+  (7) STILL OPEN, with evidence. From the panel data-layer audit: `useSSE`'s
+  comment guarantees a retry removed in round 163 and the sweep loss is real;
+  `useSessions` presents a stale list as current (`?? Date.now()` for `openedAt`,
+  which the device never sends, rendered as the session's AGE and used for
+  sorting) and its failed-fetch test is VACUOUS (it never consumes its
+  `mockRejectedValueOnce`, so it passes whether or not the failure path works);
+  `usePlugins` invents "ok" for a start/stop whose answer carried no status;
+  `PluginsPage` renders `started_at ?? Date.now()` as "up 0s" for the production
+  EXTERNAL playwright branch, which omits that field; `revokeGrants` substitutes
+  `[]` for a missing device field and reports success while its twin guards it;
+  `useCommandEvents`'s absent-`found` default of `true` is a completeness claim,
+  not a neutral one. From the CLI: `vale uninstall` cannot report failure;
+  `vale update`'s receipt result is discarded; the staging guard is a REGION;
+  the CLI's fallback roots differ from the agent's; `autostart off` prints a
+  success sentence after a per-task failure. From earlier: a backgrounded
+  command's exit code is memory-only; the migration test's drive-letter fixtures;
+  no Windows test job in CI.
+  Gates: agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 766 + format; CLI 35 (was 31); panel 504.
+
+Previous round: 2026-09-11 round 38 (a 2xx the console could not read became a
 SUCCESSFUL tool result; one update lock had two staleness windows; and a failed
 inventory read claimed progress for ever). Commits: 79402d50, 5a70b668, plus
 1.2.344 and 1.2.345.
