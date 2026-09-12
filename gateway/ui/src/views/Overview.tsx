@@ -3,7 +3,13 @@ import { Link } from "react-router-dom";
 import { useAuth } from "../contexts/AuthContext.tsx";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
-import { api, ApiError, type Device, type DeviceStatus, type HealthChannel } from "../api/client.ts";
+import {
+  api,
+  ApiError,
+  type Device,
+  type DeviceStatus,
+  type HealthChannel,
+} from "../api/client.ts";
 import { maskToken } from "../lib/format.ts";
 import { Card, PageHeader, CopyButton } from "../components/ui.tsx";
 
@@ -49,19 +55,38 @@ export default function Overview() {
   const [tokenRevealed, setTokenRevealed] = useState(false);
   const [tokenNote, setTokenNote] = useState("");
 
-  const [devices, setDevices] = useState<Device[]>([]);
+  // `null` = not read yet OR the read FAILED — deliberately not `[]`, which the page
+  // would render as "0/0 devices" and "no devices yet": a FALSE statement about a
+  // fleet, made confidently, from a read that never succeeded.
+  const [devices, setDevices] = useState<Device[] | null>(null);
+  const [devicesError, setDevicesError] = useState<string | null>(null);
   const [status, setStatus] = useState<Record<string, DeviceStatus>>({});
   const [channels, setChannels] = useState<HealthChannel[]>([]);
   const [users, setUsers] = useState<number | null>(null);
 
   const loadDashboard = useCallback(async () => {
-    api.getDevices().then((d) => setDevices(d.devices || [])).catch(() => {});
-    api.getHealth().then((h) => setChannels(h.channels || [])).catch(() => {});
+    api
+      .getDevices()
+      .then((d) => {
+        setDevices(d.devices || []);
+        setDevicesError(null);
+      })
+      .catch((err) => {
+        setDevices(null);
+        setDevicesError(err instanceof ApiError ? err.message : String(err));
+      });
+    api
+      .getHealth()
+      .then((h) => setChannels(h.channels || []))
+      .catch(() => {});
     // EVERY admin-only read lives behind ONE guard. The plugin probe used to sit
     // outside it, so a non-admin's landing page called an admin endpoint on load and
     // every 60 s — and a 401 from it signed them out (see the worker's mcp.ts).
     if (user?.role === "admin") {
-      api.getUsers().then((u) => setUsers(u.users?.length ?? null)).catch(() => {});
+      api
+        .getUsers()
+        .then((u) => setUsers(u.users?.length ?? null))
+        .catch(() => {});
       try {
         const s = await api.getPluginStatus(true);
         setStatus(s.devices || {});
@@ -102,14 +127,38 @@ export default function Overview() {
   const keyEntries = KEY_ORDER.map((name) => ({ name, info: user?.keys?.[name] }));
   const configuredCount = keyEntries.filter((k) => k.info?.configured).length;
 
-  const onlineCount = devices.filter((d) => status[d.name]?.agent_up).length;
+  const isAdmin = user?.role === "admin";
+  const onlineCount = (devices ?? []).filter((d) => status[d.name]?.agent_up).length;
   const channelsOk = channels.filter((c) => c.ok).length;
 
   const stats = [
-    { label: t("stat.devices"), value: `${onlineCount}/${devices.length}`, tone: onlineCount > 0 ? "ok" : "off", to: "/devices" },
-    { label: t("stat.channels"), value: channels.length ? `${channelsOk}/${channels.length}` : "—", tone: channels.length && channelsOk === channels.length ? "ok" : channels.length ? "warn" : "off", to: "/keys" },
-    { label: t("stat.keys"), value: `${configuredCount}/${keyEntries.length}`, tone: configuredCount > 0 ? "ok" : "off", to: "/keys" },
-    { label: t("stat.users"), value: users === null ? "—" : String(users), tone: "info", to: users === null ? "/" : "/users" },
+    {
+      label: t("stat.devices"),
+      // "—" when we do not know, never "0/0" — and no link for a non-admin, who would
+      // be redirected straight back to this page by `AdminOnly`.
+      value: devices === null ? "—" : `${onlineCount}/${devices.length}`,
+      tone: devices === null ? "off" : onlineCount > 0 ? "ok" : "off",
+      to: isAdmin ? "/devices" : undefined,
+    },
+    {
+      label: t("stat.channels"),
+      value: channels.length ? `${channelsOk}/${channels.length}` : "—",
+      tone:
+        channels.length && channelsOk === channels.length ? "ok" : channels.length ? "warn" : "off",
+      to: "/keys",
+    },
+    {
+      label: t("stat.keys"),
+      value: `${configuredCount}/${keyEntries.length}`,
+      tone: configuredCount > 0 ? "ok" : "off",
+      to: "/keys",
+    },
+    {
+      label: t("stat.users"),
+      value: users === null ? "—" : String(users),
+      tone: "info",
+      to: users === null ? "/" : "/users",
+    },
   ];
 
   return (
@@ -127,12 +176,27 @@ export default function Overview() {
       {/* ── hero: stat band + token side card ── */}
       <div className="ov-hero">
         <div className="stat-band">
-          {stats.map((s) => (
-            <Link key={s.label} to={s.to} className={`stat-card stat-${s.tone}`}>
-              <span className="stat-value">{s.value}</span>
-              <span className="stat-label">{s.label}</span>
-            </Link>
-          ))}
+          {stats.map((s) => {
+            // A card with nowhere to go is not a link. Rendering one for a non-admin
+            // produced a click that `AdminOnly` silently redirected back here, which
+            // reads as "nothing happened".
+            const inner = (
+              <>
+                <span className="stat-value">{s.value}</span>
+                <span className="stat-label">{s.label}</span>
+              </>
+            );
+            const cls = `stat-card stat-${s.tone}`;
+            return s.to ? (
+              <Link key={s.label} to={s.to} className={cls}>
+                {inner}
+              </Link>
+            ) : (
+              <div key={s.label} className={cls}>
+                {inner}
+              </div>
+            );
+          })}
         </div>
 
         <Card
@@ -171,9 +235,26 @@ export default function Overview() {
       {/* ── fleet strip ── */}
       <Card
         title={t("overview.devicesTitle")}
-        headerExtra={<Link className="card-link" to="/devices">{t("overview.viewAll")} →</Link>}
+        headerExtra={
+          isAdmin ? (
+            <Link className="card-link" to="/devices">
+              {t("overview.viewAll")} →
+            </Link>
+          ) : undefined
+        }
       >
-        {devices.length === 0 ? (
+        {devicesError ? (
+          <div className="banner-error">
+            <span>
+              {t("overview.devicesFail")} — {devicesError}
+            </span>
+            <button className="btn btn-ghost btn-mini" onClick={() => void loadDashboard()}>
+              {t("devices.retry")}
+            </button>
+          </div>
+        ) : devices === null ? (
+          <p className="muted">{t("loading")}</p>
+        ) : devices.length === 0 ? (
           <p className="muted">{t("overview.devicesEmpty")}</p>
         ) : (
           <div className="dev-strip">
@@ -185,7 +266,9 @@ export default function Overview() {
                   <span className={`dev-mini-led${up ? " on" : ""}`} />
                   <span className="dev-mini-name">{d.name}</span>
                   <span className="dev-mini-meta">
-                    {up ? `v${st.version || d.lastVersion || "?"} · ${rel(st.checked_at)}` : t("overview.offline")}
+                    {up
+                      ? `v${st.version || d.lastVersion || "?"} · ${rel(st.checked_at)}`
+                      : t("overview.offline")}
                   </span>
                 </Link>
               );
@@ -218,7 +301,11 @@ export default function Overview() {
         <Card
           title={t("keys.title")}
           description={t("overview.keysHint")}
-          headerExtra={<Link className="card-link" to="/keys">{t("nav.keys")} →</Link>}
+          headerExtra={
+            <Link className="card-link" to="/keys">
+              {t("nav.keys")} →
+            </Link>
+          }
         >
           <div className="ov-keylist">
             {keyEntries.map(({ name, info }) => (
