@@ -3,30 +3,41 @@ import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
 import { api, ApiError, type User } from "../api/client.ts";
 import { maskToken } from "../lib/format.ts";
-import { Card, PageHeader, Badge } from "../components/ui.tsx";
+import { Card, PageHeader, Badge, Empty } from "../components/ui.tsx";
 
 export default function Users() {
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [users, setUsers] = useState<User[]>([]);
-  const [pwSet, setPwSet] = useState(false);
+  // `null` means NOT LOADED or the read FAILED — deliberately not `[]`, which would
+  // claim there are no users. `pwSet` is tri-state for the same reason.
+  const [users, setUsers] = useState<User[] | null>(null);
+  const [pwSet, setPwSet] = useState<boolean | null>(null);
   const [newPw, setNewPw] = useState("");
   const [pwMsg, setPwMsg] = useState("");
+  const [usersError, setUsersError] = useState<string | null>(null);
   const [inviteCode, setInviteCode] = useState("");
   const [inviteLoading, setInviteLoading] = useState(false);
 
+  // THREE STATES, NOT TWO. Both reads used to swallow their failure into `noop`, so
+  // a FAILED read rendered as a definite negative: the password card said "not set"
+  // when the truth was "could not read it", and a failed user list rendered as an
+  // empty card, indistinguishable from "there are no users". `DevicesPanel` already
+  // separates failed from empty; this page did not.
   const loadUsers = useCallback(async () => {
+    setUsersError(null);
     try {
       const data = await api.getUsers();
       setUsers(data.users || []);
-    } catch {
-      /* noop */
+    } catch (err) {
+      setUsers(null);
+      setUsersError(err instanceof ApiError ? err.message : String(err));
     }
     try {
       const pw = await api.getAdminPassword();
       setPwSet(!!pw.set);
     } catch {
-      /* noop */
+      // UNKNOWN, not false — the render says so rather than claiming "not set".
+      setPwSet(null);
     }
   }, []);
 
@@ -81,7 +92,13 @@ export default function Users() {
 
       <Card title={t("adminpw.title")} description={t("adminpw.desc")}>
         <div className="token-row">
-          <code className="token">{pwSet ? t("adminpw.isSet") : t("adminpw.notSet")}</code>
+          <code className="token">
+            {pwSet === null
+              ? t("adminpw.unknown")
+              : pwSet
+                ? t("adminpw.isSet")
+                : t("adminpw.notSet")}
+          </code>
         </div>
         <div className="input-row mt-12">
           <input
@@ -122,32 +139,46 @@ export default function Users() {
       </Card>
 
       <Card title={t("users.list")}>
-        <div className="list">
-          {users.map((u) => (
-            <div className="list-row" key={u.id}>
-              <div className="list-main">
-                <div className="list-line">
-                  <span className="list-title">{u.username}</span>
-                  {u.role === "admin" && <Badge tone="info">{t("role.admin")}</Badge>}
+        {usersError && (
+          <div className="banner-error">
+            <span>
+              {t("users.loadFail")} — {usersError}
+            </span>
+            <button className="btn btn-ghost btn-mini" onClick={() => void loadUsers()}>
+              {t("devices.retry")}
+            </button>
+          </div>
+        )}
+        {users !== null && users.length === 0 && !usersError ? (
+          <Empty>{t("users.empty")}</Empty>
+        ) : (
+          <div className="list">
+            {(users ?? []).map((u) => (
+              <div className="list-row" key={u.id}>
+                <div className="list-main">
+                  <div className="list-line">
+                    <span className="list-title">{u.username}</span>
+                    {u.role === "admin" && <Badge tone="info">{t("role.admin")}</Badge>}
+                  </div>
+                  <div className="list-sub">{maskToken(u.token)}</div>
                 </div>
-                <div className="list-sub">{maskToken(u.token)}</div>
+                <div className="list-actions">
+                  <Badge tone={u.enabled ? "success" : "muted"}>
+                    {u.enabled ? t("user.enabled") : t("user.disabled")}
+                  </Badge>
+                  {u.role !== "admin" && (
+                    <button
+                      className="btn btn-ghost btn-mini"
+                      onClick={() => handleToggle(u.id, u.enabled)}
+                    >
+                      {u.enabled ? t("btn.disable") : t("btn.enable")}
+                    </button>
+                  )}
+                </div>
               </div>
-              <div className="list-actions">
-                <Badge tone={u.enabled ? "success" : "muted"}>
-                  {u.enabled ? t("user.enabled") : t("user.disabled")}
-                </Badge>
-                {u.role !== "admin" && (
-                  <button
-                    className="btn btn-ghost btn-mini"
-                    onClick={() => handleToggle(u.id, u.enabled)}
-                  >
-                    {u.enabled ? t("btn.disable") : t("btn.enable")}
-                  </button>
-                )}
-              </div>
-            </div>
-          ))}
-        </div>
+            ))}
+          </div>
+        )}
       </Card>
     </div>
   );
