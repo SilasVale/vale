@@ -23,7 +23,7 @@ import * as net from "net";
 
 // url-policy.ts (shipped alongside, staged by vale update): pure
 // origin/URL predicates, unit-tested in test/url-policy.test.mjs.
-import { isBaseOrigin, frameUrlOk, isDesktopSpaUrl, sanitizeBrowserUrl, certBypassAllowed, agentBase, setAgentPort, parseAgentPort } from "./url-policy";
+import { isBaseOrigin, frameUrlOk, isDesktopSpaUrl, controlOriginOk, sanitizeBrowserUrl, certBypassAllowed, agentBase, setAgentPort, parseAgentPort } from "./url-policy";
 // IPC audit #3: /api/status is TOKEN-GATED (same fact the watchdog fix cites);
 // credential-less fetches got 401 -> version title + tray vitals were DEAD on
 // every configured device. The shell runs as the interactive admin, and the
@@ -183,6 +183,13 @@ let menuQueue: string[] | null = [];  // null = SPA confirmed ready, send direct
 let menuFlushTimer: NodeJS.Timeout | null = null;
 /** Deliver one menu command to the SPA (win validated by callers). */
 function emitMenu(cmd: string): void {
+  // THE CALLERS VALIDATE `win` — TypeScript cannot see that, so `npm run build`
+  // in this directory has been RED on it for as long as the line has existed.
+  // Nothing noticed because CI compiles this tree with `--noCheck` (matching the
+  // release flow) and this package's own `npm test`/`npm run build` are run by
+  // NOBODY — there is no CI step with this working directory. Guarding here says
+  // the same thing the comment did, in a form the compiler accepts.
+  if (!win || win.isDestroyed()) return;
   win.webContents.send("vale-menu", cmd);
 }
 function sendMenu(cmd: string): void {
@@ -717,9 +724,12 @@ const httpServer = http.createServer((req, res) => {
   // to its configured gateway origin, never to 127.0.0.1:9444), so the
   // veto stays as-is; an extension caller needs an explicit entry here.
   {
-    const origin = req.headers.origin;
-    if (origin && origin !== "null"
-      && !/^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?|file:\/\/)/i.test(origin)) {
+    // THE DECISION LIVES IN url-policy.ts, beside its siblings. This was an
+    // inline regex with NO `$` ANCHOR, so `http://127.0.0.1.evil.com` passed —
+    // the same class as the `startsWith(BASE)` bug that module exists to kill,
+    // whose own test pins the lookalike for the IPC twin. Delegating also means
+    // the predicate finally has a test, because the shell's suite never ran.
+    if (!controlOriginOk(req.headers.origin)) {
       return send({ ok: false, error: "forbidden origin" }, 403);
     }
   }

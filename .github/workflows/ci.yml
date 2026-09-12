@@ -310,6 +310,23 @@ jobs:
         run: npm test
         working-directory: agent/vale-agent-npm
 
+      # (d) THE DESKTOP SHELL'S SUITE, WHICH NOTHING RAN.
+      #
+      # `agent/vale-desktop-electron/package.json` has defined
+      # `"test": "node --test"` for as long as its one test file has existed, and
+      # NO job had this working directory — every other `npm test` above and in
+      # release.yml names gateway, gateway-ui, panel-react, vale-agent-npm or
+      # index, and CI only COMPILES the shell. So the shell's pure security
+      # predicates had no home and could not be pinned, which is precisely how an
+      # origin veto with NO `$` anchor survived in main.ts while the policy
+      # module beside it documented that exact bug class as fixed.
+      #
+      # Same shape and same zero-dependency story as (c): node --test over node
+      # builtins against the committed .js, so no install step.
+      - name: desktop shell tests
+        run: npm test
+        working-directory: agent/vale-desktop-electron
+
   # index worker unit tests — pure node:test, zero deps, no lockfile, so
   # NO install step (like the npm CLI tests above). Well under 2 min.
   index:

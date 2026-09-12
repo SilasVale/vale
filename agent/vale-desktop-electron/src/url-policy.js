@@ -16,6 +16,7 @@ exports.agentBase = agentBase;
 exports.parseAgentPort = parseAgentPort;
 exports.isBaseOrigin = isBaseOrigin;
 exports.frameUrlOk = frameUrlOk;
+exports.controlOriginOk = controlOriginOk;
 exports.isDesktopSpaUrl = isDesktopSpaUrl;
 exports.isPrivateHost = isPrivateHost;
 exports.certBypassAllowed = certBypassAllowed;
@@ -76,6 +77,42 @@ function isBaseOrigin(url) {
 // event.senderFrame.url).
 function frameUrlOk(url) {
     return isBaseOrigin(url || "");
+}
+// THE LOOPBACK CONTROL API'S ORIGIN VETO (port 9444), and the reason it lives
+// here: the HTTP twin of IPC audit #1 was never fixed. `main.ts` tested the
+// caller's Origin with
+//
+//   /^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?|file:\/\/)/i
+//
+// which has NO `$` ANCHOR — so `http://127.0.0.1.evil.com`, `http://localhost.evil.com`
+// and `http://127.0.0.1x` all passed, and the API reflects the caller's Origin,
+// so a foreign page could READ /api/browser-session/list (session URLs) and
+// /api/shell/icon-status (local paths) and POST /api/browser-session/open and
+// /api/shell/start-agent. That is the SAME class as the `startsWith(BASE)` bug
+// this module was extracted to kill; `isDesktopSpaUrl`'s own test pins the
+// sibling-host lookalike, and the HTTP path kept the old shape because it was
+// the one decision that never moved in here.
+//
+// An ABSENT Origin is allowed deliberately: the API is also driven by `curl`
+// and native tooling, which send none, and `main.ts` documents that carve-out.
+// This is a nuisance barrier for browser pages, NOT authentication — the IPC
+// bridge stays separately gated on the frame's own origin.
+function controlOriginOk(origin) {
+    if (!origin || origin === "null")
+        return true; // native tooling / the data: wait page
+    try {
+        const u = new URL(origin);
+        if (u.protocol === "file:")
+            return true;
+        if (u.protocol !== "http:" && u.protocol !== "https:")
+            return false;
+        return u.hostname === "127.0.0.1" || u.hostname === "localhost";
+    }
+    catch {
+        // Unparseable is NOT allowed: a value the policy cannot read must never be
+        // treated as one it recognises.
+        return false;
+    }
 }
 // Main-window tripwire allow-list (did-navigate backstop): the desktop SPA
 // subtree of the base origin. STRING-PREFIX check (startsWith(BASE +

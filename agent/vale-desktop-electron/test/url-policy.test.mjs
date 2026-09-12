@@ -106,3 +106,41 @@ test("parseAgentPort: server.port only, strict", async () => {
   assert.equal(parseAgentPort('server:\n  port: abc\n'), null, "non-numeric rejected");
   assert.equal(parseAgentPort(""), null);
 });
+
+// THE LOOPBACK CONTROL API'S ORIGIN VETO (port 9444).
+//
+// This predicate lived as an inline regex IN main.ts with no `$` anchor, so
+// `http://127.0.0.1.evil.com` passed it — the exact class the module header
+// records as IPC audit #1 ("startsWith(BASE) was BYPASSABLE"), whose
+// `isDesktopSpaUrl` test TWO TESTS ABOVE pins the sibling-host lookalike for.
+// The HTTP twin simply never moved into the policy module, and this suite ran
+// NOWHERE in CI, so nothing could notice.
+test("controlOriginOk: the loopback control API's origin veto", async () => {
+  const { controlOriginOk } = await import("../src/url-policy.js");
+
+  // Allowed: the desktop SPA and any loopback port.
+  assert.equal(controlOriginOk("http://127.0.0.1:9444"), true);
+  assert.equal(controlOriginOk("http://127.0.0.1:18080"), true);
+  assert.equal(controlOriginOk("http://localhost:9444"), true);
+  assert.equal(controlOriginOk("file:///C:/x/wait.html"), true);
+  // ABSENT and "null" are deliberate: curl and native tooling send no Origin,
+  // and the data: wait page sends "null". That carve-out is documented in
+  // main.ts and is what keeps this a nuisance barrier rather than auth.
+  assert.equal(controlOriginOk(undefined), true);
+  assert.equal(controlOriginOk(""), true);
+  assert.equal(controlOriginOk("null"), true);
+
+  // THE LOOKALIKES THE OLD REGEX ADMITTED — each one a page an attacker hosts.
+  assert.equal(controlOriginOk("http://127.0.0.1.evil.com"), false, "sibling-host lookalike");
+  assert.equal(controlOriginOk("http://localhost.evil.com"), false, "sibling-host lookalike");
+  assert.equal(controlOriginOk("http://127.0.0.1x"), false, "trailing character");
+  assert.equal(controlOriginOk("http://127.0.0.1.evil.com:9444"), false);
+  // The userinfo trick from IPC audit #1, applied to this path.
+  assert.equal(controlOriginOk("http://127.0.0.1:9444@evil.com"), false, "userinfo trick");
+  assert.equal(controlOriginOk("https://127.0.0.1:9444"), true, "https loopback is still loopback");
+  assert.equal(controlOriginOk("http://evil.com"), false);
+  assert.equal(controlOriginOk("http://192.168.1.5:9444"), false, "not loopback");
+  assert.equal(controlOriginOk("chrome-extension://abcd"), false);
+  // A value the policy cannot READ must never be treated as one it recognises.
+  assert.equal(controlOriginOk("not a url"), false);
+});
