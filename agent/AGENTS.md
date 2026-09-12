@@ -488,7 +488,69 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 34 (a tool that answered "no process matched"
+Last updated: 2026-09-11 round 35 (the live views claimed a session had run
+NOTHING, from a read that had not finished or had failed — round 27's defect one
+field over, in the same object literal). Commit: 832c7aa4, plus 1.2.341.
+  (1) `useCommandEvents` HAS REPORTED `readState` FOR LONGER THAN THE ARCHIVE HAS
+  USED IT, and the Archive was its ONLY consumer. The live slice dropped it:
+  `App` built `{cards, events, firstSeq}` — the SAME object literal round 27 taught
+  to carry `firstSeq`, ONE LINE away from this field. So `TrajectoryView` printed
+  "No commands in this session yet." and `PathView` printed "This session has not
+  run a command." unconditionally, through TWO reachable windows: every SESSION
+  SWITCH (`useCommandEvents` resets `events` to `[]` synchronously while the new
+  read is in flight, so the operator is told the session is empty for the whole
+  round trip), and any read that failed or never succeeded.
+  (2) "THIS SESSION HAS NOT RUN A COMMAND" IS A CLAIM ABOUT THE DEVICE and is only
+  sayable once a read SUCCEEDED. The rule was already written down TWICE and
+  honoured once: `ArchivePage`'s header says "a session whose trail cannot be read
+  SAYS SO, and never renders as an empty history", and its test says the empty line
+  "is a CLAIM about the session … and must not stand in for a failed read". Both
+  sentences were about this field, and neither could see the two views that lacked
+  it. A rule stated twice and enforced once is this log's most productive family.
+  (3) THREE PARTS, and the second is the one that lasts. `lib/trailRead.ts` owns
+  the WORDING, because three views render this sentence and three copies of one
+  sentence is how this repo's surfaces come to disagree about what they are saying
+  (the Archive's phrasing is preserved verbatim). `readState` is a REQUIRED member
+  of the `CommandEvents` slice, exactly as `firstSeq` became in round 27 and for
+  the identical reason — and it paid immediately: the compiler surfaced BOTH `App`
+  mounts, every view prop, and three fixtures, INCLUDING
+  `TerminalWorkspace.test.tsx`, which PINS THE DEFECT as the live contract. The
+  distinction does not swallow the real case: a session that ran nothing and whose
+  read succeeded still says so, and a test asserts each of the three answers.
+  Mutation-proven: making the notice unconditional again fails three tests.
+  (4) RELEASED 1.2.341. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the FIFTEENTH consecutive release. d1 updated to it the same round
+  and verified by effect (`release: 1.2.341`).
+  (5) STILL OPEN, with evidence, in the order I would take them. (a) A browser
+  action that FAILED TO SPAWN renders as "running" in `EvidenceDrawer`: the device
+  writes `exit_code: null` for a spawn failure and the panel collapses that into
+  the running badge; the same lines mishandle an ABSENT field (`=== null` never
+  matches `undefined`, so a record without one renders "exit undefined" in the
+  error class), and `stderr_tail` — the text that would explain the failure — is
+  declared and rendered NOWHERE. `lib/runs.ts` does it right (`num()`) and
+  `ActivityPage` states the rule ("`exit 0` and no exit code was recorded are
+  different renderings"). (b) `usePlugins` derives one fact twice and reports
+  "Stopped" for a plugin status that was never read, on every mount until the
+  reply lands and permanently if the status fetch fails. (c) `SettingsPage` tells
+  the operator memory lives in `<install>/memory/memory.jsonl` where the store is
+  `<data>/memory` — round 32 fixed six RUST doc paths of this family and missed the
+  operator-facing copy. (d) `useSSE`'s comment guarantees a 5 s retry that was
+  removed in round 163, and the loss it describes is real. (e) The device timeline
+  silently drops the middle of a >500-event window while its one comment claims the
+  limit is "large enough that a run's events are not cut in half" — the device keeps
+  the NEWEST. (f) `lib/path.ts`'s header denies a "who ran this" capability the same
+  file implements 100 lines below. (g) `recipe.ts` omits `bg` from its state list,
+  so a path of backgrounded commands yields a clean-looking recipe. (h) From the
+  earlier audits: a backgrounded command's exit code is memory-only; the CLI's
+  registry fallbacks differ from the agent's; the migration test's drive-letter
+  fixtures; no Windows test job in CI.
+  (6) THE DELIVERY GAP REMAINS THE MOST REPEATED FINDING — it was caught only by
+  looking again this round, and a future round should consider a check for it.
+  Gates: agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 764 + format; panel 496 (was 492) + build.
+
+Previous round: 2026-09-11 round 34 (a tool that answered "no process matched"
 from a command that never ran; a state I shipped with no dot; and `startup.log`
 finally served). Commit: 9de7034c, plus 1.2.340.
   (1) `system_process_kill` BY NAME WAS A SILENT NO-OP OFF WINDOWS, AND IT LIED
