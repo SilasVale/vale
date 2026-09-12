@@ -265,6 +265,27 @@ it), so autostart is the only real "don't start at boot" control.
 
 Gateway (`gateway/`) deploys separately: `cd gateway && wrangler deploy`.
 
+**THE GATEWAY'S MODEL CATALOGUE IS HARDCODED AND NOTHING WATCHES IT.** It comes
+from `gateway/src/channels.ts`'s `MODEL_REGISTRY`, where one record carries SIX
+facets (advertised id, upstream wire slug, US-egress policy, web-search
+capability, health card, vision) and `model-registry.test.mjs` keeps them
+bidirectional. Adding or retiring a model means editing that source and
+redeploying — and no workflow deploys this worker (CI runs `wrangler deploy
+--dry-run` for the proxies only). So an upstream adding a model, or silently
+RETIRING one, tells nobody.
+
+`node scripts/model-drift.mjs [--json] [--strict] [--gateway <url>]` reports what
+each channel advertises against what its upstream offers. Four upstreams answer an
+unauthenticated `/models` (or 445, nv 82, cm 69, og 37); gmi/qw/amd/ds answer 401
+and are reported as NOT CHECKED rather than as empty. `advertisedNotOffered` is
+printed as CHECK — never as a verdict — because the router normalises further
+(`[1m]` markers, `og/` wire remaps) and raw name diffing reports false drift; see
+the first live run, which flagged one genuine absence (`nv/minimaxai/minimax-m3`
+is not in NVIDIA's list, and `wireModelName` passes `nv/` through UNCHANGED, so
+that entry routes a name NVIDIA does not offer) among several aliases that are
+fine. It is an OPS TOOL, deliberately NOT a CI gate: it needs four live
+third-party endpoints.
+
 ## Architecture
 
 vale-agent is a pure service — MCP server + terminal backends + SSE endpoints

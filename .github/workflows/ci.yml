@@ -233,6 +233,14 @@ jobs:
       # PATH), so nothing about the comparison is re-implemented in the test.
       - name: release-audit regression checks
         run: bash scripts/test/release-audit.bash
+      # The model-drift report's PURE half. The report itself needs four live
+      # third-party endpoints, so it can never be a CI gate — an unreachable
+      # upstream would fail the build for a reason unrelated to the change. What
+      # CAN run here is the normalisation and the comparison, which is where a
+      # checker goes wrong quietly: the first version compared raw
+      # prefix-stripped names and reported false drift on every channel.
+      - name: model-drift regression checks
+        run: node scripts/test/model-drift-check.mjs
       # Smoke-helper guards: assert_want_sha256 (shared pre-publish sha gate,
       # twin of the worker's SHA256_RE) — same convention, zero new tooling.
       - name: smoke-helper regression checks
