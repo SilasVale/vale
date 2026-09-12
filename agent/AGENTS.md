@@ -515,7 +515,62 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 44 (the first redesign slice that changes what a
+Last updated: 2026-09-11 round 45 (I swept the live panel for EVERY text node under
+the AA contrast bar instead of spot-checking; four defects fell out, and every one
+was a measured fix that already existed on its SIBLING). Commits: 2ad79c06,
+8f3def97. Released 1.2.350 and 1.2.351; d1 is on 1.2.351 and current; the
+dual-builder audit is CLEAN for the second consecutive release.
+  (1) THE STEADY STATUS READOUT WAS UNREADABLE. `.desktop-status.idle` — session
+  count, release, uptime, CPU, memory, and the ONLY place the release appears
+  anywhere in the panel — painted `--chrome-ink-faint` on `--chrome-bg-2`:
+  **2.56:1** in light, 3.45 in dark, at 11.5px. Below the 4.5 TEXT bar AND the 3.0
+  MARK bar, in both themes, in the panel's DEFAULT state.
+  (2) I HAD ALREADY PUBLISHED THE OPPOSITE CLAIM, ONE ROUND EARLIER. Round 44's log
+  says the status bar measures 7.03 and is fine. My probe had matched the wrong
+  element. A single measurement is a CLAIM and has to be checked before it is
+  written down — this is the same correction I made to the model-drift checker and
+  to the token parser, now applied to my own previous sentence.
+  (3) THE TOKEN, NOT THE ONE RULE, WAS THE DEFECT: `--chrome-ink-faint` fails the
+  text bar and the mark bar in light mode wherever it is used, so five `color:`
+  declarations stopped using it (closed tabs, tab glyphs, two close buttons). It
+  stays valid for `background` (dots) and `border-color` (hairlines) — the rule is
+  written against `color:` with a word-boundary guard, because `border-color:`
+  contains that substring.
+  (4) THEN THE SWEEP FOUND THREE MORE, AND THEY ARE THE ROUND'S REAL STORY. All on
+  the default desktop screen, all the SAME SHAPE — a fix that already existed,
+  applied to one of a pair:
+  * `.dtab.active` 3.83 — `tokens.css` DOCUMENTS that exact 3.83 as a defect FIXED
+    by `--chrome-active-text`; `.tab.active` uses it, and `.dtab.active`, the rule
+    the DESKTOP shell actually renders, kept `--accent-ink`.
+  * `.desktop-view-switch .view-switch-btn.active` 4.30 — got the same fix, but
+    this selector is MORE SPECIFIC (three classes against two) and SILENTLY WON
+    with the old token. A fix that is overridden looks exactly like a fix that
+    works.
+  * `.btn-new` 4.30 — `components.css` says outright "White on --accent-solid, not
+    on --accent: the brand orange gives white text 4.30, under AA at this size, and
+    this is the primary action", and fixed `.goal-save`; `.btn-new`, the OTHER
+    primary action in the SAME header, kept the brand orange. Its hover also went
+    to a LIGHTER token than its base.
+  (5) VERIFIED BY INJECTION ON THE LIVE PAGE, sweeping every visible text node:
+  BEFORE `[3.83, 4.30, 4.30]` -> AFTER `[]`, `ALL_PASS=true`. Then shipped, and
+  re-measured on the device running 1.2.351: `underAA` is empty but for one FALSE
+  POSITIVE OF MY OWN SWEEP — `.empty-mark` is white on a `background-image`
+  GRADIENT, and `bgOf()` walks `backgroundColor` only, so it read the parent's
+  white and reported 1.0. A sweep is a tool with blind spots; state them.
+  (6) FOUR TESTS ADDED, each mutation-proven with the measured numbers in the
+  failure message: no `color:` may use `--chrome-ink-faint`; the steady readout
+  must use the readable ink; the three twins must use the fixed tokens (restoring
+  `--accent-ink` on `.dtab.active` fails naming it). Panel 508, was 506.
+  (7) STILL OPEN, now measured rather than guessed: the console's five views beyond
+  login (Overview, Users, Devices, Keys, Routes) — none of which I have looked at;
+  and `agent/scripts/panel-render-audit.mjs` EXITS 0 when `VALE_BROWSER_HELPER` is
+  unset ("running in EMIT mode"), which is deliberate and documented but means a
+  caller watching only the exit code reads a skip as a pass. Nothing calls it
+  automatically today, so it is a note rather than a defect.
+  Gates: panel 508 + build; agent 583 default, fmt clean; gateway 766; token
+  contract green; CI green on main; audit CLEAN on 1.2.350 and 1.2.351.
+
+Previous round: 2026-09-11 round 44 (the first redesign slice that changes what a
 person SEES — I stopped auditing stylesheets and drove a real browser at both live
 surfaces, then worked from the pictures). Commit: 1af31917. d1 UPDATED TO 1.2.349.
   (1) HOW I LOOKED, because it is reusable: the device's own playwright drives a
