@@ -519,7 +519,30 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 85 (the read-back timeout asserted a conclusion a timeout
+Last updated: 2026-09-12 round 86 (a cleanup failure reported as "the pin was NOT
+written" — the exact INVERSE of the truth — and "sources staged" printed when nothing was
+staged).
+Commit: 4cd9b716. CI green.
+  (1) THE PIN WRITE AND THE ROOT-MARKER CLEANUP SHARED ONE try. A CLEANUP failure
+  (`rmSync`) therefore printed "pin write failed ... agent_update is NOT blocked" — the
+  INVERSE of the truth: the pin HAD been written and agent_update WAS blocked. The success
+  line was inside the same try too, so it vanished as well, leaving an operator told the
+  device was unprotected when it was protected — and likely to intervene on a device that
+  needed nothing. Two operations, two verdicts now: the write is decided on a READ-BACK
+  (the rule `--clear` and the marker check already follow), and the cleanup gets its OWN
+  message that cannot deny the pin ("the pin is in place, but the pre-v2 root marker could
+  not be removed ... it is inert").
+  (2) `stageDesktopShell` RETURNS EARLY when the sources are absent, and setup printed
+  "sources staged" regardless — a package that did not ship them claimed they were staged.
+  It returns the count it actually wrote; setup reports the count or "sources NOT staged --
+  the package did not ship them; the desktop shell will not update".
+  (3) STILL OPEN: L8 `autostart status` cannot distinguish a read failure from an absent
+  task; L5 a failed update receipt is silent because `ps()` returns rather than throws; L2b
+  a failed `npm install -g` in the rollback path relies on a status check only; L12 the
+  `vale tunnel` config path is computed before the install check.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 85 (the read-back timeout asserted a conclusion a timeout
 cannot support — and, catching my own fix, the JS-visible verdict API let a caller omit
 the field the new message needed).
 Commit: 9473a6f3. CI green.
