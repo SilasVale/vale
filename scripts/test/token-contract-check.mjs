@@ -385,9 +385,18 @@ for (const [label, gsel, psel] of cases) {
       label === "light" ? ":root" : "body[data-ds-dark-theme]",
     );
     const { shared: lShared, differ: lDiffer } = divergences(gEff, lEff);
+    // COVERAGE BY NAME, not by count. A floor of ">= 8" was arbitrary — it was set when
+    // the landing had 9 shared names and it broke the moment round 77 removed the dead
+    // ones, which is a number measuring the wrong thing. These are the names whose
+    // disagreement would actually be a defect (the art-direction palette, the type
+    // stack), so require THOSE to be present; a parser reading some other block cannot
+    // satisfy it by returning five unrelated tokens.
+    const REQUIRED = ["--aura-1", "--aura-3", "--ds-font-family"];
+    const missing = REQUIRED.filter((t) => !lShared.includes(t));
     assert.ok(
-      lShared.length >= 8,
-      `${label}: landing comparison read only ${lShared.length} shared tokens — the parser looked at the wrong block`,
+      missing.length === 0,
+      `${label}: the landing comparison did not cover ${missing.join(", ")} — ` +
+        `it read ${lShared.length} shared tokens, which is not the block this check wants`,
     );
     for (const d of lDiffer) {
       failures += 1;

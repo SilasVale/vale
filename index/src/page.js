@@ -40,40 +40,29 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     --dsw-alias-bg-base: #fafafa;
     --dsw-alias-bg-layer-1: #ffffff;
     --dsw-alias-bg-layer-2: #f4f4f5;
-    --dsw-alias-bg-mask-1: rgba(0,0,0,0.4);
     --dsw-alias-label-primary: #1d1d1f;
     --dsw-alias-label-secondary: #52525b;
     --dsw-alias-label-tertiary: #71717a;
-    --dsw-alias-label-dimmed: #a1a1aa;
     --dsw-alias-border-l1: rgba(0,0,0,0.08);
     --dsw-alias-border-l2: rgba(0,0,0,0.12);
-    --dsw-alias-border-l3: #d4d4d8;
-    --dsw-alias-brand-primary: #d9480f;
     /* WHITE ON --accent measures 4.30 and is under AA; the solid weight clears
        it at 6.05. The panel learned this for .btn-new and .goal-save. */
     --dsw-alias-button-primary-fill: #b03a0a;
     --dsw-alias-button-primary-hover: #9c3a0a;
     --dsw-alias-button-primary-foreground: #ffffff;
     --dsw-alias-state-business-primary: #9c3a0a;
-    --dsw-alias-state-success-primary: #1e7a33;
-    --dsw-alias-state-error-primary: #a51d1d;
-    --dsw-alias-state-warn-primary: #b45309;
     --dsw-alias-interactive-bg-hover: rgba(0,0,0,0.04);
-    --dsw-alias-interactive-bg-active: rgba(0,0,0,0.06);
     /* ---- aurora art direction ----
        The same iridescent layer the console and the panel carry, expressed against
        THIS page's token names. Decorative only: nothing here ever supplies a text
        colour, so the page's contrast is unchanged. */
     --aura-1: #22d3ee;
-    --aura-2: #818cf8;
     --aura-3: #c084fc;
     --aura-4: #f472b6;
     --aura-5: #f59f00;
-    --aura-sweep: linear-gradient(115deg, var(--aura-1), var(--aura-2) 28%, var(--aura-3) 55%, var(--aura-4) 78%, var(--aura-5));
     --glass-blur: 14px;
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
-    --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.12);
     --ds-font-family: -apple-system, BlinkMacSystemFont, "Segoe UI", "PingFang SC", "Hiragino Sans GB", "Microsoft YaHei", "Helvetica Neue", Helvetica, Arial, sans-serif;
     --ds-font-family-code: "SF Mono", "JetBrains Mono", "Fira Code", Consolas, "Liberation Mono", Menlo, Courier, "PingFang SC", "Microsoft YaHei";
     --ds-transition-duration: 0.2s;
@@ -84,15 +73,11 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     --dsw-alias-bg-base: #131418;
     --dsw-alias-bg-layer-1: #17181d;
     --dsw-alias-bg-layer-2: #1f2026;
-    --dsw-alias-bg-mask-1: rgba(0,0,0,0.6);
     --dsw-alias-label-primary: #ecedef;
     --dsw-alias-label-secondary: #a2a3ac;
     --dsw-alias-label-tertiary: #a2a3ac;
-    --dsw-alias-label-dimmed: #6f707a;
     --dsw-alias-border-l1: rgba(255,255,255,0.07);
     --dsw-alias-border-l2: rgba(255,255,255,0.10);
-    --dsw-alias-border-l3: rgba(255,255,255,0.14);
-    --dsw-alias-brand-primary: #ffa94d;
     /* On the dark surface the accent itself carries dark ink, so the button is
        the accent and the FOREGROUND is what changes. */
     --dsw-alias-button-primary-fill: #ffa94d;
@@ -100,10 +85,8 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     --dsw-alias-button-primary-foreground: #2b1a09;
     --dsw-alias-state-business-primary: #ffa94d;
     --dsw-alias-interactive-bg-hover: rgba(255,255,255,0.05);
-    --dsw-alias-interactive-bg-active: rgba(255,255,255,0.08);
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.24);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.32);
-    --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.45);
   }
 
   * { box-sizing: border-box; margin: 0; padding: 0; }

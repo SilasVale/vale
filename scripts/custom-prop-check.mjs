@@ -36,7 +36,14 @@ function consoleCss() {
 }
 
 function panelCss() {
-  const dir = path.join(ROOT, "agent", "resources", "panel-react", "src", "styles");
+  const dir = path.join(
+    ROOT,
+    "agent",
+    "resources",
+    "panel-react",
+    "src",
+    "styles",
+  );
   return readdirSync(dir)
     .filter((f) => f.endsWith(".css"))
     .map((f) => readFileSync(path.join(dir, f), "utf8"))
@@ -53,7 +60,9 @@ function landingCss() {
 
 /** Defined custom properties in a stylesheet: `--x:` at a declaration position. */
 const defined = (css) =>
-  new Set([...css.matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]));
+  new Set(
+    [...css.matchAll(/(?:^|[;{\s])(--[a-z0-9-]+)\s*:/g)].map((m) => m[1]),
+  );
 
 /** `var(--x)` without a fallback — the fatal form. */
 const usedBare = (css) =>
@@ -61,7 +70,9 @@ const usedBare = (css) =>
 
 /** `var(--x, …)` — applies, but the name is not owned here. */
 const usedWithFallback = (css) =>
-  new Set([...css.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,[^)]*\)/g)].map((m) => m[1]));
+  new Set(
+    [...css.matchAll(/var\(\s*(--[a-z0-9-]+)\s*,[^)]*\)/g)].map((m) => m[1]),
+  );
 
 const FRONTENDS = [
   { name: "console (gateway/ui)", css: consoleCss, min: 20 },
@@ -80,7 +91,9 @@ for (const f of FRONTENDS) {
 
   // A parser that reads nothing must not report a pass (round 33's rule).
   if (dec.size < f.min || bare.size < 5) {
-    console.error(`FAIL ${f.name}: parsed only ${dec.size} definitions / ${bare.size} uses — the parser read the wrong thing`);
+    console.error(
+      `FAIL ${f.name}: parsed only ${dec.size} definitions / ${bare.size} uses — the parser read the wrong thing`,
+    );
     failures++;
     continue;
   }
@@ -89,23 +102,35 @@ for (const f of FRONTENDS) {
   const fallbackOnly = [...fb].filter((v) => !dec.has(v)).sort();
 
   if (broken.length) {
-    console.error(`\nFAIL ${f.name}: ${broken.length} custom propert${broken.length === 1 ? "y is" : "ies are"} USED BUT NOT DEFINED.`);
-    console.error("  Each one makes its declaration INVALID, so the property is DROPPED and the element inherits:");
+    console.error(
+      `\nFAIL ${f.name}: ${broken.length} custom propert${broken.length === 1 ? "y is" : "ies are"} USED BUT NOT DEFINED.`,
+    );
+    console.error(
+      "  Each one makes its declaration INVALID, so the property is DROPPED and the element inherits:",
+    );
     for (const v of broken) console.error(`    ${v}`);
     failures++;
   } else {
-    summary.push(`${f.name}: ${dec.size} defined, ${bare.size} used, 0 dangling`);
+    summary.push(
+      `${f.name}: ${dec.size} defined, ${bare.size} used, 0 dangling`,
+    );
   }
 
   if (fallbackOnly.length) {
     // Not a failure — the fallback applies — but a name this stylesheet does not own.
-    summary.push(`  note ${f.name}: ${fallbackOnly.length} used only WITH a fallback (${fallbackOnly.slice(0, 4).join(", ")})`);
+    summary.push(
+      `  note ${f.name}: ${fallbackOnly.length} used only WITH a fallback (${fallbackOnly.slice(0, 4).join(", ")})`,
+    );
   }
 }
 
 if (failures) {
-  console.error(`\ncustom-property check: ${failures} frontend(s) with dangling references`);
+  console.error(
+    `\ncustom-property check: ${failures} frontend(s) with dangling references`,
+  );
   process.exit(1);
 }
-console.log("custom-property check: every var() used is defined in its own frontend");
+console.log(
+  "custom-property check: every var() used is defined in its own frontend",
+);
 for (const line of summary) console.log("  " + line);
