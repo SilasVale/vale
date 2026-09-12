@@ -231,12 +231,6 @@ describe("a recipe names backgrounded work", () => {
   // all handed off produced a recipe whose outcome line read complete. Round 31
   // added the state; the palette, the sheet's legend, the recipe and the state
   // list each had to be found by hand, which is why `PATH_STATES` now exists.
-  const step = (o: Partial<PathStep>): PathStep => ({
-    id: "x", index: 1, command: "c", state: "bg", owner: "ai", stateLabel: "backgrounded",
-    startedAt: 0, durationMs: 1000, exitCode: null, reason: "backgrounded", outputChars: 0,
-    intent: null, considered: [], planStep: null, runId: null, ...o,
-  });
-
   it("counts it, and does not call the run complete-sounding", () => {
     const p = derivePath([{ id: "r-1", startSeq: 1, command: "npm run build", startTs: 1,
       events: [], ended: true, exitCode: null, reason: "backgrounded", durationMs: 5 }]);
