@@ -904,7 +904,17 @@ const commands = {
     if (regKey) {
       console.log("setup: registering device with the gateway (--reg-key)");
     } else {
-      console.log("setup: LOCAL install (no cloud). Configure the gateway later in the Settings page.");
+      // WAS: "setup: LOCAL install (no cloud)." — FALSE, and privacy-relevant.
+      // The CLI does not write config.yaml at all; the AGENT creates it on first boot
+      // from its embedded default, which sets platform.console_url to the public
+      // console, and main.rs then POSTs {name, hostname, token} to
+      // /api/devices/self-register at boot and every 6h. So a no-key install DOES
+      // contact the cloud and appear in the console — which is what the very next lines
+      // already say ("device registers on start"), so the operator was told both things
+      // at once. The URL is NOT repeated here on purpose: it lives in the agent's
+      // embedded default, and a second copy in a CLI message is a copy that drifts.
+      console.log("setup: no key or tunnel configured — the device will still self-register with the console URL in its config on start.");
+      console.log("setup: to keep it purely local, clear platform.console_url in config.yaml (unset = no cloud), or point it at your own gateway.");
     }
     fs.mkdirSync(DIR, { recursive: true });
     // Layout-v2 migration (ADR 0008): a re-setup on a pre-v2 device moves
