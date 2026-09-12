@@ -220,19 +220,30 @@ describe("useCommandEvents", () => {
     expect(mockCallApi).not.toHaveBeenCalled();
   });
 
-  it("a failed poll keeps the last good cards (no blanking)", async () => {
-    // Persistent base mock (the audit log keeps answering) with ONE transient
-    // rejection in the middle — the fast 30ms poll must ride through it.
+  it("a failed read keeps the last good cards (no blanking)", async () => {
+    // THIS TEST USED TO PROVE NOTHING. It queued `mockRejectedValueOnce` and
+    // waited 80 ms for "the fast 30ms poll" to ride through it — but THERE IS NO
+    // POLL (round 163 removed the timer), so the rejection was NEVER CONSUMED and
+    // the assertions passed because nothing happened at all. It would have stayed
+    // green with the failure path deleted.
+    //
+    // The re-read triggers the hook really has are the agent's `vale-term-output`
+    // event and a `visibilitychange` back to visible. This drives the SECOND of
+    // those — the same path production uses — so the rejection is actually taken.
     mockCallApi.mockResolvedValue({
       ok: true,
       id: "s1",
       events: [start(1, "echo hi"), end(2, 0, "marker", 5)],
     });
-    const { result } = renderHook(() => useCommandEvents("s1", 30));
+    const { result } = renderHook(() => useCommandEvents("s1"));
     await waitFor(() => expect(result.current.cards).toHaveLength(1));
+
     mockCallApi.mockRejectedValueOnce(new Error("HTTP 502"));
-    await new Promise((r) => setTimeout(r, 80));
+    document.dispatchEvent(new Event("visibilitychange"));
+    await waitFor(() => expect(mockCallApi).toHaveBeenCalledTimes(2));
+
     expect(result.current.cards).toHaveLength(1);
     expect(result.current.cards[0].command).toBe("echo hi");
+    expect(result.current.readState, "a failure after a good read keeps the last state").toBe("ok");
   });
 });

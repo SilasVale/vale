@@ -41,7 +41,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   closed: false,
   savedOnly: false,
   active: true,
-  openedAt: Date.now(),
+  firstSeenAt: Date.now(),
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,

@@ -63,7 +63,11 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
 
   const rows = [...sessions]
     .filter((s) => !archived.has(s.sid))
-    .sort((a, b) => (a.closed === b.closed ? b.openedAt - a.openedAt : a.closed ? 1 : -1));
+    // Ordered by WHEN THIS PANEL LEARNED OF EACH SESSION, which is the only
+    // ordering the data supports — the device sends no open time. It is stable
+    // and it puts a session you just created on top, which is what the rail is
+    // for; it is NOT "newest session first", and the label beside it says so.
+    .sort((a, b) => (a.closed === b.closed ? b.firstSeenAt - a.firstSeenAt : a.closed ? 1 : -1));
 
   if (page === "plugins") {
     return (
@@ -148,7 +152,15 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
             ) : (
               <span className="side-label">{labels.get(s.sid) || s.label}</span>
             )}
-            <span className="side-time">{relTime(s.openedAt)}</span>
+            {/* "2h" HERE MEANS THE PANEL HAS KNOWN OF THIS SESSION FOR 2h, not
+                that it opened 2h ago — the device sends no open time, so the age
+                of the session itself is unknowable from here. The title says
+                which of the two this is; a bare "2h" beside a session name reads
+                as the session's age, and until this round that is exactly what it
+                claimed. */}
+            <span className="side-time" title="how long this panel has known about this session">
+              {relTime(s.firstSeenAt)}
+            </span>
             <span className="side-actions">
               <button
                 className="side-action"

@@ -96,7 +96,17 @@ export function PluginsPage({ plugins }: { plugins: ReturnType<typeof usePlugins
           {pw && <span className="plug-tag" data-state={pw.state}>{pw.stateLabel}</span>}
           {pw?.playwright?.running ? (
             <span className="plug-meta">
-              port {pw.playwright.port} · up {fmtUptime(pw.playwright.started_at ?? Date.now())}
+              port {pw.playwright.port}
+              {/* "up 0s" FOR A DAYS-OLD INSTANCE. The device's healthy EXTERNAL
+                  branch — the production one, where the ValePlaywright task hosts
+                  the instance — omits `started_at`, so `?? Date.now()` made the
+                  uptime zero. An absent value means NOT REPORTED, and the panel
+                  says that instead of reading its own clock. */}
+              {typeof pw.playwright.started_at === "number"
+                ? ` · up ${fmtUptime(pw.playwright.started_at)}`
+                : pw.playwright.external
+                  ? " · task-hosted (uptime not reported)"
+                  : " · uptime not reported"}
             </span>
           ) : (
             <span className="plug-meta">bundled playwright-mcp · Chromium (task-hosted)</span>

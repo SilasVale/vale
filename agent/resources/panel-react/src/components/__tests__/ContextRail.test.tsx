@@ -17,7 +17,7 @@ const session = (over: Partial<Session> = {}): Session => ({
   closed: false,
   savedOnly: false,
   active: true,
-  openedAt: Date.now(),
+  firstSeenAt: Date.now(),
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
@@ -78,9 +78,9 @@ describe("ContextRail", () => {
     const now = Date.now();
     const p = props({
       sessions: [
-        session({ sid: "old", label: "old", openedAt: now - 9000 }),
-        session({ sid: "new", label: "new", openedAt: now - 1000 }),
-        session({ sid: "dead", label: "dead", closed: true, openedAt: now }),
+        session({ sid: "old", label: "old", firstSeenAt: now - 9000 }),
+        session({ sid: "new", label: "new", firstSeenAt: now - 1000 }),
+        session({ sid: "dead", label: "dead", closed: true, firstSeenAt: now }),
       ],
     });
     const { container } = render(<ContextRail {...p} />);
@@ -127,7 +127,7 @@ describe("ContextRail", () => {
   });
 
   it("archive hides the row; relTime renders", () => {
-    const p = props({ sessions: [session({ openedAt: Date.now() - 30_000 }), session({ sid: "s2", label: "two", openedAt: Date.now() - 5 * 60_000 })] });
+    const p = props({ sessions: [session({ firstSeenAt: Date.now() - 30_000 }), session({ sid: "s2", label: "two", firstSeenAt: Date.now() - 5 * 60_000 })] });
     render(<ContextRail {...p} />);
     expect(screen.getByText("now")).toBeTruthy();
     expect(screen.getByText("5m")).toBeTruthy();

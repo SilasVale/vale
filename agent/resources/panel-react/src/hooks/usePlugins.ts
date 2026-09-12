@@ -20,8 +20,20 @@ import { callApi } from "../lib/api";
 export interface PlaywrightStatus {
   running: boolean;
   port?: number;
+  /** WHEN THE INSTANCE STARTED — and the device OMITS THIS on its healthy
+   *  EXTERNAL branch, which its own comment calls the production path
+   *  (`agent/src/plugins/playwright/manager.rs`: the ValePlaywright task hosts
+   *  the instance, so it outlives the agent that reported it). A consumer must
+   *  therefore treat an absent value as "not reported" rather than substituting
+   *  a clock: `started_at ?? Date.now()` rendered "up 0s" for an instance that
+   *  had been running for days. */
   started_at?: number;
   healthy?: boolean;
+  /** The instance is hosted OUTSIDE this agent (the scheduled task). On the wire
+   *  since the external branch was written and NOT DECLARED here until now — the
+   *  same shape as `run_id` in round 30: a field the device records and the
+   *  panel's type silently drops. */
+  external?: boolean;
 }
 
 /** dsh StateDot states — success | warn | error | ongoing (design spec). */
@@ -154,7 +166,15 @@ export function usePlugins(active: boolean) {
     try {
       const res = await callApi(`/api/plugins/playwright/${which}`, { method: "POST" });
       setActionError("");
-      const status = res && typeof res === "object" && typeof res.status === "string" ? res.status : "ok";
+      // NOT "ok". A start/stop whose reply carried no status is a call whose
+      // outcome the panel did NOT learn, and logging it `ok` reports success the
+      // device never claimed. Every current device path sends `status`, so this
+      // arm is reached only when the reply is empty or unreadable — precisely
+      // when a verdict must not be invented.
+      const status =
+        res && typeof res === "object" && typeof res.status === "string"
+          ? res.status
+          : "(no status in the reply)";
       pushLog(`${which} → ${status}`, false);
     } catch (e: any) {
       setActionError(e?.message || `${which} failed`);

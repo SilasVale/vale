@@ -14,7 +14,7 @@ const sess = (over: Record<string, unknown> = {}) => ({
   closed: false,
   savedOnly: false,
   active: true,
-  openedAt: 0,
+  firstSeenAt: 0,
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,

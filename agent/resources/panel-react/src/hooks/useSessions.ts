@@ -83,7 +83,19 @@ export interface Session {
   closed: boolean;
   savedOnly: boolean;
   active: boolean;
-  openedAt: number;
+  /** WHEN THIS PANEL FIRST SAW THE SESSION — not when it opened.
+   *
+   *  This field was called `openedAt` and rendered as the session's AGE, which
+   *  the panel cannot know: the device's `terminal_list` row carries no open
+   *  timestamp at all (`agent/src/tools/terminal/mod.rs`), so the value is
+   *  `Date.now()` at the moment the panel discovered the row. A page reload
+   *  therefore stamped every already-running session as "now", and the 30 s sweep
+   *  did the same for each new row — a session open for hours read as seconds old.
+   *
+   *  The value is useful and TRUE as "first seen by this panel"; only the LABEL
+   *  was false. Renamed rather than removed so every consumer had to be
+   *  reconsidered, which is how the two render sites were found. */
+  firstSeenAt: number;
   closedAt: number | null;
   /** A PERSON holds this session's keyboard (control handoff). Server-owned
    *  state mirrored here: the agent refuses `terminal_execute` while it is set,
@@ -171,7 +183,7 @@ export function useSessions(connected: boolean) {
           for (const s of list as any[]) {
             const existing = next.find((x) => x.sid === s.id);
             if (!existing) {
-              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
+              next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, firstSeenAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
                 approvalGrants: mapGrants(s), goal: mapGoal(s), plan: mapPlan(s) });
             } else if (existing.closed) {
@@ -269,7 +281,7 @@ export function useSessions(connected: boolean) {
           const missing = (list as any[]).filter((s) => !prev.some((x) => x.sid === s.id));
           const next = [...prev];
           for (const s of missing) {
-            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, openedAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
+            next.push({ sid: s.id, label: s.label || s.id, kind: s.kind || "pty", closed: false, savedOnly: false, active: false, firstSeenAt: Date.now(), closedAt: null, heldByHuman: !!s.held_by_human,
                 approvalRequired: !!s.approval_required, pendingApproval: mapPending(s),
                 approvalGrants: mapGrants(s), goal: mapGoal(s), plan: mapPlan(s) });
           }
@@ -337,7 +349,7 @@ export function useSessions(connected: boolean) {
         // round-86: the new session is the ACTIVE one — the old active:false
         // + setActiveSid(sid) never set the session's own flag, so the pane
         // stayed display:none (blank terminal area).
-        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, openedAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, plan: [] }];
+        return [...prev.filter((s) => s.sid !== sid).map((s) => ({ ...s, active: false })), { sid, label, kind, closed: false, savedOnly: false, active: true, firstSeenAt: Date.now(), closedAt: null, heldByHuman: false, approvalRequired: false, pendingApproval: null, approvalGrants: [], goal: null, plan: [] }];
       });
       setActiveSid(sid);
       return sid;

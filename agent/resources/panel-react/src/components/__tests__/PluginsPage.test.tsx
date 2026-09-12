@@ -119,3 +119,57 @@ describe("PluginsPage", () => {
     expect(screen.getByText("spawn ENOENT").closest("p")!.className).toContain("error");
   });
 });
+
+// THE PANEL MUST NOT READ ITS OWN CLOCK WHERE THE DEVICE SAID NOTHING.
+//
+// The device's playwright status has two healthy branches. The SPAWNED one sends
+// `started_at`; the EXTERNAL one — which the device's own comment calls the
+// production path, where the ValePlaywright scheduled task hosts the instance —
+// sends running/port/external/healthy and NO `started_at`. `started_at ??
+// Date.now()` therefore rendered "up 0s" for an instance that had been running
+// for days: the panel's own clock presented as the instance's uptime.
+//
+// This asserts the RENDERED TEXT. A test on the hook's data would have passed
+// while the component formatted `undefined` into a number — which is the layer
+// the defect was actually in.
+describe("PluginsPage — the production instance reports no start time", () => {
+  const pw = (over: Record<string, unknown> = {}) => ({
+    name: "playwright",
+    displayName: "Playwright",
+    description: "playwright-mcp browser automation",
+    enabled: true,
+    state: "ongoing" as const,
+    stateLabel: "Running",
+    playwright: { running: true, port: 9229, external: true, healthy: true, ...over },
+  });
+
+  it("says the uptime was not reported, and never 'up 0s'", () => {
+    render(
+      <PluginsPage
+        plugins={plugins({
+          playwrightRow: pw() as Plugins["playwrightRow"],
+          playwright: { running: true, port: 9229, external: true, healthy: true },
+        })}
+      />,
+    );
+    const text = document.body.textContent!;
+    expect(text).toContain("port 9229");
+    expect(text, "the panel's own clock is not the instance's uptime").not.toContain("up 0s");
+    expect(text).toContain("task-hosted (uptime not reported)");
+  });
+
+  it("still shows a real uptime when the device DOES report one", () => {
+    // The distinction must not swallow the branch that works.
+    render(
+      <PluginsPage
+        plugins={plugins({
+          playwrightRow: pw({ external: false, started_at: Date.now() - 3 * 60 * 60 * 1000 }) as Plugins["playwrightRow"],
+          playwright: { running: true, port: 9229, started_at: Date.now() - 3 * 60 * 60 * 1000 },
+        })}
+      />,
+    );
+    const text = document.body.textContent!;
+    expect(text).toMatch(/up 3h/);
+    expect(text).not.toContain("not reported");
+  });
+});
