@@ -31,11 +31,19 @@ import { fileURLToPath } from "node:url";
 const ROOT = fileURLToPath(new URL("..", import.meta.url));
 const ZIP = new URL("../../agent/deploy/vale-playwright.zip", import.meta.url).pathname;
 
-/** The shipped playwright-mcp bundle, as text. */
-function shippedBundle() {
-  return execFileSync("unzip", ["-p", ZIP, "playwright/node_modules/playwright-core/lib/coreBundle.js"], {
-    maxBuffer: 64 * 1024 * 1024,
-  }).toString("utf8");
+/** The `@playwright/mcp` version the boxed bundle actually ships, or null when
+ *  the bundle is not on this box. */
+function shippedMcpVersion() {
+  try {
+    const pkg = execFileSync(
+      "unzip",
+      ["-p", ZIP, "playwright/node_modules/@playwright/mcp/package.json"],
+      { maxBuffer: 4 * 1024 * 1024 },
+    ).toString("utf8");
+    return JSON.parse(pkg).version ?? null;
+  } catch {
+    return null;
+  }
 }
 
 /**
@@ -50,14 +58,33 @@ function shippedBundle() {
  * what CI can actually see — the same pattern `agent/spec-tools.json` already
  * uses for the device inventory.
  *
- * WHEN THE BUNDLE IS PRESENT we also check the snapshot against it, so a stale
- * snapshot fails on any box that has the artifact (this one, and the release
- * box). In CI that half is skipped and the contract half still runs; the banner
- * below says so rather than letting a skip look like a pass.
+ * WHAT IS AND IS NOT CROSS-CHECKED, stated because this comment used to promise a
+ * check that DID NOT EXIST. It said "WHEN THE BUNDLE IS PRESENT we also check the
+ * snapshot against it, so a stale snapshot fails on any box that has the
+ * artifact", and pointed at "the banner below" — while the function that read the
+ * bundle was called by NOTHING (added and orphaned in the same commit that
+ * replaced its call sites). So the snapshot could go stale in silence, which is
+ * the exact failure the snapshot exists to prevent.
+ *
+ * The VERSION is now really cross-checked whenever the bundle is present: a
+ * regenerated bundle at a new `@playwright/mcp` version fails here until the
+ * snapshot is regenerated, and a skip PRINTS that it skipped instead of looking
+ * like a pass.
+ *
+ * WHAT IT STILL DOES NOT CHECK, so nobody reads more into it than it says: the
+ * schema TEXT. Each entry is a non-contiguous concatenation — a slice of the
+ * bundle plus referenced definitions appended from elsewhere in the file — so
+ * "does the bundle contain this string" is FALSE for 28 of the 78 tools and a
+ * containment check would fail on a correct snapshot. A real text check needs the
+ * extractor's own logic; until then the version is the honest half.
  */
-function shippedSchemaText() {
+const snapshot = (() => {
   const raw = readFileSync(new URL("../playwright-tools.json", import.meta.url), "utf8");
-  const json = JSON.parse(raw.split("\n").filter((l) => !l.startsWith("//")).join("\n"));
+  return JSON.parse(raw.split("\n").filter((l) => !l.startsWith("//")).join("\n"));
+})();
+
+function shippedSchemaText() {
+  const json = snapshot;
   return { source: json.source, tools: json.tools };
 }
 
@@ -65,6 +92,37 @@ function shippedSchemaText() {
 function declares(text, param) {
   return new RegExp("(^|[{,\\s])" + param + "\\s*:").test(text);
 }
+
+/** THE SNAPSHOT IS NOT STALE — the check the orphaned function was supposed to be.
+ *
+ * `playwright-tools.json` records the version it came from. A regenerated bundle
+ * at a different `@playwright/mcp` version means every schema in the snapshot
+ * describes a server that is no longer shipped, and the contract test below would
+ * keep validating the console against it in perfect silence.
+ *
+ * WHEN THE BUNDLE IS ABSENT (CI), THIS SKIPS — LOUDLY. A skip that reads like a
+ * pass is how the original comment came to describe a check nobody had written.
+ */
+test("the snapshot names the version the boxed bundle actually ships", () => {
+  const actual = shippedMcpVersion();
+  const claimed = snapshot.source;
+  if (actual === null) {
+    console.log(
+      `NOTE: NOT cross-checked against the shipped bundle (absent on this box). ` +
+        `The snapshot claims ${claimed}; nothing here verified that. ` +
+        `Run the release flow, which has the artifact, to close this.`,
+    );
+    return;
+  }
+  assert.equal(
+    claimed,
+    `@playwright/mcp ${actual}`,
+    `the snapshot is STALE: it describes ${claimed} while the boxed bundle ships ` +
+      `${actual}. Regenerate with \`node gateway/scripts/extract-playwright-tools.mjs\` ` +
+      `and commit the result — until then every contract below validates the console ` +
+      `against a server that is not the one we ship.`,
+  );
+});
 
 test("every argument the console sends a browser tool exists in the shipped server", async () => {
   const { allMcpTools } = await import("../src/mcp-tools.ts");
