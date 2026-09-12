@@ -241,6 +241,15 @@ jobs:
       # prefix-stripped names and reported false drift on every channel.
       - name: model-drift regression checks
         run: node scripts/test/model-drift-check.mjs
+      # The contrast math, pinned. Four rounds of sweeps used an ad-hoc snippet
+      # retyped each time and it was wrong twice: it read a translucent
+      # background as WHITE (20 of 50 findings were that), and a skip rule that
+      # looked reasonable silently disabled the whole sweep and reported zero
+      # findings as a pass. Both are assertions here, with the numbers they cost.
+      # The functions tested are the ones the BROWSER runs — the probe embeds them
+      # via Function.prototype.toString() — so this is not a copy that can drift.
+      - name: contrast-probe regression checks
+        run: node scripts/test/contrast-probe-check.mjs
       # ONE design vocabulary across the two frontends. They shared 16 token
       # NAMES and 12 of them held different VALUES — the console's frame was
       # Bootstrap's gray scale while the panel's was zinc/Apple — and the

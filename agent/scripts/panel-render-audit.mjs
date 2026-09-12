@@ -32,6 +32,7 @@
 //
 // Regenerate panel.js/panel.css first: (cd agent/resources/panel-react && npm run build)
 
+
 import { readFileSync, writeFileSync, mkdirSync } from "node:fs";
 import { join, dirname } from "node:path";
 import { fileURLToPath } from "node:url";
@@ -132,49 +133,6 @@ function buildHarness() {
 <script>${stub}</script><script type="module">${js}</script></body></html>`;
 }
 
-// Runs INSIDE the page. Composites background alpha AND the ancestor opacity
-// chain, then measures every visible text node.
-const PROBE = `(() => {
-  const parse = (c) => { const m=(c||'').match(/[\\d.]+/g); if(!m) return null;
-    const [r,g,b]=m.map(Number); return {r,g,b,a:m.length>3?Number(m[3]):1}; };
-  const effBg = (el) => { const st=[]; let p=el;
-    while(p){ const c=parse(getComputedStyle(p).backgroundColor);
-      if(c&&c.a>0){st.push(c); if(c.a===1) break;} p=p.parentElement; }
-    let o={r:255,g:255,b:255};
-    for(let i=st.length-1;i>=0;i--){const c=st[i];
-      o={r:c.r*c.a+o.r*(1-c.a),g:c.g*c.a+o.g*(1-c.a),b:c.b*c.a+o.b*(1-c.a)};}
-    return o; };
-  const chainOpacity = (el) => { let o=1, p=el;
-    while(p && p !== document.documentElement){ o *= parseFloat(getComputedStyle(p).opacity||'1'); p=p.parentElement; }
-    return o; };
-  const effFg = (el) => { const c=parse(getComputedStyle(el).color); const bg=effBg(el);
-    const a=(c.a ?? 1) * chainOpacity(el);
-    return { r:c.r*a+bg.r*(1-a), g:c.g*a+bg.g*(1-a), b:c.b*a+bg.b*(1-a) }; };
-  const lum=(c)=>{const f=(v)=>{v/=255;return v<=0.03928?v/12.92:Math.pow((v+0.055)/1.055,2.4)};
-    return 0.2126*f(c.r)+0.7152*f(c.g)+0.0722*f(c.b)};
-  const ratio=(a,b)=>{const[x,y]=[lum(a),lum(b)].sort((p,q)=>q-p);return +((x+0.05)/(y+0.05)).toFixed(2)};
-  const out = []; const seen = new Set();
-  for (const el of document.querySelectorAll('body *')) {
-    // xterm paints from its own palette (the app's terminal theme), not from the
-    // panel tokens; measuring it here mixes two colour systems and produced a
-    // phantom reading once already.
-    if (el.closest('.xterm')) continue;
-    if (el.tagName === 'SCRIPT' || el.tagName === 'STYLE') continue;
-    if (![...el.childNodes].some(n => n.nodeType === 3 && n.textContent.trim())) continue;
-    const r = el.getBoundingClientRect();
-    if (r.width < 2 || r.height < 2) continue;
-    const st = getComputedStyle(el);
-    if (st.visibility === 'hidden' || st.display === 'none' || parseFloat(st.opacity) === 0) continue;
-    const cls = typeof el.className === 'string' ? el.className : '';
-    const key = cls + '|' + (el.textContent||'').slice(0,16);
-    if (seen.has(key)) continue; seen.add(key);
-    out.push({ sel: el.tagName.toLowerCase() + (cls ? '.' + cls.trim().split(/\\s+/).join('.') : ''),
-      text: (el.textContent||'').trim().slice(0,24), size: parseFloat(st.fontSize),
-      cr: ratio(effFg(el), effBg(el)) });
-  }
-  return out;
-})()`;
-
 const OVERFLOW = `(() => {
   const bad = [];
   for (const el of document.querySelectorAll('#root *')) {
@@ -212,8 +170,12 @@ async function main() {
     console.log("No VALE_BROWSER_HELPER — harness written, running in EMIT mode.");
     console.log("  harness: " + harnessPath);
     console.log("  drive it by loading that file in any Playwright page, routing");
-    console.log("  http://vale.test/** to its body, then evaluating the PROBE and");
-    console.log("  OVERFLOW snippets in this file.");
+    console.log("  http://vale.test/** to its body, then evaluating the PROBE from");
+    console.log("  lib/contrast-probe.mjs and the OVERFLOW snippet in this file.");
+    console.log("  (The PROBE moved out of this file so its math can be UNIT TESTED —");
+    console.log("   scripts/test/contrast-probe-check.mjs exercises the exact text the");
+    console.log("   browser evaluates. It also exits 0 here, so a caller watching only");
+    console.log("   the exit code reads this skip as a pass.)");
     process.exit(0);
   }
   const { acquireBrowser } = await import(helper);
