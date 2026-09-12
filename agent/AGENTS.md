@@ -515,7 +515,46 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 50 (the user reported seeing NO CHANGE, twice; the
+Last updated: 2026-09-11 round 51 (the THIRD frontend — the one the user's question
+about ai.saisi.online surfaced — was the last holdout of a blue brand the rest of the
+product had already abandoned). Commit: 0755d51b. vale-dist deployed; live verified.
+  (1) THREE FRONTENDS, ONE OF THEM NEVER OPENED. `agent.saisi.online` and
+  `command.saisi.online` serve a self-contained page from `index/src/page.js` — 330
+  lines building one HTML string, no framework, and its OWN token namespace
+  (`--dsw-alias-*`). It is the only surface no round had looked at, and it was found
+  by answering "what is ai.saisi.online?" with the Cloudflare API rather than a guess
+  (round 49).
+  (2) WHAT THE SCREENSHOT SHOWED: a 440px content column in a 1440px window — the
+  same ribbon-in-a-void the console login had before round 44; `--dsw-alias-brand-
+  primary: #4d6bfe`, a BLUE brand, with a near-BLACK primary button (#0f1115) while
+  the console and panel are ORANGE (#d9480f); and installer URLs breaking across
+  lines in the MIDDLE of the path. THAT BLUE IS THE SAME FAMILY AS THE PANEL'S DEAD
+  FALLBACKS (#4f7cff / #4f6bed) removed in round 43 — this page is where the old
+  brand survived, and the panel had merely stopped drawing it.
+  (3) NOW: the product's token SCALE, a split composition (brand + description left,
+  the things you DO right — the same shape the console login uses), numbered steps,
+  and `word-break` control so a URL is one token. The NAMES stay (`--dsw-alias-*`) so
+  the file was not rewritten in the same change; every VALUE is the panel's scale, so
+  all three surfaces finally RESOLVE to the same colours. Renaming is a recorded
+  follow-on.
+  (4) MAKING THE BUTTON ORANGE IS THE OBVIOUS MOVE AND IT IS WRONG ALONE: white on
+  `--accent` (#d9480f) measures **4.30**, under AA — the exact defect the panel's
+  `.btn-new`/`.goal-save` had, and why `--accent-solid` exists. The primary uses it
+  and measures **6.08**, verified in the browser rather than computed by hand. This
+  is the third surface to need the same lesson, which is why it is written down
+  three times now.
+  (5) VERIFIED: deployed and confirmed in the live HTML; measured in a real browser
+  (aside 492px at x=200, card 492px at x=748, main 1120px, no horizontal scroll,
+  3 steps, button 6.08); swept with the TESTED probe in BOTH themes — **0 under AA
+  across 18 rows each** — and dark SCREENSHOTTED to confirm it renders rather than
+  merely passing a number. Index 73 tests, CI green.
+  (6) ALL THREE SURFACES ARE NOW ON ONE SCALE, IN BOTH THEMES, EACH MEASURED. Still
+  open: the console's subjective information architecture (whether five views is the
+  right five), the panel's governance-pill prominence, and the `--dsw-alias-*`
+  namespace rename.
+  Gates: index 73 + deploy; CI green on main.
+
+Previous round: 2026-09-11 round 50 (the user reported seeing NO CHANGE, twice; the
 deploy WAS live, and the reason a working deploy would not show up was a cache rule
 that covered the path nobody visits). Commits: eb9ee2b2, 8736988d. Worker deployed.
   (1) FIRST, WHETHER THE WORK WAS ACTUALLY LIVE — because "the user is wrong" is not
