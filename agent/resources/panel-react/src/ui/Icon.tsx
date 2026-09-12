@@ -41,9 +41,7 @@ const PATHS: Record<IconName, ReactNode> = {
       <line x1="18" y1="6" x2="19.4" y2="4.6" />
     </>
   ),
-  moon: (
-    <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />
-  ),
+  moon: <path d="M21 12.79A9 9 0 1 1 11.21 3 7 7 0 0 0 21 12.79z" />,
   terminal: (
     <>
       <polyline points="4 17 10 11 4 5" />
@@ -192,23 +190,87 @@ export function Icon({ name, size = 18 }: { name: IconName; size?: number }) {
 /** The Vale "sunrise" brand mark — the SAME gradient used by the installer
  *  icon (scripts/render-brand-icon.py) and the favicon. */
 export function BrandMark({ size = 26 }: { size?: number }) {
+  // "Aurora Vale" — the same mark as brand/logo-aurora.svg, the console favicon and the
+  // landing page's data-URI. Same silhouette as the sunrise mark it replaces (near
+  // hill, far ridge, light over the pass); only the light moved. Kept in sync by hand
+  // because this one is a React component and the other two are files — if the mark
+  // changes again, all THREE are the set.
   return (
     <svg width={size} height={size} viewBox="0 0 48 48" aria-hidden="true">
       <defs>
-        <linearGradient id="vale-brand-sky" x1="0" y1="0" x2="0" y2="1">
-          <stop offset="0" stopColor="#f59f00" />
-          <stop offset="1" stopColor="#e8590c" />
+        <linearGradient id="valeSky" x1="0" y1="0" x2="0.25" y2="1">
+          <stop offset="0" stopColor="#120a2e" />
+          <stop offset=".30" stopColor="#331a63" />
+          <stop offset=".55" stopColor="#6d2a72" />
+          <stop offset=".76" stopColor="#c2430f" />
+          <stop offset=".88" stopColor="#f2760f" />
+          <stop offset="1" stopColor="#a8330c" />
         </linearGradient>
-        <radialGradient id="vale-brand-glow" cx=".5" cy=".5" r=".5">
-          <stop offset="0" stopColor="#fff8e1" stopOpacity=".55" />
-          <stop offset="1" stopColor="#ffe8a3" stopOpacity="0" />
+        <linearGradient id="valeAurora" x1="0" y1="0" x2="1" y2="0">
+          <stop offset="0" stopColor="#22d3ee" stopOpacity="0" />
+          <stop offset=".18" stopColor="#22d3ee" stopOpacity=".90" />
+          <stop offset=".44" stopColor="#818cf8" stopOpacity=".85" />
+          <stop offset=".70" stopColor="#c084fc" stopOpacity=".75" />
+          <stop offset=".88" stopColor="#f472b6" stopOpacity=".55" />
+          <stop offset="1" stopColor="#f472b6" stopOpacity="0" />
+        </linearGradient>
+        <linearGradient id="valeAurora2" x1="1" y1="0" x2="0" y2="0">
+          <stop offset="0" stopColor="#5eead4" stopOpacity="0" />
+          <stop offset=".25" stopColor="#5eead4" stopOpacity=".60" />
+          <stop offset=".6" stopColor="#a78bfa" stopOpacity=".50" />
+          <stop offset="1" stopColor="#a78bfa" stopOpacity="0" />
+        </linearGradient>
+        <radialGradient id="valeGlow" cx=".5" cy=".5" r=".5">
+          <stop offset="0" stopColor="#fffdf5" stopOpacity="1" />
+          <stop offset=".35" stopColor="#ffe9b8" stopOpacity=".60" />
+          <stop offset="1" stopColor="#ffb066" stopOpacity="0" />
         </radialGradient>
+        <linearGradient id="valeSheen" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".26" />
+          <stop offset=".38" stopColor="#ffffff" stopOpacity="0" />
+          <stop offset="1" stopColor="#2b0f3a" stopOpacity=".30" />
+        </linearGradient>
+        <linearGradient id="valeRim" x1="0" y1="0" x2="0" y2="1">
+          <stop offset="0" stopColor="#ffffff" stopOpacity=".55" />
+          <stop offset=".5" stopColor="#ffffff" stopOpacity=".06" />
+          <stop offset="1" stopColor="#ffffff" stopOpacity=".18" />
+        </linearGradient>
+        <clipPath id="valeTile">
+          <rect width="48" height="48" rx="11" />
+        </clipPath>
       </defs>
-      <rect width="48" height="48" rx="11" fill="url(#vale-brand-sky)" />
-      <circle cx="21" cy="14" r="7.5" fill="url(#vale-brand-glow)" />
-      <circle cx="21" cy="14" r="4" fill="#fff8e1" />
-      <path fill="#ffffff" opacity=".78" d="M14 41Q26 16 44 41Z" />
-      <path fill="#ffffff" d="M2 41Q12 20 24 41Z" />
+      <g clipPath="url(#valeTile)">
+        <rect width="48" height="48" fill="url(#valeSky)" />
+        <path
+          fill="url(#valeAurora)"
+          d="M-4 22C5 9 15 20 24 11S42 4 52 9V-4H-4Z"
+        />
+        <path
+          fill="url(#valeAurora2)"
+          d="M-4 17C9 6 17 16 28 7s18-1 28 1V-4H-4Z"
+          opacity=".85"
+        />
+        <path
+          fill="url(#valeAurora)"
+          d="M-4 27C7 17 17 26 27 18s17-3 29 0V14H-4Z"
+          opacity=".45"
+        />
+        <circle cx="21" cy="17" r="11" fill="url(#valeGlow)" />
+        <circle cx="21" cy="17" r="3.4" fill="#fffdf5" />
+        <path fill="#ffffff" opacity=".82" d="M14 41Q26 16 44 41Z" />
+        <path fill="#ffffff" d="M2 41Q12 20 24 41Z" />
+        <rect width="48" height="48" fill="url(#valeSheen)" />
+        <rect
+          x=".6"
+          y=".6"
+          width="46.8"
+          height="46.8"
+          rx="10.5"
+          fill="none"
+          stroke="url(#valeRim)"
+          strokeWidth="1.2"
+        />
+      </g>
     </svg>
   );
 }
