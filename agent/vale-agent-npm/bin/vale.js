@@ -48,7 +48,9 @@ exports.uninstallVersionPs = uninstallVersionPs;
 exports.autostartArgv = autostartArgv;
 exports.playwrightProbePs = playwrightProbePs;
 exports.busyIsFresh = busyIsFresh;
+exports.latestCdnVersion = latestCdnVersion;
 exports.statusReport = statusReport;
+exports.behindBy = behindBy;
 exports.updateReceiptPs = updateReceiptPs;
 exports.updateBusyPath = updateBusyPath;
 exports.awaitReleaseMarker = awaitReleaseMarker;
@@ -469,6 +471,31 @@ function playwrightProbePs() {
 function busyIsFresh(mtimeMs, nowMs) {
     return nowMs - mtimeMs < 10 * 60 * 1000;
 }
+/**
+ * The newest version the release CDN advertises, or `null` when it cannot be
+ * read. Never throws and never guesses — the caller renders `null` as "could not
+ * be checked", because a silent failure here is indistinguishable from "current".
+ *
+ * Uses `curl` (what `vale rollback` already uses for its HEAD check) rather than
+ * a Node HTTP client: it inherits the proxy and TLS store the rest of the CLI
+ * relies on, and a 3 s cap keeps `status` from hanging on a bad network.
+ */
+function latestCdnVersion() {
+    const base = (process.env.VALE_CDN || "https://agent.saisi.online").replace(/\/+$/, "");
+    const r = (0, child_process_1.spawnSync)("curl", ["-s", "-m", "3", `${base}/api/version`], { encoding: "utf8", timeout: 5000 });
+    if (r.status !== 0 || !r.stdout)
+        return null;
+    try {
+        const j = JSON.parse(r.stdout);
+        const v = j && typeof j.version === "string" ? j.version.trim() : "";
+        return v || null;
+    }
+    catch {
+        // A body that is not JSON is NOT a version — the same rule the gateway's
+        // tool path had to learn.
+        return null;
+    }
+}
 function statusReport(f) {
     const out = [];
     out.push(f.agentRunning ? "status: RUNNING" : "status: STOPPED");
@@ -498,7 +525,52 @@ function statusReport(f) {
         out.push(`update: device runs ${f.releaseVersion}, this CLI is ${f.packageVersion} -- ` +
             `run 'vale update' to swap, then 'vale status' again to confirm.`);
     }
+    // THE DELIVERY GAP, WHICH NOTHING ELSE IN THIS REPO CHECKS.
+    //
+    // `release` answers "what is this device running"; it did NOT answer "is that
+    // current", and the two questions are answered by different machines. Every
+    // round of this project's log records a device found MANY RELEASES BEHIND the
+    // CDN — five, six, once three in a single round — and each time the only thing
+    // that noticed was a human looking. This closes it where a human already
+    // looks: the one command run after every update.
+    //
+    // `null` IS NOT "UP TO DATE". If the CDN could not be read the line says so
+    // instead of staying silent, because silence here reads exactly like
+    // agreement — the failure mode this whole log is about.
+    // `== null` COVERS `undefined` TOO, AND THAT IS THE POINT. The first version of
+    // this tested `=== null`, and a caller that simply OMITS the field — an older
+    // edition, a test fixture — fell through to the drift branch with `undefined`
+    // and crashed reading `.split` of nothing. Missing and null are both "we do not
+    // know what the CDN has"; only a STRING is a comparison. (The panel learned the
+    // same distinction the hard way in round 36: `undefined` is not `null`.)
+    if (f.latestVersion == null) {
+        out.push("latest: could NOT be checked (the release CDN did not answer) -- this says nothing about whether the device is current");
+    }
+    else if (f.releaseVersion && f.releaseVersion !== f.latestVersion) {
+        out.push(`latest: ${f.latestVersion} is on the CDN -- THIS DEVICE IS BEHIND by ${behindBy(f.releaseVersion, f.latestVersion)}; run 'vale update'`);
+    }
+    else if (f.releaseVersion) {
+        out.push(`latest: ${f.latestVersion} (this device is current)`);
+    }
     return out;
+}
+/**
+ * How far behind, in patch releases, WITHIN THE SAME MINOR. Returns a phrase,
+ * never a fabricated number: `1.2.9` → `1.2.12` is "3 releases", but a MINOR or
+ * MAJOR difference is not a count of anything a reader can act on, so it is
+ * stated as such. The last-5-per-minor CDN prune means a cross-minor jump is a
+ * different operation anyway (`vale rollback` refuses it for the same reason).
+ */
+function behindBy(device, latest) {
+    const a = device.split(".").map(Number);
+    const b = latest.split(".").map(Number);
+    if (a.length !== 3 || b.length !== 3 || [...a, ...b].some((n) => !Number.isFinite(n))) {
+        return "an unknown number of releases";
+    }
+    if (a[0] !== b[0] || a[1] !== b[1])
+        return "a release line, not a patch count";
+    const n = b[2] - a[2];
+    return n === 1 ? "1 release" : `${n} releases`;
 }
 /**
  * The CLI's pre-handoff receipt, appended to the swap's own log.
@@ -1094,6 +1166,13 @@ const commands = {
             packageVersion = String(require("../package.json").version || "");
         }
         catch { /* best-effort */ }
+        // What the CDN advertises, so `status` can answer "is this device current" —
+        // the question every round of this project's log answered by hand. Bounded
+        // HARD (3 s): `status` is the command an operator runs when something is
+        // already wrong, and a status that hangs on a network blip is worse than one
+        // that says it could not check. A failure yields `null`, which the report
+        // renders as "could NOT be checked" — never as agreement.
+        const latestVersion = latestCdnVersion();
         for (const line of statusReport({
             agentRunning: out.includes("vale-agent"),
             installDir: DIR,
@@ -1102,6 +1181,7 @@ const commands = {
             releaseVersion,
             updateMarkerMs,
             packageVersion,
+            latestVersion,
             nowMs: Date.now(),
         })) {
             console.log(line);

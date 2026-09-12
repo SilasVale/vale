@@ -727,3 +727,46 @@ test("the update staleness window is the same on both sides of the lock", () => 
       `interleave Copy-Item on *.new.`,
   );
 });
+
+// THE DELIVERY GAP — the single most repeated finding in this project's log.
+// Every round records a device found many releases behind the CDN (five, six,
+// once three in one round) and every time the ONLY thing that noticed was a
+// human looking. `status` answered "what is this device running" and never "is
+// that current", and those two questions are answered by different machines.
+const { statusReport, behindBy } = require("../bin/vale.js");
+const DRIFT_BASE = {
+  agentRunning: true, installDir: "D:\\Vale", exeExists: true, port: 18080,
+  releaseVersion: "1.2.340", updateMarkerMs: null, packageVersion: "1.2.340",
+  nowMs: 1_700_000_000_000,
+};
+
+test("delivery drift: NAMES the gap when the device is behind the CDN", () => {
+  const out = statusReport({ ...DRIFT_BASE, latestVersion: "1.2.345" }).join("\n");
+  assert.match(out, /THIS DEVICE IS BEHIND by 5 releases/);
+  assert.ok(out.includes("1.2.345"), out);
+});
+
+test("delivery drift: says CURRENT only when it actually compared", () => {
+  const out = statusReport({ ...DRIFT_BASE, latestVersion: "1.2.340" }).join("\n");
+  assert.match(out, /this device is current/);
+  assert.ok(!/BEHIND/.test(out), out);
+});
+
+test("delivery drift: an unreadable CDN is NOT agreement", () => {
+  // The failure mode this whole log is about: silence that reads like "fine".
+  // `status` runs when something is already wrong, so the one thing it must not
+  // do is imply the device is current because the check failed.
+  const out = statusReport({ ...DRIFT_BASE, latestVersion: null }).join("\n");
+  assert.match(out, /could NOT be checked/);
+  assert.match(out, /says nothing about whether the device is current/);
+  assert.ok(!/is current\)/.test(out), out);
+});
+
+test("delivery drift: counts patches within a minor, refuses a count across one", () => {
+  assert.equal(behindBy("1.2.9", "1.2.12"), "3 releases");
+  assert.equal(behindBy("1.2.9", "1.2.10"), "1 release");
+  // A cross-minor jump is a different operation (the CDN prunes last-5-per-minor
+  // and `vale rollback` refuses it), so it is not "N releases".
+  assert.equal(behindBy("1.1.9", "1.2.0"), "a release line, not a patch count");
+  assert.equal(behindBy("garbage", "1.2.0"), "an unknown number of releases");
+});
