@@ -987,7 +987,19 @@ const commands = {
         fs.writeFileSync(HOSTNAME_FILE, deviceHost);
         // No key required for a local install — key/tunnel are optional extras.
         if (regKey) {
-            console.log("setup: registering device with the gateway (--reg-key)");
+            // WAS: "setup: registering device with the gateway (--reg-key)" — FALSE on this
+            // path. `regKey` has exactly ONE consumer, the Cloudflare token exchange inside
+            // `initTunnel`, and that runs only under `--tunnel`. So `vale setup --reg-key K`
+            // without `--tunnel` printed that line and never used K at all; the device still
+            // appeared in the console, but via the AGENT's own token-based self-register on
+            // first boot, which needs no key — so the operator credited the key.
+            //
+            // It cannot be fixed by registering here: the device token is minted by the agent
+            // on first boot, and the gateway's POST /api/register wants {key, name, hostname,
+            // token}. So the line says what the key is actually for.
+            console.log(wantTunnel
+                ? "setup: --reg-key will be exchanged for the tunnel token (--tunnel)"
+                : "setup: --reg-key noted, but WITHOUT --tunnel it is not used — the device registers itself on first start with its own token. Pass --tunnel to use the key, or add the gateway later in the Settings page.");
         }
         else {
             // WAS: "setup: LOCAL install (no cloud)." — FALSE, and privacy-relevant.
@@ -1385,18 +1397,37 @@ const commands = {
             process.exit(1);
         }
         let failed = false;
+        let skipped = 0;
         for (const t of exports.BOOT_TASKS) {
+            // ASK WHETHER THE TASK EXISTS FIRST. The comment above this loop has said
+            // "Missing task = skipped with a note (never fatal -- headless installs have no
+            // ValeDesktop)" all along, and the code below it made a missing task FATAL — so a
+            // headless install could not turn autostart off at all, and the advice printed with
+            // it ("run vale setup first") cannot help, because `vale setup` never registers
+            // ValeDesktop (only the NSIS online installer does).
+            const exists = (0, child_process_1.spawnSync)("schtasks", ["/Query", "/TN", t], { encoding: "utf8" })
+                .status === 0;
+            if (!exists) {
+                console.log(`autostart: ${t} not installed -- skipped (headless install)`);
+                skipped += 1;
+                continue;
+            }
             const argv = autostartArgv(t, sub);
             const r = (0, child_process_1.spawnSync)(argv[0], argv.slice(1), { stdio: "inherit" });
             if (!r || r.status !== 0) {
-                console.error(`autostart: ${t} ${sub} failed (task may not exist -- run vale setup first)`);
+                console.error(`autostart: ${t} ${sub} FAILED on an existing task (status ${r ? r.status : "?"}) -- the change did not take`);
                 failed = true;
             }
             else {
                 console.log(`autostart: ${t} ${sub === "on" ? "enabled" : "disabled"}`);
             }
         }
-        if (sub === "off")
+        if (skipped === exports.BOOT_TASKS.length) {
+            console.error("autostart: no boot tasks found -- nothing to switch. `vale setup` registers the agent task; the desktop task comes from the installer.");
+            process.exit(1);
+        }
+        // Only claim the durable outcome when every EXISTING task actually changed.
+        if (sub === "off" && !failed)
             console.log("autostart: off -- tasks stay disabled across reboot until 'vale autostart on'");
         if (failed)
             process.exit(1);
