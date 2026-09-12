@@ -1518,6 +1518,23 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 
 .auth-form input::placeholder { color: var(--text-secondary); }
 
+/* The current-route summary. One line and a link — choosing happens on the
+   Models page, where the whole catalogue is. */
+.current-route {
+  display: flex;
+  align-items: center;
+  gap: 12px;
+  flex-wrap: wrap;
+}
+.current-route code {
+  font: 500 12.5px var(--ds-font-family-code);
+  color: var(--text);
+  background: var(--bg-secondary);
+  border: 1px solid var(--border);
+  border-radius: var(--radius-sm);
+  padding: 4px 10px;
+}
+
 /* ── Models view ──────────────────────────────────────────────────────────
    The catalogue `/api/admin/public` has always returned and the console never
    rendered. Every colour here is a token, and the TEXT ones are the text weights

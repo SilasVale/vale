@@ -1,41 +1,30 @@
 import { useState, useEffect, useCallback } from "react";
 import { useAuth } from "../contexts/AuthContext.tsx";
+import { Link } from "react-router-dom";
 import { useTranslation } from "../i18n.ts";
 import { useToast } from "../contexts/ToastContext.tsx";
-import { api, type HealthChannel } from "../api/client.ts";
+import { api } from "../api/client.ts";
 import { clientBase } from "../lib/baseUrl.ts";
 import { Card, PageHeader, Badge, CopyButton } from "../components/ui.tsx";
-
-function laneClass(prefix: string): string {
-  if (prefix.startsWith("og")) return "lane-og";
-  if (prefix.startsWith("ds")) return "lane-ds";
-  if (prefix.startsWith("or")) return "lane-or";
-  if (prefix.startsWith("qw")) return "lane-qw";
-  return "lane-def";
-}
 
 export default function RoutesView() {
   const { user } = useAuth();
   const { t } = useTranslation();
   const { toast } = useToast();
-  const [channels, setChannels] = useState<HealthChannel[]>([]);
   const [current, setCurrent] = useState<string | null>(null);
   const [apiHost, setApiHost] = useState("");
   const [loading, setLoading] = useState(true);
   const [usproxyOn, setUsproxyOn] = useState(false);
   const [usproxyLoading, setUsproxyLoading] = useState(false);
-  const [switching, setSwitching] = useState<string | null>(null);
 
   const loadChannels = useCallback(async () => {
     try {
-      const [health, route, publicInfo, proxy] = await Promise.all([
-        api.getHealth().catch(() => null),
+      const [route, publicInfo, proxy] = await Promise.all([
         api.getRoute().catch(() => null),
         api.getPublicRoutes().catch(() => null),
         api.getUsProxy().catch(() => null),
       ]);
 
-      if (health?.channels) setChannels(health.channels);
       if (route?.effective) setCurrent(route.effective);
       else if (route?.model) setCurrent(route.model);
       if (publicInfo?.apiHost) setApiHost(publicInfo.apiHost);
@@ -49,19 +38,6 @@ export default function RoutesView() {
   useEffect(() => {
     loadChannels();
   }, [loadChannels]);
-
-  const handleSwitch = async (model: string) => {
-    setSwitching(model);
-    try {
-      await api.setRoute(model);
-      toast(t("route.switched"));
-      await loadChannels();
-    } catch {
-      toast(t("route.fail"), true);
-      await loadChannels();
-    }
-    setSwitching(null);
-  };
 
   const handleClearRoute = async () => {
     try {
@@ -112,14 +88,6 @@ export default function RoutesView() {
     );
   }
 
-  // Group channels by prefix
-  const grouped = channels.reduce((acc, ch) => {
-    const prefix = ch.id;
-    if (!acc[prefix]) acc[prefix] = [];
-    acc[prefix].push(ch);
-    return acc;
-  }, {} as Record<string, HealthChannel[]>);
-
   return (
     <div>
       <PageHeader title={t("nav.routes")} description={<span dangerouslySetInnerHTML={{ __html: t("routes.lede") }} />} />
@@ -141,7 +109,12 @@ export default function RoutesView() {
         </Card>
       )}
 
-      {/* Channel switch */}
+      {/* CURRENT ROUTE — a summary, not a second switcher.
+          This card used to list one row per channel with a "use" button, which
+          DUPLICATED the Models page and did it worse: it showed only each
+          channel's HEALTH-PROBE model, so a channel offering eight models
+          appeared to offer one. Choosing belongs where the catalogue is; this
+          says what is chosen and links there. */}
       <Card
         title={t("route.title")}
         description={<span dangerouslySetInnerHTML={{ __html: t("route.desc") }} />}
@@ -151,36 +124,12 @@ export default function RoutesView() {
           </button>
         }
       >
-        {Object.entries(grouped).map(([prefix, models]) => (
-          <div className="channel-group" key={prefix}>
-            <div className="channel-label">{prefix}</div>
-            <div className="switchboard">
-              {models.map((ch) => {
-                const isCurrent = current === ch.model;
-                return (
-                  <div className={`lane ${laneClass(prefix)}${isCurrent ? " current" : ""}`} key={ch.model}>
-                    <div className="lane-port">{prefix.replace("/", "")}</div>
-                    <div className="lane-body">
-                      <div className="lane-backend">{ch.model}</div>
-                    </div>
-                    {isCurrent && <Badge tone="success">{t("route.current")}</Badge>}
-                    {ch.ok ? (
-                      <button
-                        className="btn btn-primary btn-sm"
-                        disabled={switching === ch.model}
-                        onClick={() => handleSwitch(ch.model)}
-                      >
-                        {switching === ch.model ? t("route.switching") : t("route.use")}
-                      </button>
-                    ) : (
-                      <Badge tone="error">{ch.reason || t("route.bad")}</Badge>
-                    )}
-                  </div>
-                );
-              })}
-            </div>
-          </div>
-        ))}
+        <div className="current-route">
+          <code>{current || t("route.none")}</code>
+          <Link className="btn btn-secondary btn-sm" to="/models">
+            {t("route.pickInModels")}
+          </Link>
+        </div>
       </Card>
 
       {/* Client example */}
