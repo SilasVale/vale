@@ -692,3 +692,38 @@ test("the agent's own default host agrees with the ingress", () => {
       "tunnel.rs's ingress and with the live device",
   );
 });
+
+// ONE UPDATE LOCK, ONE STALENESS WINDOW — PINNED ACROSS THE LANGUAGE BOUNDARY.
+//
+// The marker PATH agreed between the two sides; the WINDOW did not. The CLI
+// reclaimed an abandoned marker after ten minutes while the agent refused for an
+// hour, so at eleven minutes the CLI OVERWROTE a marker the agent still honoured
+// — and a CLI update could then run alongside a console-launched one, which is
+// the interleaved `Copy-Item` on `*.new` (a half-written exe reported "ok") that
+// the marker exists to prevent. The operator docs stated the ten-minute rule
+// only, so the hour was invisible to whoever read them.
+//
+// Neither language can see the other's number, which is why this test reads
+// both files.
+test("the update staleness window is the same on both sides of the lock", () => {
+  const ts = fs.readFileSync(new URL("../src/vale.ts", import.meta.url), "utf8");
+  const cliMs = /return nowMs - mtimeMs < (\d+) \* 60 \* 1000;/.exec(ts);
+  assert.ok(cliMs, "busyIsFresh's window must stay a literal this pin can read");
+
+  const rust = fs.readFileSync(
+    new URL("../../src/plugins/update/tools.rs", import.meta.url),
+    "utf8",
+  );
+  const rustSecs = /const BUSY_STALE_SECS: u64 = (\d+);/.exec(rust);
+  assert.ok(rustSecs, "BUSY_STALE_SECS must stay a literal this pin can read");
+
+  assert.equal(
+    Number(cliMs[1]) * 60,
+    Number(rustSecs[1]),
+    `the two sides disagree about when an abandoned update marker may be ` +
+      `reclaimed: the CLI says ${cliMs[1]} minutes, the agent says ` +
+      `${rustSecs[1]} seconds. One lock with two rules means whichever is ` +
+      `shorter steals the marker from the longer one — and the two updates ` +
+      `interleave Copy-Item on *.new.`,
+  );
+});

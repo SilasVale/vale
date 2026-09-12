@@ -179,8 +179,21 @@ const BUSY_MARKER_REL: &str = r"ValeAgent\update-busy";
 /// How long an abandoned marker blocks further updates before it may be
 /// reclaimed. A crashed install leaves the marker behind, so without a
 /// staleness window that one crash would lock the device out of updates
-/// FOREVER (round-54: a stuck marker blocked updates for up to an hour).
-const BUSY_STALE_SECS: u64 = 3600;
+/// FOREVER.
+///
+/// TEN MINUTES, AND IT MUST EQUAL THE CLI'S `busyIsFresh` WINDOW. It was 3600,
+/// which is the same hour round-54 complained about ("a stuck marker blocked
+/// updates for up to an hour") — while `vale.ts` reclaimed at ten minutes and
+/// the operator docs state ten. TWO RULES FOR ONE LOCK: at eleven minutes the
+/// CLI overwrote a marker this side still honoured, so a CLI update could start
+/// alongside a console-launched one and interleave `Copy-Item` on `*.new` —
+/// the exact half-written-exe hazard the marker exists to prevent. Ten minutes
+/// is already generous: the swap's copy retries total about ten SECONDS.
+///
+/// The agreement is pinned across the language boundary by
+/// `agent/vale-agent-npm/test/cli.test.mjs`, because no test inside either
+/// language can see the other's number.
+const BUSY_STALE_SECS: u64 = 600;
 
 /// `%ProgramData%` (machine-wide). NOT `%APPDATA%`: the agent runs as SYSTEM
 /// and the tray as the user, whose APPDATA resolve to DIFFERENT directories

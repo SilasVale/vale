@@ -245,7 +245,28 @@ async function callTerminalToolOnce(name: string, env: any, device: any, args: a
     const code = /timeout/i.test(String(error || "")) ? TIMEOUT : DEVICE_UNREACHABLE;
     throw ToolErr(code, error || "Device unreachable");
   }
-  const data: any = await resp.json().catch(() => ({}));
+  // A BODY THAT CANNOT BE PARSED IS NOT A SUCCESSFUL RESULT.
+  //
+  // This falls back to `{}`, and `{}` passes the `ok` check below: `data.ok` is
+  // `undefined`, which is not `false`, so an HTTP 2xx whose body is empty, HTML
+  // (a proxy error page), or truncated is handed back to the model as a
+  // SUCCESSFUL tool result containing nothing. The model then reports having
+  // done something it has no evidence for — the same shape as the round-58 bug
+  // the comment below describes, reached through a different door: that fix
+  // taught this code to read the AGENT's `ok` flag, and this fallback
+  // manufactures one when the agent's answer cannot be read at all.
+  //
+  // `null` means "no parseable body", which is a DIFFERENT thing from an empty
+  // object the device actually sent, and is reported as a failure below.
+  const data: any = await resp.json().catch(() => null);
+  if (data === null) {
+    throw ToolErr(
+      TOOL_ERROR,
+      `Device returned ${resp.status} with a body that is not JSON ` +
+        `(an empty or truncated reply, or a proxy's error page). Nothing was ` +
+        `executed as far as this call can tell.`,
+    );
+  }
   // round-58: deviceFetch's `ok` is the HTTP status — the agent returns
   // tool errors as HTTP 200 + {"ok":false,"error":...} (web.rs api_call_tool),
   // so the old `if (!ok)` never fired and the error-code mapping below was

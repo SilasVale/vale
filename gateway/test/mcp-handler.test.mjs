@@ -805,3 +805,46 @@ test("contract: the console's `required` matches the device's, after renames", a
       `forbidden one it would accept: ${problems.join(", ")}`,
   );
 });
+
+// A 2xx WHOSE BODY CANNOT BE READ IS NOT A SUCCESSFUL TOOL RESULT.
+//
+// `resp.json().catch(() => ({}))` turned an empty, truncated or non-JSON body
+// into `{}`, and `{}` PASSES the agent-ok check below it: `data.ok` is
+// `undefined`, which is not `false`. So the model was handed a successful result
+// containing nothing and would report having done something it had no evidence
+// for. The round-58 comment above that check documents the SAME defect reached
+// through a different door — it taught this code to read the AGENT's `ok` flag,
+// and the fallback manufactured one whenever the agent's answer could not be
+// read at all.
+test("mcp: a 2xx with a NON-JSON body is an error, not an empty success", async () => {
+  for (const [name, body] of [
+    ["empty", ""],
+    ["html (a proxy error page)", "<html><body>502 Bad Gateway</body></html>"],
+    ["truncated json", '{"ok": tru'],
+  ]) {
+    const env = makeEnv();
+    const realFetch = globalThis.fetch;
+    globalThis.fetch = async () =>
+      new Response(body, { status: 200, headers: { "content-type": "text/html" } });
+    try {
+      const res = await handleMcp(
+        post({
+          jsonrpc: "2.0",
+          method: "tools/call",
+          params: { name: "terminal_execute", arguments: { device: "d1", input: "ls" } },
+          id: 9,
+        }),
+        env,
+      );
+      const data = await res.json();
+      assert.ok(
+        data.error,
+        `${name}: an unreadable body must not come back as a successful tool ` +
+          `result — the model would report work it has no evidence for: ${JSON.stringify(data)}`,
+      );
+      assert.equal(data.result, undefined, `${name}: no empty result object`);
+    } finally {
+      globalThis.fetch = realFetch;
+    }
+  }
+});

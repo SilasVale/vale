@@ -457,6 +457,15 @@ function playwrightProbePs() {
     ];
 }
 // exported: the update mutual-exclusion window (npm audit #10 seam), unit-tested.
+//
+// TEN MINUTES, AND IT MUST EQUAL THE AGENT'S `BUSY_STALE_SECS`. It did not: this
+// reclaimed at ten minutes while `agent/src/plugins/update/tools.rs` refused for
+// an hour, so at eleven minutes this side OVERWROTE a marker the agent still
+// honoured and a CLI update could start alongside a console-launched one —
+// interleaving `Copy-Item` on `*.new`, the half-written-exe hazard this marker
+// exists to prevent (npm audit #10). The agent now uses ten minutes too, and
+// `test/cli.test.mjs` pins the two numbers against each other, because no test
+// inside either language can see the other's.
 function busyIsFresh(mtimeMs, nowMs) {
     return nowMs - mtimeMs < 10 * 60 * 1000;
 }
