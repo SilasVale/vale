@@ -488,7 +488,59 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 27 (the trim disclosure, told ONCE and told
+Last updated: 2026-09-11 round 28 (the crash-safety family FINISHED — four
+readers and one append that never got the rule their foundation module claimed
+they shared). Commit: 15477059, plus 1.2.332.
+  (1) `jsonl.rs` OPENS BY CLAIMING "the crash-safety rules every append-only,
+  line-oriented file in this crate shares" AND THEN NAMES TWO FILES. The audit
+  trail and the memory store had the rules; the AI-evidence feed and the run log
+  did not. A sentence describing a rule the code had not finished applying — this
+  log's recurring family, this time in its own foundation module.
+  (2) THE MECHANISM IS THE ONE THIS LOG KEEPS REDISCOVERING. `read_to_string`
+  requires the WHOLE file to be valid UTF-8, and the tear a crash leaves — a
+  multi-byte character cut in half — is invalid. So a strict read does not
+  degrade, it rejects EVERY record in the file, intact ones included:
+    * `evidence.rs`'s `recent_actions` returned an EMPTY feed, indistinguishable
+      from "nothing has happened", while its own doc comment promised three lines
+      above the call that a torn line "is SKIPPED rather than failing the whole
+      feed" — the sentence described behaviour the code could not have;
+    * `runs.rs`'s four readers (`known`, `recent`, `trim`, boot recovery) failed
+      the same way, so `known` answered false for a run that IS recorded and the
+      recovery arm closed nothing;
+    * `evidence.rs`'s append had NO torn-tail repair, so a new record FUSED onto
+      the fragment and the pair became one unparseable line — losing the record
+      already there AND the one just written. Round 20 found exactly this in
+      `runs.rs`; the feed never got the guard.
+  (3) THE FIX PUTS THE RULE IN ONE PLACE. `jsonl::read_lossy` is the family's
+  owner: bytes decoded lossily, so a damaged line becomes a line that does not
+  PARSE — which every reader in the family already skips — instead of a file that
+  cannot be read. The promotion rule satisfied honestly (several real consumers,
+  an incident lesson, no environment coupling), and the header is now accurate
+  because the family is. The evidence append repairs its tail before writing,
+  guarded to non-empty files because `prepare_append` also writes a version
+  header and this feed has none: `recent_actions` returns every parseable line, so
+  a header would surface as a PHANTOM ACTION in the operator's timeline. There is
+  a test for that too.
+  (4) WHY THE EXISTING TEST COULD NOT SEE ANY OF IT — round 23's lesson again.
+  `recent_actions_caps_and_skips_torn_lines` EXISTS and passes; it plants ASCII
+  junk, which is VALID UTF-8 and merely unparseable. The covered behaviour was not
+  the production one, and only a damaged BYTE tells the two apart. Every fix here
+  is pinned by a test that plants a truncated multi-byte sequence, and all three
+  are mutation-proven: disabling the tail repair fails with `["earlier"]` (the
+  later record swallowed), restoring the strict read fails the feed test with
+  `[]`, and restoring it in `runs.rs` fails with "the run IS recorded — one
+  damaged byte must not deny it".
+  (5) RELEASED 1.2.332. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the EIGHTH consecutive release.
+  (6) STILL OPEN, with evidence: `useOperationRuns.ts` claims the session route
+  "carries no `run_id` at all" and it does (`SessionEvent.run_id`), so the panel's
+  trail reader drops attribution already on the wire; and `memory_search`
+  silently ignores `tag` while `MemoryPage.tsx` says round 161 fixed exactly that.
+  Gates: agent 574 default / 625 feat-gated (was 570/621), clippy -D warnings
+  clean BOTH configs, fmt clean, xwin OK.
+
+Previous round: 2026-09-11 round 27 (the trim disclosure, told ONCE and told
 correctly — and the live view that was structurally unable to tell it). Commit:
 828f0ce2, plus 1.2.331.
   (1) MY ROUND-23 SENTENCE WAS FALSE BY AN ORDER OF MAGNITUDE, and a scout found
