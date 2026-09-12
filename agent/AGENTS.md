@@ -519,7 +519,44 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 57 (a finding the ops tool had reported on EVERY run
+Last updated: 2026-09-11 round 58 (I finally COMPARED the two live catalogue surfaces
+instead of trusting the word "derived" — and the page I shipped in round 49 was
+setting the WRONG CHANNEL and rendering Chinese in an English UI).
+Commit: 36d25142. Worker deployed; both verified live in both languages.
+  (1) THE COMPARISON, which is the whole round: `/api/admin/public` and `/v1/models`
+  were fetched and diffed for the first time. `ROUTE_INFO` carries TWO lists and they
+  are NOT interchangeable:
+      models:          ["og/mimo-v2.5", ...]        21 PREFIXED ids == /v1/models exactly
+      routes[].models: ["mimo-v2.5", ...]           BARE names
+  The guide said the catalogue is "derived from MODEL_REGISTRY" — true of the
+  top-level list, and I read `routes[].models` instead. "Derived" was an assurance
+  about the FILE, not about the FIELD I used.
+  (2) THE BUG: routing is by PREFIX and an unprefixed name goes to COMMAND CODE, so
+  clicking a model under "OpenCode Go" silently switched to a different channel.
+  PROVEN on the live page before fixing: chip `mimo-v2.5` -> `PUT /api/me/route
+  {"model":"mimo-v2.5"}`. After: the chip reads `og/mimo-v2.5` and so does the PUT.
+  The page renders the AUTHORITATIVE list now; `routes` supplies only each channel's
+  name and description. `"none"` is a SENTINEL for the default channel, so it is
+  excluded from prefix matching rather than matched literally; a missing `models` list
+  FAILS rather than falling back to the bare names, because that fallback IS the bug;
+  and `total` no longer double-counts models listed on two channels.
+  (3) A SECOND DEFECT IN THE SAME PAGE: every `models.*` key and `nav.models` existed
+  in zh and NONE in en, and `t()` falls back to the Chinese dictionary — so `lang=en`
+  rendered the page ENTIRELY IN CHINESE ("模型目录", "个模型", "渠道可用", "未探测")
+  inside an English UI. Nothing caught it: the keys existed (in zh), the type-check
+  passed because the key union comes from either dictionary, and no test compared them.
+  (4) THE PIN: `gateway/ui/test/i18n-parity.test.mjs` requires zh and en to declare
+  the SAME keys, names the Models surface explicitly, and asserts >= 200 keys per side
+  so a parse that reads nothing cannot report parity. Mutation-proven. The dictionary
+  is now 258 keys per language with ZERO gaps — so this was the only one, which is
+  worth knowing rather than assuming.
+  (5) STILL OPEN: the panel's governance-pill visual prominence (a taste call), the
+  `--dsw-alias-*` namespace rename on the landing page, and the drift tool's
+  "opportunity" rows.
+  Gates: gateway 775 + format; gateway-ui 10 (was 7) + both render smokes; token
+  contract green; CI green on main.
+
+Previous round: 2026-09-11 round 57 (a finding the ops tool had reported on EVERY run
 since it was written was finally ACTED ON — the gateway advertised a model NVIDIA has
 never offered, and the console would now offer it as a clickable chip).
 Commit: ca8172cb. Worker deployed; verified by effect.
