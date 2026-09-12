@@ -519,7 +519,31 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 82 (the SIBLING of the round-79 fix, in THREE more
+Last updated: 2026-09-12 round 83 (a failed write of the PATH REGISTRY — the single
+source of truth both sides resolve from — was completely silent, because spawnSync does
+not throw and stdio was ignored inside a try that could never fire).
+Commit: 7b0c2995. CI green.
+  (1) THREE `spawnSync("reg", [...], { stdio: "ignore" })` WRITES inside a `try` that can
+  never fire. The registry is what `paths.rs` AND `resolveDataDir()` both read, so a
+  denied HKLM write (non-elevated install, AV, policy) was silent — and the next command
+  showed it: the agent resolves `install_dir()` from the registry, so it looks in the
+  DEFAULT location instead of where setup put it, and `vale status` prints the default
+  `install dir:` and "panel: (not installed)" for an install that succeeded elsewhere.
+  (2) ONE `regWrite(name, value)` that checks the status and warns with the CONSEQUENCE.
+  Its return value is CONSUMED: the calls collect into `regOk` (hoisted to the setup body)
+  and setup prints ONE summary — "the registry entry for this install is INCOMPLETE (N of
+  M writes failed) ... it may look in the DEFAULT location". A returned boolean nobody
+  reads is the same smell as a token nobody renders, fixed one round earlier.
+  (3) The writes stay BEST-EFFORT (a non-elevated install still succeeds) — it just says
+  so now.
+  (4) STILL OPEN: F9 `setup --reg-key` without `--tunnel` never spends the key its own
+  message says it is registering with; L4 the 90 s read-back timeout is stated as fact
+  ("the swap did NOT take") rather than as a timeout; L7 `autostart` counts a missing
+  ValeDesktop task as a failure though its own comment says skip; L11 "sources staged"
+  prints even when stageDesktopShell returned early.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 82 (the SIBLING of the round-79 fix, in THREE more
 places: a failed READ reported as evidence of ABSENCE — plus `tunnel start` claiming
 success from an unobserved spawn).
 Commit: cffbc1dd. CI green.
