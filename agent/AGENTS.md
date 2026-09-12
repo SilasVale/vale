@@ -488,7 +488,78 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 39 (THE DELIVERY GAP FINALLY HAS A CHECK — the
+Last updated: 2026-09-11 round 40 (the desktop shell's control-API origin veto
+was BYPASSABLE — its twin's bug, documented as fixed — and the suite that would
+have caught it ran NOWHERE). Commit: 0a1e9640, plus 1.2.348.
+  (1) A DELEGATED AUDIT OF THE RELEASE/ROLLOUT MACHINERY — `scripts/`, the
+  workflows and the Electron shell, none of which any round had ever opened —
+  found IPC AUDIT #1 STILL LIVE ON ITS TWIN. The 9444 loopback control API vetoed
+  foreign origins with an inline regex in `main.ts` that has NO `$` ANCHOR:
+  `/^(https?:\/\/(127\.0\.0\.1|localhost)(:\d+)?|file:\/\/)/i`.
+  EXECUTED: `http://127.0.0.1.evil.com`, `http://localhost.evil.com` and
+  `http://127.0.0.1x` ALL PASSED. The API reflects the caller's Origin, so a page
+  an attacker hosts could READ `/api/browser-session/list` (session URLs) and
+  `/api/shell/icon-status` (local paths) and POST `/api/browser-session/open` and
+  `/api/shell/start-agent` (`schtasks /run ValeAgent`).
+  `url-policy.ts`'s header records that exact class — "startsWith(BASE) was
+  BYPASSABLE" — and `isDesktopSpaUrl`'s test pins the sibling-host lookalike TWO
+  TESTS ABOVE the new ones. The HTTP path kept the old shape because it was the
+  one origin decision that never moved into the policy module.
+  `controlOriginOk(origin)` now compares the PARSED hostname, permits an ABSENT
+  Origin deliberately (curl/native tooling send none; the data: wait page sends
+  "null" — a carve-out `main.ts` documents), and REFUSES an unparseable value
+  rather than treating it as one it recognises. Mutation-proven: restoring a
+  prefix test fails with "sibling-host lookalike".
+  (2) WHY NOTHING COULD SEE IT: THE SHELL'S SUITE RAN NOWHERE. Its `package.json`
+  has defined `"test": "node --test"` for as long as `test/url-policy.test.mjs`
+  has existed, and NO CI job had that working directory — every other `npm test`
+  names gateway, gateway-ui, panel-react, vale-agent-npm or index, and CI only
+  COMPILES the shell. `ci.yml` gains that step. This is the same shape the log
+  recorded at ci.yml's own "THE SUITE NOTHING RAN" note, and it is why a security
+  predicate had no home.
+  (3) AND THE SHELL'S OWN BUILD WAS RED. `emitMenu` dereferenced a possibly-null
+  `win` against a comment saying "win validated by callers"; this package's
+  `npm run build` TYPE-CHECKS, so it failed — unnoticed for exactly the reason in
+  (2), and harmless only because CI's `--noCheck` emit is what ships. Fixed with
+  the guard the comment described rather than silenced. `npm run build` is green
+  in that directory for the first time.
+  (4) RELEASED 1.2.348 and updated d1. THE ROUND-39 DRIFT CHECK EARNED ITS KEEP
+  IMMEDIATELY: `vale status` reported "THIS DEVICE IS BEHIND by 2 releases" before
+  I looked, then "this device is current" after the swap — the check built one
+  round earlier, catching a real gap in its first live use. CI and the release
+  workflow green on the tag, INCLUDING THE NEW SHELL STEP; keep-latest left ONE
+  release and ONE tag; the dual-builder audit reported the STRONGER WARN verdict
+  for the TWENTIETH consecutive release.
+  (5) THE RELEASE AUDIT'S OWN FINDINGS, NOT ACTED ON, WITH HARD EVIDENCE. The
+  19-release WARN IS ONE FILE MODE, and this is measured rather than inferred: the
+  live CDN and GitHub 1.2.346 tarballs differ by EXACTLY 3 bytes out of 17,774,080
+  — the mode field of `package/README.md` (`-rw-------` locally, `-rw-r--r--` in
+  CI, because npm pack preserves source modes) and its header checksum. EVERY
+  file's sha256 is identical INCLUDING `vale-agent.exe`. TWO CONSEQUENCES: the fix
+  is a `chmod`; and because the WARN branch is reachable only when the two exes are
+  byte-identical, NINETEEN CONSECUTIVE WARNs PROVE the two builders have produced
+  identical exes for nineteen releases — which FALSIFIES the stated rationale of
+  `publish-release.sh`, `release-audit.sh` and the whole of `publish-cdn-from-ci.sh`
+  ("the exes are not byte-identical and cannot easily be made so").
+  ALSO OPEN: the audit can PASS WHILE COMPARING NOTHING (its two `cd`s are
+  unchecked command substitutions; a tarball whose top dir is not `package` makes
+  both listings empty, they compare equal, and the function returns 0 — reproduced
+  against trees with a different top dir); its two call sites DISAGREE on that
+  failure because bash disables errexit inside a `||` list; `--skip-reconcile`'s
+  refusal guard discards the very API call it depends on (`|| true` + `2>/dev/null`),
+  so a missing token turns the documented refusal into "audit SKIPPED"; the default
+  publish leaves a STALE installer alias that its own smoke cannot see; the
+  tag/release step exists only as PRINTED TEXT, and the CDN is live before any tag
+  exists; the release gate's 10-minute bound is shorter than the eleven-job matrix
+  it waits for, and its `read <<< "$(...)"` is not fail-closed as its comment
+  claims; the two "last-5" prunes implement different policies while one calls
+  itself the other's companion; and `release-audit.sh` — the highest-stakes gate —
+  is the only lib in the toolbox with NO TEST, which is how the above survived.
+  Gates: shell 9 (was 0 — the suite did not run) and `npm run build` green for the
+  first time; agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; gateway 766 + format; CLI 35; panel 506.
+
+Previous round: 2026-09-11 round 39 (THE DELIVERY GAP FINALLY HAS A CHECK — the
 most repeated finding in this log, closed where an operator already looks).
 Commit: 156a991e, plus 1.2.346.
   (1) IT IS THE MOST REPEATED FINDING HERE AND IT WAS NEVER CHECKED. Round after
