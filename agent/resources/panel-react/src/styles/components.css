@@ -3315,3 +3315,51 @@ button.dtab-close:hover { opacity: 1; }
 .archive-trail-sid { font: 12px var(--font-mono); font-weight: 650; color: var(--ink); }
 .archive-trail-when { margin-left: auto; font: 10.5px var(--font-mono); color: var(--muted); }
 .archive-trail-body { flex: 1; min-height: 0; display: flex; flex-direction: column; }
+
+/* ── Device logs (Settings) ─────────────────────────────────────────────────
+   A diagnostic surface, so the tone words carry the meaning and colour only
+   reinforces it: an operator scanning the page must be able to tell "the swap
+   launched" from "nothing arrived" without resolving a hue. */
+.device-logs-verdict {
+  margin: 4px 0 8px;
+  font: 400 12px var(--font);
+  color: var(--chrome-ink);
+}
+.device-logs-verdict-ok { color: var(--state-ok); }
+.device-logs-verdict-warn { color: var(--danger-on-soft); }
+.device-logs-verdict-quiet { color: var(--chrome-ink-dim); }
+.device-logs-receipt {
+  margin: 0 0 8px;
+  font: 400 11px var(--font-mono);
+  color: var(--chrome-ink-dim);
+  overflow-wrap: anywhere;
+}
+.device-logs-dir { font: 400 11px var(--font-mono); overflow-wrap: anywhere; }
+.device-logs-list { display: flex; flex-direction: column; gap: 4px; }
+.device-logs-toggle {
+  display: flex;
+  gap: 8px;
+  align-items: baseline;
+  width: 100%;
+  padding: 6px 8px;
+  border: 1px solid var(--surface-chip);
+  border-radius: 6px;
+  background: transparent;
+  color: var(--chrome-ink);
+  font: 400 12px var(--font-mono);
+  text-align: left;
+  cursor: pointer;
+}
+.device-logs-absent { font: 400 11px var(--font); color: var(--chrome-ink-dim); }
+.device-logs-tail {
+  max-height: 260px;
+  margin: 4px 0 0;
+  padding: 8px;
+  overflow: auto;
+  border-radius: 6px;
+  background: var(--surface-chip);
+  color: var(--chrome-ink);
+  font: 400 11px var(--font-mono);
+  white-space: pre-wrap;
+  overflow-wrap: anywhere;
+}

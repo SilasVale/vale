@@ -1,6 +1,7 @@
 import { useEffect, useState } from "react";
 import { callApi } from "../lib/api";
 import { ConnectCard } from "./ConnectCard";
+import { DeviceLogsCard } from "./DeviceLogsCard";
 
 // SettingsPage — device settings as a first-class page (both densities).
 // Cards: Connect an AI client (onboarding — first, because nothing else on this
@@ -177,6 +178,8 @@ export function SettingsPage({ onOpenMemory }: { onOpenMemory?: () => void }) {
           new user's first screen was a terminal and the product's promise was
           invisible. See docs/adr/proposal-game-design.md §4. */}
       <ConnectCard />
+
+      <DeviceLogsCard />
 
       <div className="settings-section">
         <h3>Gateway</h3>
