@@ -488,7 +488,51 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 28 (the crash-safety family FINISHED — four
+Last updated: 2026-09-11 round 29 (`memory_search`'s tag filter was a SILENT
+NO-OP the panel's own comment recorded as fixed — and the mutation that did not
+fail is the round's lesson). Commit: 76fc30c0, plus 1.2.333.
+  (1) THE USER-VISIBLE DEFECT IS A WRONG ANSWER WEARING THE SHAPE OF A RIGHT ONE.
+  `MemoryPage` has passed `params.tag` to `memory_search` since round 161, and its
+  comment records that round as the fix ("the tag filter is now passed to SEARCH
+  too"). The tool never DECLARED the parameter and the handler never READ it, so
+  an operator who typed a tag got UNFILTERED results presented as filtered. The
+  store could always do this — `list` has filtered by tag for longer; `search`
+  simply had no way to be asked.
+  (2) THREE THINGS WERE WRONG, EACH FIXED AT ITS OWN LAYER: `MemoryStore::search`
+  gained the filter, using the SAME rule `list` uses (exact, case-insensitive, not
+  a substring) so the two surfaces cannot disagree about what "tag = x" means — a
+  test pins the exactness, because a substring rule returns plausible WRONG
+  answers rather than none; the tool now DECLARES `tag`; and the handler reads and
+  passes it. The query is a NAMED struct rather than a fourth positional argument
+  because `namespace` and `tag` are both `Option<&str>` and adjacent — a swap
+  filters on the wrong axis and looks plausible — which is the fourth time this
+  repo has chosen a named shape over a tuple for that reason.
+  (3) THE ROUND'S REAL LESSON IS A MUTATION THAT DID NOT FAIL. My first test
+  called `MemoryStore::search` directly, and pinning the store looked sufficient —
+  then I disabled the handler's read of `tag`, restoring the ORIGINAL defect
+  verbatim, and it stayed GREEN. The helper was perfect; the bug was in how it was
+  CALLED. That is rounds 18/19's lesson for the THIRD time in this log, and the
+  tell is always the same: a test that exercises the layer BELOW the one that was
+  broken. The wiring test invokes `memory_search`'s handler with
+  `{"query": ..., "tag": "net"}` and asserts one hit; with the defect restored it
+  returns BOTH records, printing exactly the unfiltered output an operator would
+  have been shown. A second test pins the declaration, and both mutations bite.
+  (4) `agent/spec-tools.json` IS REGENERATED, and the STALENESS GATE FIRED BEFORE
+  I REMEMBERED — the snapshot's whole job is to make a parameter addition visible
+  to the gateway contract, and it did. `memory_search` sits in the gateway's
+  `NOT_EXPOSED` map ("device KB — panel surface"), so there is no console-parity
+  obligation and the gateway suite is unchanged.
+  (5) RELEASED 1.2.333. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the NINTH consecutive release.
+  (6) STILL OPEN, with evidence: `useOperationRuns.ts` claims the session route
+  "carries no `run_id` at all" and it does (`SessionEvent.run_id`), so the panel's
+  trail reader drops attribution already on the wire — the same shape as this
+  round's defect, one layer up: a stated absence that is not true.
+  Gates: agent 518 default / 628 feat-gated, clippy -D warnings clean BOTH
+  configs, fmt clean, xwin OK; gateway 764 + format; panel 483 + build.
+
+Previous round: 2026-09-11 round 28 (the crash-safety family FINISHED — four
 readers and one append that never got the rule their foundation module claimed
 they shared). Commit: 15477059, plus 1.2.332.
   (1) `jsonl.rs` OPENS BY CLAIMING "the crash-safety rules every append-only,
