@@ -515,7 +515,57 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 47 (every contrast measurement in this repo had been
+Last updated: 2026-09-11 round 48 (four rounds of contrast sweeps retyped an ad-hoc
+snippet, and it was wrong twice — so the math is now ONE tested copy, and the
+correct implementation turned out to have been sitting inside another script the
+whole time). Commit: 9576e72d. NO RELEASE: tooling only, nothing a device runs.
+  (1) THE TWO DEFECTS, now with numbers. The snippet read
+  `rgba(255,255,255,0.07)` as if it were WHITE: the chip composites to
+  rgb(44,45,49) where the text measures **5.49**, but against white it "measures"
+  **2.51** — TWENTY of the fifty dark-mode findings were that. And a skip rule that
+  looked reasonable (ignore anything with a background-image ancestor) silently
+  skipped EVERY node in the panel and reported `checked=0, underAA=0`, which reads
+  exactly like a pass. THAT IS ROUND 33'S LESSON COMMITTED AGAIN BY THE TOOL BUILT
+  TO APPLY IT.
+  (2) THE CORRECT IMPLEMENTATION ALREADY EXISTED as a string inside
+  `agent/scripts/panel-render-audit.mjs` — background alpha, the ancestor OPACITY
+  chain, and the foreground's own alpha, all composited. Nothing could test it, so
+  every sweep re-derived it. `agent/scripts/lib/contrast-probe.mjs` is that
+  implementation in one place, with the math as REAL FUNCTIONS, and
+  `panel-render-audit.mjs` now imports it rather than carrying a copy.
+  (3) THE TESTED CODE IS THE CODE THAT RUNS: `PROBE_SOURCE` embeds the functions
+  with `Function.prototype.toString()`, and `scripts/test/contrast-probe-check.mjs`
+  (11 checks, in CI) exercises the exact text the browser evaluates. A test on one
+  copy can only ever compare copies — round 37's lesson, applied structurally.
+  (4) THE PROBE NOW SAYS WHAT IT CANNOT MEASURE instead of guessing. A GRADIENT
+  background is reported `gradient: true, cr: null` and excluded — it previously
+  walked PAST the gradient and reported the panel's gradient-filled "V" as
+  white-on-white 1.0. An INACTIVE control is flagged: WCAG 1.4.3 exempts it, and the
+  disabled Start button measures a truthful 2.1:1 through its opacity chain — a real
+  reading of a control nobody can use, not a defect. FLAGGED, NOT FILTERED, so the
+  number stays visible.
+  (5) I WROTE THE BACKTICK GUARD THREE TIMES AND EVERY VERSION HAD A WRONG PREMISE:
+  the file holds 42 backticks, not 2; `lastIndexOf` reaches into the JSDoc below the
+  template; the first backtick-semicolon matches the stray's own close. Then I saw
+  the guard ALREADY EXISTS — the test file IMPORTS the module, so a stray backtick
+  makes the import throw and the whole file fails loudly (watched it twice). A
+  hand-rolled parser for a case the import already catches is a check that can only
+  be wrong, so it is gone with the reasoning left in its place.
+  (6) THE BETTER TOOL IMMEDIATELY FOUND MORE: with the shared probe on the panel,
+  light mode shows 15 under AA across 675 rows that the inferior sweep had missed —
+  `mem-tag` 4.3 (`--tag-ink` #0b7a6e) and `plug-tools`/`plug-tag` 4.4 (`--muted` on
+  surfaces darker than white, the same CONDITIONAL-PASS shape the console had in
+  round 46). Dark mode is 1, and that one is the exempt disabled button. Recorded,
+  NOT rushed: they want the same token-level decision the console got, not a
+  selector patch under time pressure.
+  (7) STILL OPEN AND UNCHANGED: the subjective half of the redesign — layout,
+  density, navigation, whether the console's five views are the right five. Now
+  asked across five rounds; the objective half of both surfaces is measured, clean,
+  and backed by a tested tool.
+  Gates: contrast-probe 11 (new, in CI) + model-drift 6 + release-audit 9; panel
+  509; agent fmt clean; gateway 766; CI green.
+
+Previous round: 2026-09-11 round 47 (every contrast measurement in this repo had been
 taken in LIGHT mode; the DARK theme is a second surface with its own 39 values, and
 it held 50 text elements under AA — while MY OWN SWEEP was hiding them, two ways).
 Commits: c0651a12, f0fa4544. Released 1.2.352 and 1.2.353; d1 is on 1.2.353 and
