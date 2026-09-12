@@ -1284,9 +1284,19 @@ const commands = {
           `powershell -NoProfile -Command "Expand-Archive -Force -Path '${psq(PW_ZIP)}' -DestinationPath '${psq(COMPONENTS_DIR)}'"`,
         );
       }
-      if (fs.existsSync(path.join(pwDir, "node.exe"))) {
+      // "node_modules verified" was in the message while only node.exe was checked —
+      // and node_modules is where the entry point the agent actually runs lives, so a
+      // half-expanded bundle passed the check and failed at first use.
+      const pwCli = path.join(
+        pwDir,
+        "node_modules",
+        "@playwright",
+        "mcp",
+        "cli.js",
+      );
+      if (fs.existsSync(path.join(pwDir, "node.exe")) && fs.existsSync(pwCli)) {
         console.log(
-          "setup: playwright bundle staged (node.exe + node_modules verified)",
+          "setup: playwright bundle staged (node.exe + node_modules/@playwright/mcp verified)",
         );
       } else {
         // NEVER fatal. The browser bundle is an OPTIONAL component, but this
@@ -1355,11 +1365,6 @@ const commands = {
     }
     // P2-4: record the boxed-component versions (never fail-closed).
     writeBoxedVersions(DIR, path.join(__dirname, ".."));
-    // round-298 parity: a FRESH install must also carry the release marker —
-    // without it agent_update compares against the Cargo 1.0.x fallback and
-    // re-downloads + swaps on every call. Write after the exe copy + task
-    // registration (setup provably succeeded). Best-effort.
-    writeReleaseMarker(DIR);
     // round-330: Tauri vale-desktop staging removed (retired).
     // stage-l: stage the Electron shell sources (main/preload) so the desktop
     // app picks up menu/command features on a fresh install too.
@@ -1396,6 +1401,17 @@ const commands = {
       );
       process.exit(1);
     }
+    // round-298 parity: a FRESH install must carry the release marker — without it
+    // agent_update compares against the Cargo 1.0.x fallback and re-downloads + swaps
+    // on every call.
+    //
+    // WRITTEN HERE, and that placement IS the fix: it used to sit ~20 lines ABOVE this
+    // point while its comment claimed "after the exe copy + task registration (setup
+    // provably succeeded)". The registration exits 1 on failure, so an aborted setup
+    // left the marker claiming a version on an install with NO boot task — and
+    // `vale status` reported "(this device is current)" for a device that never starts.
+    // A marker must not be written before the thing it attests to.
+    writeReleaseMarker(DIR);
     // Control-panel entry for npm-path installs too (the NSIS writer owns
     // UninstallString on its installs; the helper never overwrites one).
     // Best-effort — a registry failure must not fail the install.
