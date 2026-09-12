@@ -488,7 +488,54 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 29 (`memory_search`'s tag filter was a SILENT
+Last updated: 2026-09-11 round 30 (the trail dropped a run attribution the device
+had ALREADY RECORDED — and a comment explained the loss away as a design choice).
+Commit: 0bcb2798, plus 1.2.334.
+  (1) `useOperationRuns.ts` OPENED BY STATING that `useCommandEvents` "reads ONE
+  session's audit log (`/api/sessions/{sid}`), which carries no `run_id` at all".
+  It does. `run_id` is written onto every `command/start` executed under a run
+  (`SessionEvent.run_id`, set by `terminal_execute`, re-surfaced by
+  `operation.rs`), and the route serves the event verbatim. What was missing was
+  on the PANEL's side: `CommandEvent` never declared the field, so the trail
+  reader discarded an attribution the device had recorded.
+  (2) A STATED ABSENCE THAT IS NOT TRUE IS WORSE THAN AN UNKNOWN ONE, and this is
+  the round's sharpest point. The comment did not merely describe the code
+  wrongly — it made the loss look like a DESIGN DECISION ("that is why the strip
+  polls separately"), so nobody went looking for a value already on the wire. The
+  family this log has recorded for four rounds now has a third shape: not a
+  capability that was never built, and not one broken at a call site, but one that
+  EXISTED AND WAS DENIED IN PROSE.
+  (3) THREE PARTS, EACH NECESSARY: the COMMENT now gives the real reason both
+  sources exist (`/api/operation` is retained for a day and read-capped; the
+  session trail is the 30-day record); `CommandEvent` DECLARES `run_id`, so the
+  type describes the wire; and `lib/path.ts` DERIVES it while `PathView` renders
+  it. Declaring a field nothing reads would have been its own defect — a value
+  written but never consumed, which is on this log's list.
+  (4) PRESENTED AS A CLAIM, AND IT GROUPS NOTHING. `run_id` is recorded verbatim
+  and the device never verifies it; `runs.rs` pins "a LABEL, NEVER A CREDENTIAL"
+  twice. The element's title says "the run the agent says this command belonged
+  to", and NO grouping was added: real grouping lives in `lib/runs.ts` on the
+  device-level timeline, and a second implementation here would be two reads of
+  one fact — this repo's recorded defect, avoided rather than repeated. It earns
+  its place because this trail is the 30-day record while the run strip's window
+  is a day, so "which execution was this?" is answerable only from here once that
+  window passes. A blank id is treated as ABSENT, matching the device's own rule.
+  Mutation-proven: restoring the drop (`runId: null`) fails both the derivation
+  test and the render test.
+  (5) RELEASED 1.2.334. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the TENTH consecutive release.
+  (6) THE LOGGED BACKLOG IS NOW EMPTY. Every finding from the three delegated
+  audits that produced rounds 24-30 has either been fixed or explicitly cleaned
+  as a false positive, and the last one closed here. The next round should START
+  FROM A FRESH AUDIT rather than from this list — a scout pointed at a subsystem
+  no previous round has opened, with the standing instruction to prefer the
+  recurring family (a statement the code does not honour) and to say what it could
+  NOT verify rather than guessing.
+  Gates: panel 487 (was 483) + build; agent 577 default / 631 feat-gated, clippy
+  -D warnings clean BOTH configs, fmt clean, xwin OK; gateway 764 + format.
+
+Previous round: 2026-09-11 round 29 (`memory_search`'s tag filter was a SILENT
 NO-OP the panel's own comment recorded as fixed — and the mutation that did not
 fail is the round's lesson). Commit: 76fc30c0, plus 1.2.333.
   (1) THE USER-VISIBLE DEFECT IS A WRONG ANSWER WEARING THE SHAPE OF A RIGHT ONE.
