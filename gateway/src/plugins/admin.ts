@@ -97,7 +97,13 @@ function request_admin_model_id(req: Request): string {
 function parseModelSpec(body: any): { spec?: ModelSpec; error?: string } {
   const id = String(body?.id ?? "").trim();
   if (!id) return { error: "id is required" };
-  if (!/^[a-z0-9]+\/[A-Za-z0-9._:/\-\[\]]+$/.test(id))
+  // Deliberately loose: "lowercase prefix, slash, then no whitespace". Model names
+  // carry `:floor[1m]` and nested slashes, so a stricter character class rejects
+  // legitimate ids — and eslint flagged the first version I wrote for an unnecessary
+  // escape. The check that MATTERS is the channel prefix below, validated against the
+  // real route table: a permissive shape test plus a strict semantic one beats a
+  // clever regex.
+  if (!/^[a-z0-9]+\/\S+$/.test(id))
     return { error: `id must look like "prefix/name" — got ${JSON.stringify(id)}` };
   const prefix = id.slice(0, id.indexOf("/") + 1);
   if (!KNOWN_PREFIXES.includes(prefix))
