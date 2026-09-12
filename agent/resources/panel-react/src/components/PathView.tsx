@@ -102,6 +102,9 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   }
 
   const { summary } = path;
+  // `bg` is deliberately NOT bad. A backgrounded command is work the AI chose to
+  // leave running; nothing failed, and counting it here lit the "bad" marker for
+  // a healthy session.
   const bad = summary.counts.fail + summary.counts.warn;
   const warnings = recipeWarnings(path.steps);
 
@@ -222,6 +225,16 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
               {summary.counts.fail > 0 && summary.counts.warn > 0 && " · "}
               {summary.counts.warn > 0 && `${summary.counts.warn} interrupted`}
             </span>
+          )}
+          {/* ITS OWN LINE, NEITHER RED NOR GREEN. A backgrounded command did not
+              end — it was handed off to keep running — so it is not a failure and
+              it is not a success. It used to be counted as `warn`, which made this
+              line read "N interrupted" and lit the bad marker; the wording above
+              was right and the STATE it consumed was not. Deliberately outside the
+              `bad` block: a session whose only unusual steps are backgrounded is a
+              HEALTHY session, and colouring it red would say otherwise. */}
+          {summary.counts.bg > 0 && (
+            <span className="path-summary-bg">{summary.counts.bg} backgrounded</span>
           )}
           {bad === 0 && summary.counts.ok > 0 && (
             <span className="path-summary-good">all succeeded</span>

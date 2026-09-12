@@ -1,3 +1,4 @@
+import type { PathState } from "../lib/path";
 import { useEffect, useRef, useState } from "react";
 import type { CommandEvent } from "../hooks/useCommandEvents";
 import { terminalStatus } from "../hooks/useCommandEvents";
@@ -45,7 +46,7 @@ function fmtTime(ts: number): string {
  *  (cardState) — a round ends at command/end or a terminal status. The
  *  preamble round (pre-first-command session events, e.g. "opened") never
  *  has a marker: show it muted, not falsely "running". */
-function roundState(r: TrajRound): { state: "running" | "ok" | "fail" | "warn" | "muted"; label: string; compact: string } {
+function roundState(r: TrajRound): { state: PathState; label: string; compact: string } {
   if (r.startSeq === null && !r.ended) return { state: "muted", label: "Session", compact: "session" };
   return cardState({ id: r.id, seq: r.startSeq ?? 0, command: r.command, output: "", startedAt: r.startTs, ended: r.ended, exitCode: r.exitCode, reason: r.reason, durationMs: r.durationMs } as CommandCard);
 }

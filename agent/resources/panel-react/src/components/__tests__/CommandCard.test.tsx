@@ -41,7 +41,11 @@ describe("cardState", () => {
     expect(cardState(card())).toEqual({ state: "running", label: "Running", compact: "running" });
     expect(cardState(card({ ended: true, exitCode: 0 }))).toMatchObject({ state: "ok", compact: "0" });
     expect(cardState(card({ ended: true, exitCode: 2 }))).toMatchObject({ state: "fail", compact: "exit 2" });
-    expect(cardState(card({ ended: true, reason: "backgrounded" }))).toMatchObject({ state: "warn" });
+    // `bg`, NOT `warn` — and this line used to assert `warn`, which pinned the
+    // defect. The path summary's word for `warn` is "interrupted", so a command
+    // handed off to keep running was read out to the operator as one that had
+    // stopped. The two reasons are different states and are now different.
+    expect(cardState(card({ ended: true, reason: "backgrounded" }))).toMatchObject({ state: "bg" });
     expect(cardState(card({ ended: true, reason: "interrupted" }))).toMatchObject({ state: "warn" });
     expect(cardState(card({ ended: true, reason: "closed" }))).toMatchObject({ state: "muted" });
     expect(cardState(card({ ended: true, reason: "mystery" }))).toMatchObject({ state: "muted", compact: "mystery" });

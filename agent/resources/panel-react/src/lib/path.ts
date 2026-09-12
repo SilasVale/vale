@@ -33,7 +33,7 @@ import type { TrajRound } from "../hooks/useTrajectory";
 
 /** The five-state vocabulary, re-exported so the path view and the command
  *  cards cannot drift apart on what a state is called. */
-export type PathState = "running" | "ok" | "fail" | "warn" | "muted";
+export type PathState = "running" | "ok" | "fail" | "warn" | "bg" | "muted";
 
 export type Owner = "ai" | "human";
 
@@ -198,7 +198,7 @@ export function derivePath(rounds: TrajRound[], controlEvents: CommandEvent[] = 
 /** Fold the steps into the numbers a person actually wants: how much work, how
  *  much of it failed, and how long it took. */
 export function summarizePath(steps: PathStep[]): PathSummary {
-  const counts: Record<PathState, number> = { running: 0, ok: 0, fail: 0, warn: 0, muted: 0 };
+  const counts: Record<PathState, number> = { running: 0, ok: 0, fail: 0, warn: 0, bg: 0, muted: 0 };
   let humanSteps = 0;
   let commandMs = 0;
   let untimed = 0;
@@ -232,7 +232,9 @@ export function summarizePath(steps: PathStep[]): PathSummary {
  *  operator returning to a session is looking for. Ordered by position within a
  *  severity band so the list reads along the path. */
 export function attentionSteps(steps: PathStep[]): PathStep[] {
-  const rank: Record<PathState, number> = { fail: 0, warn: 1, running: 2, muted: 3, ok: 4 };
+  // `bg` ranks with `running`: both are "not finished", and neither is a problem
+  // to draw the operator's eye.
+  const rank: Record<PathState, number> = { fail: 0, warn: 1, running: 2, bg: 2, muted: 3, ok: 4 };
   return steps
     .filter((s) => s.state === "fail" || s.state === "warn" || s.state === "running")
     .sort((a, b) => rank[a.state] - rank[b.state] || a.index - b.index);

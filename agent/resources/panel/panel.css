@@ -875,6 +875,13 @@ code {
 .path-plan-count[data-zero="yes"] { color: var(--danger-on-soft); }
 /* Claims pointing at a step the plan does not have. Set apart from the numbered
    steps because it is not one — it is the plan having moved under a claim. */
+/* Backgrounded work: not a failure, not a success. Muted, because it asks for
+   nothing — it only says some work was handed off and is still going. */
+.path-summary-bg {
+  margin-left: 6px;
+  font: 400 11px var(--font);
+  color: var(--chrome-ink-dim);
+}
 .path-plan-offplan {
   display: flex;
   gap: 8px;

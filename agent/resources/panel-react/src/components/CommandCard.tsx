@@ -1,3 +1,4 @@
+import type { PathState } from "../lib/path";
 import { useEffect, useRef, useState } from "react";
 import type { CommandCard as CardData } from "../hooks/useCommandEvents";
 import { copyText } from "../lib/clipboard";
@@ -24,7 +25,11 @@ export function fmtDuration(ms: number | null): string {
 }
 
 /** Card state → dsh StateDot/badge state + labels (shared by card + details). */
-export function cardState(card: CardData): { state: "running" | "ok" | "fail" | "warn" | "muted"; label: string; compact: string } {
+/** ONE declaration of the state union, in `lib/path.ts`, where the summary that
+ *  consumes it lives. It used to be restated here AND in `TrajectoryView`, so
+ *  adding a state meant finding every copy — which is exactly what happened when
+ *  `bg` was introduced for backgrounded commands. */
+export function cardState(card: CardData): { state: PathState; label: string; compact: string } {
   if (!card.ended) return { state: "running", label: "Running", compact: "running" };
   if (card.exitCode !== null) {
     return card.exitCode === 0
@@ -32,7 +37,13 @@ export function cardState(card: CardData): { state: "running" | "ok" | "fail" | 
       : { state: "fail", label: `Failed (exit ${card.exitCode})`, compact: `exit ${card.exitCode}` };
   }
   switch (card.reason) {
-    case "backgrounded": return { state: "warn", label: "Backgrounded", compact: "backgrounded" };
+    // ITS OWN STATE, NOT `warn`. `warn` is the path summary's word for a step
+    // that ended badly, and folding a BACKGROUNDED command into it made the
+    // operator-facing line read "3 interrupted" for three commands that were
+    // still legitimately RUNNING — and lit the session's "bad" marker for work
+    // nothing had gone wrong with. The label here was always right; the STATE it
+    // fed was not, which is why the card and the summary disagreed.
+    case "backgrounded": return { state: "bg", label: "Backgrounded", compact: "backgrounded" };
     case "interrupted": return { state: "warn", label: "Interrupted", compact: "interrupted" };
     case "closed": return { state: "muted", label: "Closed", compact: "closed" };
     default: return { state: "muted", label: card.reason || "Ended", compact: card.reason || "ended" };

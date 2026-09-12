@@ -85,7 +85,13 @@ describe("derivePath", () => {
       { id: "r-4", startSeq: 4, command: "cut", startTs: 4, events: [], ended: true, exitCode: null, reason: "interrupted", durationMs: null },
       { id: "r-5", startSeq: 5, command: "live", startTs: 5, events: [], ended: false, exitCode: null, reason: null, durationMs: null },
     ]);
-    expect(p.steps.map((s) => s.state)).toEqual(["ok", "fail", "warn", "warn", "running"]);
+    // r-3 is "backgrounded" and its state is `bg`, NOT `warn`. THIS ASSERTION
+    // USED TO READ `warn` HERE — it was pinning the defect: the summary's word for
+    // `warn` is "interrupted", so a command the AI handed off to keep running was
+    // reported to the operator as one that had stopped, and it lit the session's
+    // "bad" marker. The card's own label was always "Backgrounded", which is how
+    // the two surfaces came to disagree.
+    expect(p.steps.map((s) => s.state)).toEqual(["ok", "fail", "bg", "warn", "running"]);
     expect(p.steps[1].stateLabel).toBe("exit 3");
   });
 
@@ -546,5 +552,47 @@ describe("PathView — the run a command claims to belong to", () => {
   it("draws nothing when no run was claimed", () => {
     const { container } = render(<PathView events={withRun(null)} />);
     expect(container.querySelector(".path-step-run")).toBeNull();
+  });
+});
+
+describe("PathView — a backgrounded command is not an interrupted one", () => {
+  // The card said "Backgrounded" while the STATE it fed was `warn`, and the path
+  // summary's word for `warn` is "interrupted" — so the operator-facing line
+  // reported still-running work as stopped, AND lit the session's "bad" marker
+  // for a session nothing had gone wrong with. The label was right and the state
+  // was wrong, which is why the two surfaces disagreed.
+  const bg = [
+    { seq: 1, ts: 100, kind: "command/start", command: "npm run build" },
+    { seq: 2, ts: 101, kind: "command/end", reason: "backgrounded", duration_ms: 5 },
+  ];
+
+  it("derives its own state, not `warn`", () => {
+    const p = derivePath(groupRounds(bg));
+    expect(p.steps[0].state).toBe("bg");
+    expect(p.summary.counts.warn).toBe(0);
+    expect(p.summary.counts.bg).toBe(1);
+  });
+
+  it("is worded as backgrounded, and NOT counted as interrupted", () => {
+    const { container } = render(<PathView events={bg} />);
+    const text = container.textContent!;
+    expect(text).toContain("1 backgrounded");
+    expect(text).not.toContain("interrupted");
+  });
+
+  it("does not light the session's bad marker", () => {
+    // `bad = fail + warn`. Backgrounded work belongs to neither.
+    render(<PathView events={bg} />);
+    expect(screen.queryByText(/interrupted/)).toBeNull();
+  });
+
+  it("still says interrupted for a command that really was", () => {
+    // The distinction must not swallow the real case.
+    const real = [
+      { seq: 1, ts: 100, kind: "command/start", command: "npm run build" },
+      { seq: 2, ts: 101, kind: "command/end", reason: "interrupted", duration_ms: 5 },
+    ];
+    const { container } = render(<PathView events={real} />);
+    expect(container.textContent).toContain("1 interrupted");
   });
 });
