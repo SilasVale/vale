@@ -488,7 +488,69 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 32 (the console's commands were NEVER recorded,
+Last updated: 2026-09-11 round 33 (a fresh audit of `system_*` found two
+descriptions stating behaviour the handlers do not have — binary reads that
+promised an error and returned mojibake, and an upload described as streamed that
+reads the whole file into memory). Commit: 32aaa353, plus 1.2.339.
+  (1) `system_file_read` PROMISED AN ERROR FOR BINARY AND RETURNED MOJIBAKE. The
+  description said "binary files return an error — use a terminal session for
+  binary inspection" and named `raw: true` as the escape; the handler ran
+  `String::from_utf8_lossy`, so a PE, an archive or a blob came back as
+  U+FFFD-substituted text THAT READS AS CONTENT. A model cannot tell it from a
+  real read, and nothing pointed it at the documented escape. THE DESCRIPTION WAS
+  RIGHT AND THE CODE WAS WHAT HAD TO CHANGE.
+  No lossy fallback, deliberately: `from_utf8_lossy` also silently repairs a
+  mostly-text file with one damaged byte — the same silence in a smaller dose. The
+  caller asked for TEXT, so it gets text or a refusal naming `raw: true`.
+  `bytes`/`truncated` keep their meaning; only the conversion changed.
+  Mutation-proven, and the mutation prints the harm verbatim: restoring the lossy
+  read returns `"text":"MZ\u{fffd}\u{0}\u{fffd}\u{fffd}\u{0}\u{1}"` for a PE header.
+  (2) THE RELAY UPLOAD NEVER STREAMED, IN EITHER COPY. The device and the gateway
+  catalogue both said "streamed from disk straight to the relay" while the handler
+  does `std::fs::read` + a buffered body — up to 100 MiB resident. The DOWNLOAD
+  direction really does stream (`bytes_stream()`), WHICH IS WHAT MADE THE SHARED
+  SENTENCE LOOK VERIFIED: a twin that behaves differently is how one description
+  survives in two places. The load-bearing true part ("the bytes never pass through
+  the AI context") is kept and the real cost is now stated. Both copies corrected,
+  and the gateway re-deployed — verified on the LIVE URL, byte-equal to the repo
+  mirror (`75b9d7dc657f`), with the false phrase absent from what the console serves.
+  (3) THE ASSERTION I WROTE FOR (2) FAILED AGAINST THE CORRECT TEXT. It forbade
+  /streamed from disk/i and the corrective sentence says "the upload is NOT streamed
+  from disk". A CHECK THAT READS A PHRASE WITHOUT READING ITS POLARITY reports a
+  problem for the sentence that fixes it. It now pins the exact disproven claim and
+  separately requires the real cost to be stated.
+  (4) THE ROUND-25 MIRROR GATE FIRED ON THIS COMMIT BEFORE I DID — the second time
+  it has caught work in a later round — and `scripts/sync-code-viewer.sh` re-synced
+  the served copy (3 host redactions, as designed).
+  (5) RELEASED 1.2.338 (the staged-leftover list) and 1.2.339 (these two contracts).
+  CI and the release workflow green on both tags; keep-latest left ONE release and
+  ONE tag; the dual-builder audit reported the STRONGER WARN verdict for the
+  THIRTEENTH consecutive release. The DEVICE was five releases behind again this
+  round — caught by looking, not by any gate.
+  (6) AUDIT FINDINGS NOT ACTED ON, recorded with evidence. From the `system_*`
+  audit: `mem_total_mb` is published and read by NOTHING (both real consumers take
+  `mem_pct` only), so the number that would give the percentage meaning is unused;
+  the console's stated reason for withholding `system_file_list`/`stat` ("the panel
+  has the GUI") is FALSE — no file UI exists in panel-react, so an exposure
+  decision rests on a false premise; `system_process_kill` by NAME is a silent
+  no-op off Windows because the pgrep fallback sits INSIDE `if let Ok(o) = &r`,
+  running only when taskkill RAN and failed (the pid branch's twin covers the spawn
+  error), and its test names a path it never takes; the tray reports SYSTEM-wide
+  CPU/memory with an "Agent running" label; bootstrap's quarantine narration goes to
+  startup.log which `/api/logs` does not serve, so the reason for a mass 401 is
+  unreadable from the Device-logs card; an EMPTY config.yaml takes the quarantine
+  arm, finds no token, and silently rotates BOTH credentials — untested; and the
+  Windows `tasklist` parser is not CSV-aware (`split(',')` against quoted fields
+  with `"1,234 K"` memory), with no test on its own platform.
+  (7) ALSO STILL OPEN from round 31: a backgrounded command's exit code lives only
+  in an in-memory capped evicting map while the durable trail ends at
+  `status: "backgrounded"`; the CLI's registry fallbacks differ from the agent's and
+  `setup` discards the `reg add` status; the migration test's drive-letter fixtures;
+  no Windows test job in CI.
+  Gates: agent 582 default / 633 feat-gated (was 581/632), clippy -D warnings clean
+  BOTH configs, fmt clean, xwin OK; gateway 764 + format; panel 491.
+
+Previous round: 2026-09-11 round 32 (the console's commands were NEVER recorded,
 though the module header claimed every command was — and the test that proved it
 exposed a race across the whole test file). Commit: b61d7e4b, plus 1.2.337.
   (1) A TRUTH GAP IN THE GOVERNANCE RECORD ITSELF. `session_log.rs` opens by
