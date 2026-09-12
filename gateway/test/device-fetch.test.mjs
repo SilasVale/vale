@@ -31,7 +31,16 @@ test("actual v6 private forms still blocked", () => {
 });
 
 test("classic guards unchanged: loopback, mapped, metadata, public", () => {
-  for (const h of ["127.0.0.1", "::ffff:127.0.0.1", "localhost", "10.0.0.5", "192.168.1.1", "169.254.169.254", "0.0.0.0", "::1"]) {
+  for (const h of [
+    "127.0.0.1",
+    "::ffff:127.0.0.1",
+    "localhost",
+    "10.0.0.5",
+    "192.168.1.1",
+    "169.254.169.254",
+    "0.0.0.0",
+    "::1",
+  ]) {
     assert.match(deviceHostError(h) || "", /private\/internal/, `${h} blocked`);
   }
   for (const h of ["d1.agent.saisi.online", "example.com", "8.8.8.8"]) {
@@ -98,12 +107,9 @@ test("deviceFetch: @ in a query string is legitimate → passes through (round-1
 test("deviceFetch: header hygiene — host/cookie stripped, device Bearer injected", async () => {
   const seen = {};
   await withStubFetch(okUpstream(seen), () =>
-    deviceFetch(
-      {},
-      DEV,
-      "/api/tools/x",
-      { headers: { host: "attacker.example", cookie: "sess=1", "x-keep": "yes" } },
-    ),
+    deviceFetch({}, DEV, "/api/tools/x", {
+      headers: { host: "attacker.example", cookie: "sess=1", "x-keep": "yes" },
+    }),
   );
   const h = new Headers(seen.init.headers);
   assert.equal(h.get("host"), null, "client Host must not ride upstream");
@@ -141,4 +147,40 @@ test("deviceFetch: unreachable device → 502 with reason, no throw", async () =
   assert.equal(r.status, 502);
   assert.equal(r.ok, false);
   assert.match(r.error || "", /Device unreachable: fetch failed/);
+});
+
+/* ---------------- redirects are NOT followed on the device dial ----------------
+ * A security audit found the device path used the default `redirect: "follow"`, which
+ * is two holes in one:
+ *   1. the SSRF guard runs on the INITIAL url only, so a redirect to 127.0.0.1 or a
+ *      link-local metadata address is never checked;
+ *   2. Cloudflare forwards ALL headers to a cross-host redirect target — documented
+ *      behaviour, "even if the destination is a different hostname or domain … this
+ *      includes sensitive headers like Cookie, Authorization" — and this path sends a
+ *      `Bearer <device token>` and `x-vale-auth: <proxySecret>`.
+ * The fix is `redirect: "manual"`, which turns both into a visible 3xx.
+ */
+test("device dial: the request is issued with redirect:'manual', never 'follow'", async () => {
+  const seen = [];
+  const real = globalThis.fetch;
+  globalThis.fetch = async (url, init) => {
+    seen.push({ url: String(url), redirect: init?.redirect });
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  try {
+    await deviceFetch(
+      {},
+      { name: "d1", hostname: "d1.agent.saisi.online", token: "t".repeat(64) },
+      "/api/status",
+      {},
+    );
+  } finally {
+    globalThis.fetch = real;
+  }
+  assert.equal(seen.length, 1, "exactly one dial");
+  assert.equal(
+    seen[0].redirect,
+    "manual",
+    "the device dial must NOT follow redirects: the guard only sees the initial url, and Cloudflare forwards Authorization/x-vale-auth to a cross-host Location",
+  );
 });

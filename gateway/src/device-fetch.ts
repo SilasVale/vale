@@ -85,9 +85,15 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
     // EVERY non-POST method. POST is bounded at 60 s (stage-n MEDIUM: the
     // old unbounded POST was a slow-loris vector on blackholed tunnels;
     // idempotency is the caller's concern — they can always retry).
+    // redirect: "manual" — DO NOT FOLLOW. The guard above ran on the INITIAL url only, so
+    // following a redirect would dial an address it never checked (127.0.0.1, a
+    // link-local metadata endpoint), AND Cloudflare forwards Authorization/x-vale-auth to
+    // a cross-host redirect target — handing this device's permanent token and proxy
+    // secret to a host the operator never registered. A device that redirects is not a
+    // device to follow; the 3xx is returned to the caller as-is.
     resp = await fetchWithTimeout(
       upstream.toString(),
-      { ...init, headers },
+      { ...init, headers, redirect: "manual" },
       init.method === "POST" ? 60000 : 15000,
     );
   } catch (e) {

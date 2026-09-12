@@ -208,6 +208,19 @@ export async function fetchWithRetry(
   return { response: last, detail, inspectFailure };
 }
 
+/**
+ * `init.redirect` IS PASSED THROUGH, and callers that attach a CREDENTIAL to a request
+ * they did not choose the host for MUST set it to `"manual"`.
+ *
+ * The default stays `"follow"` because most callers here are upstream API calls where
+ * following a redirect is ordinary HTTP. But for the DEVICE dial path it is a hole:
+ * Cloudflare documents that with `redirect: "follow"` "all headers will be forwarded to
+ * the redirect destination, even if the destination is a different hostname or domain —
+ * this includes sensitive headers like Cookie, Authorization" (cloudflare-docs#3378), and
+ * the device path sends a `Bearer <device token>` plus `x-vale-auth: <proxySecret>`. The
+ * SSRF guard also only ever sees the INITIAL url, so a redirect to 127.0.0.1 or a
+ * link-local address is never checked at all.
+ */
 export async function fetchWithTimeout(
   url: string,
   init: any = {},

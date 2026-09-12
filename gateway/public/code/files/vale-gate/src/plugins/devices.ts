@@ -418,6 +418,14 @@ async function proxyUploadToWorker(request: Request, env: any, url: URL): Promis
       method: request.method,
       headers,
       body: request.body,
+      // DEFENCE IN DEPTH, and NOT the same severity as the device dial: `uploadUrl`'s
+      // host comes from `env.INDEX_WORKER_URL` (operator-set), not from a caller, so
+      // there is no user-controllable path here. But the request carries
+      // `Authorization: Bearer ${UPLOAD_KEY}` — the gateway→index shared secret — and
+      // with the default `redirect: "follow"` Cloudflare forwards that header to a
+      // cross-host Location. `manual` turns a redirected upload into a VISIBLE 3xx
+      // instead of an invisible key leak.
+      redirect: "manual",
     },
     // A 100 MB stream over a slow uplink is minutes, not 60 s: the old fixed
     // timeout aborted exactly the large transfers this round is about (the
