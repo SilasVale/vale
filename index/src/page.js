@@ -3,7 +3,7 @@
 // helpers, no worker bindings — same pattern as ./claim.js.
 
 export const FAVICON =
-  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3C%21--%20glass%20sheen%20--%3E%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
+  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%20%3Cdefs%3E%20%3ClinearGradient%20id%3D%22valeSky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220.25%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23120a2e%22%2F%3E%20%3Cstop%20offset%3D%22.30%22%20stop-color%3D%22%23331a63%22%2F%3E%20%3Cstop%20offset%3D%22.55%22%20stop-color%3D%22%236d2a72%22%2F%3E%20%3Cstop%20offset%3D%22.76%22%20stop-color%3D%22%23c2430f%22%2F%3E%20%3Cstop%20offset%3D%22.88%22%20stop-color%3D%22%23f2760f%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a8330c%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeAurora%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%220%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2322d3ee%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%22.18%22%20stop-color%3D%22%2322d3ee%22%20stop-opacity%3D%22.90%22%2F%3E%20%3Cstop%20offset%3D%22.44%22%20stop-color%3D%22%23818cf8%22%20stop-opacity%3D%22.85%22%2F%3E%20%3Cstop%20offset%3D%22.70%22%20stop-color%3D%22%23c084fc%22%20stop-opacity%3D%22.75%22%2F%3E%20%3Cstop%20offset%3D%22.88%22%20stop-color%3D%22%23f472b6%22%20stop-opacity%3D%22.55%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23f472b6%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeAurora2%22%20x1%3D%221%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%220%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235eead4%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%22.25%22%20stop-color%3D%22%235eead4%22%20stop-opacity%3D%22.60%22%2F%3E%20%3Cstop%20offset%3D%22.6%22%20stop-color%3D%22%23a78bfa%22%20stop-opacity%3D%22.50%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a78bfa%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FlinearGradient%3E%20%3CradialGradient%20id%3D%22valeGlow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fffdf5%22%20stop-opacity%3D%221%22%2F%3E%20%3Cstop%20offset%3D%22.35%22%20stop-color%3D%22%23ffe9b8%22%20stop-opacity%3D%22.60%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffb066%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FradialGradient%3E%20%3ClinearGradient%20id%3D%22valeSheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.26%22%2F%3E%20%3Cstop%20offset%3D%22.38%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%232b0f3a%22%20stop-opacity%3D%22.30%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeRim%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.55%22%2F%3E%20%3Cstop%20offset%3D%22.5%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.06%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.18%22%2F%3E%20%3C%2FlinearGradient%3E%20%3CclipPath%20id%3D%22valeTile%22%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%2F%3E%20%3C%2FclipPath%3E%20%3C%2Fdefs%3E%20%3Cg%20clip-path%3D%22url%28%23valeTile%29%22%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20fill%3D%22url%28%23valeSky%29%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora%29%22%20d%3D%22M-4%2022C5%209%2015%2020%2024%2011S42%204%2052%209V-4H-4Z%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora2%29%22%20d%3D%22M-4%2017C9%206%2017%2016%2028%207s18-1%2028%201V-4H-4Z%22%20opacity%3D%22.85%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora%29%22%20d%3D%22M-4%2027C7%2017%2017%2026%2027%2018s17-3%2029%200V14H-4Z%22%20opacity%3D%22.45%22%2F%3E%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2217%22%20r%3D%2211%22%20fill%3D%22url%28%23valeGlow%29%22%2F%3E%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2217%22%20r%3D%223.4%22%20fill%3D%22%23fffdf5%22%2F%3E%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.82%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20fill%3D%22url%28%23valeSheen%29%22%2F%3E%20%3Crect%20x%3D%22.6%22%20y%3D%22.6%22%20width%3D%2246.8%22%20height%3D%2246.8%22%20rx%3D%2210.5%22%20fill%3D%22none%22%20stroke%3D%22url%28%23valeRim%29%22%20stroke-width%3D%221.2%22%2F%3E%20%3C%2Fg%3E%20%3C%2Fsvg%3E";
 
 export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
   // P2-8: both URLs flow into HTML (href attributes + inline <code> text).
@@ -60,6 +60,21 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     --dsw-alias-state-warn-primary: #b45309;
     --dsw-alias-interactive-bg-hover: rgba(0,0,0,0.04);
     --dsw-alias-interactive-bg-active: rgba(0,0,0,0.06);
+    /* ---- aurora art direction ----
+       The same iridescent layer the console and the panel carry, expressed against
+       THIS page's token names. Decorative only: nothing here ever supplies a text
+       colour, so the page's contrast is unchanged. */
+    --aura-1: #22d3ee;
+    --aura-2: #818cf8;
+    --aura-3: #c084fc;
+    --aura-4: #f472b6;
+    --aura-5: #f59f00;
+    --aura-wash:
+      radial-gradient(70rem 44rem at 8% -12%, color-mix(in srgb, var(--aura-3) 34%, transparent), transparent 62%),
+      radial-gradient(58rem 38rem at 96% 2%, color-mix(in srgb, var(--aura-1) 26%, transparent), transparent 60%),
+      radial-gradient(64rem 40rem at 50% 116%, color-mix(in srgb, var(--aura-5) 30%, transparent), transparent 64%);
+    --aura-sweep: linear-gradient(115deg, var(--aura-1), var(--aura-2) 28%, var(--aura-3) 55%, var(--aura-4) 78%, var(--aura-5));
+    --glass-blur: 14px;
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
     --dsw-shadow-lv3: 0 12px 32px rgba(0,0,0,0.12);
@@ -97,6 +112,19 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
 
   * { box-sizing: border-box; margin: 0; padding: 0; }
   html { -webkit-text-size-adjust: 100%; }
+  /* The iridescent light behind the page. Fixed + pointer-events:none, exactly as on
+     the console and the panel — it never scrolls, never enters the layout, and never
+     covers a control. */
+  body::before {
+    content: "";
+    position: fixed;
+    inset: 0;
+    z-index: 0;
+    pointer-events: none;
+    background: var(--aura-wash);
+  }
+  body > * { position: relative; z-index: 1; }
+
   body {
     background: var(--dsw-alias-bg-base);
     color: var(--dsw-alias-label-primary);
@@ -127,14 +155,22 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     padding: 56px 40px;
   }
   .aside { display: flex; flex-direction: column; gap: 20px; }
-  .card { width: 100%; max-width: 520px; justify-self: end; }
+  .card {
+    width: 100%; max-width: 520px; justify-self: end;
+    /* Glass, so the wash reads THROUGH the card. An opaque card hides it entirely —
+       the lesson the console learned the hard way. */
+    background: color-mix(in srgb, var(--dsw-alias-bg-base) 84%, transparent);
+    -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+    backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
+  }
 
   /* ── Brand ──────────────────────────────────────── */
   .brand { display: flex; align-items: center; gap: 14px; margin-bottom: 24px; }
   .brand-mark {
     display: block;
     width: 40px; height: 40px; border-radius: 10px;
-    box-shadow: var(--dsw-shadow-lv1);
+    box-shadow: var(--dsw-shadow-lv1),
+                0 6px 22px -8px color-mix(in srgb, var(--aura-4) 55%, transparent);
   }
   .brand-text { display: flex; flex-direction: column; gap: 2px; }
   .brand-name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--dsw-alias-label-primary); }
