@@ -36,11 +36,24 @@ const dom = new JSDOM(html, {
   pretendToBeVisual: true,
 });
 const { window } = dom;
+// EVERY UNMOCKED REQUEST IS RECORDED AND FAILS THE RUN.
+//
+// This stub used to answer 404 and say nothing more. A view that asks for a path
+// the harness does not know therefore renders EMPTY, the run still passes on
+// whatever it does assert, and an empty card is indistinguishable from a product
+// defect. I hit exactly that twice in one session while hand-writing browser
+// mocks: `/api/users` is 404 (the real path is `/api/admin/users`), and the Users
+// page's list looked broken when only my mock was.
+//
+// A harness that cannot tell "the app rendered nothing" from "I did not mock that"
+// is not a harness.
+const unmocked = new Set();
 window.fetch = async (input) => {
   const path = new URL(String(input), "https://ai.saisi.online").pathname;
   if (path in routes) {
     return new Response(JSON.stringify(routes[path]), { status: 200, headers: { "content-type": "application/json" } });
   }
+  unmocked.add(path);
   return new Response(JSON.stringify({ error: { message: "not mocked: " + path } }), { status: 404, headers: { "content-type": "application/json" } });
 };
 window.localStorage.setItem("valegate-lang", "zh");
@@ -75,6 +88,14 @@ let fail = 0;
 for (const [name, ok] of checks) {
   console.log(ok ? "  ✔" : "  ✘", name);
   if (!ok) fail++;
+}
+// The requests the harness never answered. A view quietly rendering empty because
+// of THIS is a harness bug wearing a product bug's clothes, so it fails loudly.
+if (unmocked.size > 0) {
+  console.error("UNMOCKED REQUESTS: " + [...unmocked].join(", "));
+  console.error("  The app asked for a path this harness does not answer, so anything it");
+  console.error("  renders from that request is EMPTY — not because the app is broken.");
+  fail++;
 }
 console.log(fail === 0 ? "DEVICES DASHBOARD RENDER OK" : `DEVICES DASHBOARD RENDER FAIL (${fail})`);
 process.exit(fail === 0 ? 0 : 1);
