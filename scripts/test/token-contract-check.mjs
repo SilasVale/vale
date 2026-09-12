@@ -69,6 +69,32 @@ export function divergences(consoleVars, panelVars) {
   return { shared, differ, unresolved };
 }
 
+/**
+ * The console's NEUTRALS must be drawn from the panel's declared scale.
+ *
+ * WHY THIS EXISTS ON TOP OF THE NAME COMPARISON, and it is not theoretical: the
+ * name comparison compares only names BOTH sides define, and the console's own
+ * `--text`, `--border` and `--bg-secondary` are not shared names — so nothing was
+ * checking them. I aligned the console's `--chrome-*` frame first and left its
+ * body on Bootstrap's grays, which produced a ZINC FRAME AROUND A BOOTSTRAP BODY:
+ * measurably worse than leaving both alone, because the two halves then
+ * disagreed INSIDE one surface. All 19 console neutrals are now values the panel
+ * also declares, and this fails if one ever is not.
+ */
+export function offScaleNeutrals(consoleVars, panelVars, isColour) {
+  const scale = new Set(Object.values(panelVars).filter(isColour));
+  const out = [];
+  for (const [k, v] of Object.entries(consoleVars)) {
+    if (!/^--(bg|border|text|chrome)/.test(k)) continue;
+    const r = resolve(v, consoleVars);
+    if (r === null) continue; // reported by the caller's unresolved list
+    if (isColour(r) && !scale.has(r)) out.push({ token: k, value: r });
+  }
+  return out;
+}
+
+const isColour = (v) => /^#|^rgba?\(/.test(String(v));
+
 const cases = [
   ["light", ":root", ":root"],
   ["dark", 'body[data-theme="dark"]', 'body[data-theme="dark"]'],
@@ -86,6 +112,17 @@ for (const [label, gsel, psel] of cases) {
   if (unresolved.length) {
     console.log(`  ${label}: ${unresolved.length} shared token(s) UNRESOLVED (nested var) — not compared: ${unresolved.join(", ")}`);
   }
+  // The console's neutrals, in this mode, against the panel's whole scale.
+  const scalePanel = { ...(pc[":root"] || {}), ...(pc[psel] || {}) };
+  const off = offScaleNeutrals(g, scalePanel, isColour);
+  if (off.length === 0) {
+    console.log(`  ${label}: every console neutral is a value the panel declares`);
+  } else {
+    failures += off.length;
+    console.log(`  ${label}: ${off.length} console neutral(s) are NOT on the panel's scale:`);
+    for (const o of off) console.log(`    ${o.token}: ${o.value} is the console's alone`);
+  }
+
   if (differ.length === 0) {
     console.log(`  ${label}: ${shared.length} shared tokens agree`);
   } else {

@@ -18,15 +18,22 @@
   --ds-dur: 0.18s;
 
   /* Light mode */
+  /* THE BODY, ON THE SAME SCALE AS THE FRAME. Aligning only `--chrome-*` left a
+     zinc frame around a Bootstrap body — measurably worse than leaving both
+     alone, because the two halves then disagreed INSIDE one surface. This is the
+     half the token contract below cannot see: it compares names both frontends
+     define, and the console's own `--text`/`--border`/`--bg-secondary` are not
+     shared names, so nothing was checking them. Values come from the panel's
+     declared zinc scale (neutral-50…900). */
   --bg: #fafafa;
-  --bg-secondary: #f8f9fa;
-  --bg-tertiary: #f1f3f5;
-  --border: #e9ecef;
-  --border-strong: #dee2e6;
-  --text: #212529;
-  --text-secondary: #495057;
-  --text-muted: #868e96;
-  --text-faint: #adb5bd;
+  --bg-secondary: #f4f4f5;
+  --bg-tertiary: #ececef;
+  --border: #e4e4e7;
+  --border-strong: #d4d4d8;
+  --text: #1d1d1f;
+  --text-secondary: #52525b;
+  --text-muted: #71717a;
+  --text-faint: #a1a1aa;
 
   /* Vale brand — violet (matches the glossy bolt favicon) */
   --accent: #d9480f;
@@ -103,15 +110,18 @@ body[data-theme="dark"] {
   /* Aligned with the panel's midnight (#131418), not Mantine's #1a1b1e — the
      dark sets were already close, which is why their two remaining differences
      went unnoticed while light mode differed in twelve places. */
+  /* THE DARK BODY, on the panel's midnight scale — the same half-alignment the
+     light mode had, found by the scale check the moment it was written: the
+     chrome had been aligned while these eight stayed Mantine's. */
   --bg: #131418;
-  --bg-secondary: #25262b;
-  --bg-tertiary: #2c2e33;
-  --border: #373a40;
-  --border-strong: #46494f;
-  --text: #d5d6d8;
-  --text-secondary: #909296;
-  --text-muted: #6b6e76;
-  --text-faint: #46494f;
+  --bg-secondary: #1f2026;
+  --bg-tertiary: #2a2b33;
+  --border: rgba(255, 255, 255, 0.07);
+  --border-strong: #2a2b33;
+  --text: #ecedef;
+  --text-secondary: #a2a3ac;
+  --text-muted: #9a9aa0;
+  --text-faint: #6f707a;
 
   --accent: #ffa94d;
   --accent-light: #3d2817;
