@@ -497,7 +497,7 @@ const SYSTEM_TOOLS: McpTool[] = [
   {
     name: "system_file_upload",
     description:
-      "Send a file FROM the device to the Vale relay and return its one-time download URL (any other machine or device can then pull it). Streamed from disk — the bytes never pass through the AI context, so 100 MB is fine. The relay holds the file until first download or 24 h. Returns {ok, url, bytes}. Pair: system_file_download.",
+      "Send a file FROM the device to the Vale relay and return its one-time download URL (any other machine or device can then pull it). THE BYTES NEVER PASS THROUGH THE AI CONTEXT, so 100 MB is fine. The device reads the file into memory before relaying, so the cost is bounded by the 100 MiB cap and the upload is NOT streamed from disk (the download direction is). The relay holds the file until first download or 24 h. Returns {ok, url, bytes}. Pair: system_file_download.",
     inputSchema: {
       type: "object",
       properties: {

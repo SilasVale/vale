@@ -199,10 +199,33 @@ fn tool_file_read() -> ToolDef {
                         "data": base64::engine::general_purpose::STANDARD.encode(&buf),
                     })))
                 } else {
-                    let text = String::from_utf8_lossy(&buf).to_string();
+                    // THE DESCRIPTION PROMISES AN ERROR FOR BINARY, AND IT DID NOT
+                    // DELIVER ONE: this was `from_utf8_lossy`, so a PE, an archive
+                    // or a blob came back as U+FFFD-substituted text that READS AS
+                    // CONTENT, with nothing telling the caller to retry `raw: true`.
+                    // A model acting on mojibake is worse served than one told to
+                    // ask differently — and the description already named the
+                    // escape, so the code is what had to change.
+                    //
+                    // NO LOSSY FALLBACK ON PURPOSE: `from_utf8_lossy` also silently
+                    // repairs a mostly-text file with one bad byte, which is the
+                    // same silence in a smaller dose. The caller asked for TEXT.
+                    // `bytes`/`truncated` keep the meaning they already had —
+                    // only the CONVERSION changes.
+                    let n = buf.len();
+                    let text = match String::from_utf8(buf) {
+                        Ok(t) => t,
+                        Err(_) => {
+                            return Ok(to_value_or_empty(tool_error(format!(
+                                "{path} is not valid UTF-8 (binary, or text with a damaged \
+                                 byte). Re-read with raw: true for base64, or use a \
+                                 terminal session to inspect it.",
+                            ))))
+                        }
+                    };
                     Ok(to_value_or_empty(json!({
-                        "ok": true, "path": path, "offset": offset, "bytes": buf.len(), "size": size,
-                        "text": text, "truncated": buf.len() as u64 == limit,
+                        "ok": true, "path": path, "offset": offset, "bytes": n, "size": size,
+                        "text": text, "truncated": n as u64 == limit,
                     })))
                 }
             }
@@ -433,7 +456,7 @@ fn tool_file_download() -> ToolDef {
 fn tool_file_upload() -> ToolDef {
     ToolDef::new(
         "system_file_upload",
-        "Send a local file to the Vale relay and return its one-time download URL (the other half of the file-transfer pair: hand that URL to system_file_download on the receiving device, or fetch it here on Linux). The file is streamed from disk straight to the relay — the bytes NEVER pass through the AI context, so 100 MB images are fine (system_file_write is the ≤4 MiB inline path only). The relay holds it until first download or 24 h. Returns {ok, url, bytes}.",
+        "Send a local file to the Vale relay and return its one-time download URL (the other half of the file-transfer pair: hand that URL to system_file_download on the receiving device, or fetch it here on Linux). THE BYTES NEVER PASS THROUGH THE AI CONTEXT, so a 100 MB image is fine. The agent DOES read the file into memory before relaying it, so the cost is bounded by the 100 MiB transfer cap and the upload is NOT streamed from disk — this sentence claimed streaming, which the code has never done (`fs::read` + a buffered body); the DOWNLOAD direction really does stream, which is what made the claim look verified (system_file_write is the ≤4 MiB inline path only). The relay holds it until first download or 24 h. Returns {ok, url, bytes}.",
         json!({
             "type": "object",
             "properties": {
@@ -744,6 +767,66 @@ mod file_tool_tests {
             .call(params)
             .await
             .unwrap_or_else(|e| tool_error(e.to_string()))
+    }
+
+    /// THE DESCRIPTION PROMISES AN ERROR FOR BINARY, AND THE CODE MUST GIVE ONE.
+    ///
+    /// It said "binary files return an error — use a terminal session for binary
+    /// inspection" and "`raw: true` returns base64 for binary-safe reads" while
+    /// the handler ran `from_utf8_lossy`: a PE or an archive came back as
+    /// U+FFFD-substituted text that READS AS CONTENT, and nothing told the caller
+    /// to ask differently. The escape was documented and the code did not take it.
+    ///
+    /// This drives the TOOL, because the defect was in the handler and a test on
+    /// the description alone would pass either way.
+    #[tokio::test]
+    async fn reading_a_binary_file_errors_instead_of_returning_mojibake() {
+        let dir = std::env::temp_dir().join(format!("vale-sysread-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let bin = dir.join("blob.bin");
+        // Invalid UTF-8: what a PE header or an archive actually starts with.
+        std::fs::write(&bin, [0x4d, 0x5a, 0x90, 0x00, 0xff, 0xfe, 0x00, 0x01]).unwrap();
+        let text = dir.join("ok.txt");
+        std::fs::write(&text, "plain text").unwrap();
+
+        let tools = build();
+        let read = tools
+            .iter()
+            .find(|t| t.name == "system_file_read")
+            .expect("system_file_read");
+
+        // TEXT still reads.
+        let ok = run(read, json!({"path": text.to_string_lossy()})).await;
+        assert_eq!(ok["text"], "plain text", "a text file still reads: {ok}");
+
+        // BINARY refuses, and the refusal names the escape.
+        let bad = run(read, json!({"path": bin.to_string_lossy()})).await;
+        assert!(
+            bad.get("text").is_none(),
+            "binary must NOT come back as lossy text — a model reading mojibake \
+             cannot tell it from content: {bad}"
+        );
+        assert_eq!(bad["ok"], false, "and it must be an error: {bad}");
+        let msg = bad["error"].as_str().unwrap_or_default();
+        assert!(
+            msg.contains("raw: true"),
+            "the error must name the documented escape: {msg}"
+        );
+
+        // AND `raw: true` is that escape — base64, byte-exact.
+        let raw = run(read, json!({"path": bin.to_string_lossy(), "raw": true})).await;
+        let b64 = raw["data"].as_str().expect("base64 data");
+        let decoded = base64::engine::general_purpose::STANDARD
+            .decode(b64)
+            .unwrap();
+        assert_eq!(
+            decoded,
+            vec![0x4d, 0x5a, 0x90, 0x00, 0xff, 0xfe, 0x00, 0x01],
+            "raw: true is byte-exact"
+        );
+
+        let _ = std::fs::remove_dir_all(&dir);
     }
 
     /// Shared by the VALE_GATEWAY_URL-mutating upload tests (round-370):

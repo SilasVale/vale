@@ -354,6 +354,30 @@ test("contract: the relay pair is registered, routed and self-documenting", asyn
     );
     assert.equal(t.inputSchema.properties.device.type, "string", `${n} takes device`);
   }
+  // THE UPLOAD IS NOT STREAMED, AND SAYING IT IS WAS FALSE IN BOTH COPIES.
+  // The device (`plugins/system/tools.rs`) and this catalogue both advertised
+  // "streamed from disk straight to the relay" while the handler does
+  // `std::fs::read` + a buffered body. The DOWNLOAD direction really does stream
+  // (`bytes_stream()`), which is what made the claim look verified — a twin that
+  // behaves differently is how a shared sentence survives.
+  //
+  // Pin the FACT, not the prose: descriptions are deliberately re-worded for the
+  // console, so a text-equality assertion would rot.
+  // PIN THE FALSE PHRASE, NOT THE WORDS IN IT. My first version asserted the
+  // description does not match /streamed from disk/i — and FAILED against the
+  // CORRECT text, because the corrective sentence says "the upload is NOT
+  // streamed from disk". A check that reads a phrase without reading its POLARITY
+  // reports a problem for the sentence that fixes it. So this pins the exact
+  // claim that was false, and separately requires a statement of the real cost.
+  const up = byName.get("system_file_upload").description;
+  assert.ok(
+    !/streamed from disk straight to the relay/i.test(up),
+    "the upload must not repeat the disproven claim that it streams from disk",
+  );
+  assert.ok(
+    /(into memory|not streamed|reads the file)/i.test(up),
+    "and it must say the file is read into memory, since that is the real cost",
+  );
   assert.deepEqual(byName.get("system_file_upload").inputSchema.required, ["path"]);
   assert.deepEqual(byName.get("system_file_download").inputSchema.required, ["url", "path"]);
 });
