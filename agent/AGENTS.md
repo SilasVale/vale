@@ -519,7 +519,39 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 76 (the token contract checked TWO of the three
+Last updated: 2026-09-12 round 77 (the MIRROR of the dangling check had no guard
+either: 24 declarations nothing read, FOUR of them mine from the round before). CI green;
+landing deployed; no release needed.
+  (1) `custom-prop-check.mjs` failed on USED-but-not-DEFINED. Nothing failed on the
+  opposite, and it is not harmless: a declaration with no consumer reads as a design
+  system, gets copied into the next frontend, and drifts with nothing to catch it.
+  Measured: console 6, panel 14, landing 10.
+  (2) FOUR WERE MINE, ADDED THE ROUND BEFORE — `--aura-sweep`, `--aura-sweep-soft`,
+  `--aura-glow-strong` (speculative; `--aura-glow` IS read by `.btn-accent`). And
+  `--aura-sweep` had ALREADY PROPAGATED TO ALL THREE FILES, which is the failure mode
+  this check exists for.
+  (3) THE LANDING'S ARE DELETED: that page is self-contained, so a token there cannot
+  have an external consumer and dead means dead. 15 definition sites for 9 names (both
+  themes) plus the `--aura-2` only the removed sweep had used. It is now 24 defined /
+  24 used.
+  (4) THE REST IS A RECORDED DECISION: `DEAD_ALLOW` lists each remaining token WITH A
+  REASON (neutral ramps, rail inks, `--terminal-bg` = painted by the xterm theme not
+  CSS). Anything unlisted FAILS, and a STALE entry fails too — an exemption whose token
+  is used again documents a reason that is gone. Mutation-proven both ways.
+  (5) AND MY OWN FLOOR CAUGHT A CONSEQUENCE: the contract's landing leg asserted
+  ">= 8 shared tokens", a number set when the landing had 9; removing the dead ones took
+  it to 7 and it fired. 7 IS HEALTHY (`--aura-1/3/4/5`, both fonts, `--glass-blur`),
+  so the fix was NOT to lower the number but to require those names BY NAME — a count
+  measures the wrong thing, and a parser reading another block cannot satisfy a name
+  requirement with five unrelated tokens. Mutation-proven by renaming `--aura-1`.
+  (6) VERIFIED LIVE: wash paints, `--aura-1` #22d3ee, font Segoe, duration 0.2s, card
+  `blur(14px) saturate(1.4)`, deleted names absent from the response.
+  (7) STILL OPEN: Logs is panel-only while the accelerators are desktop-only — a design
+  asymmetry, not a defect, and the last item on the panel audit.
+  Gates: custom-property green (landing 24/24, every remaining dead token with a reason);
+  token contract green; console + panel build; panel 524; CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 76 (the token contract checked TWO of the three
 frontends — the landing page's 9 shared names were never compared, and two of them meant
 different things). CI green; landing deployed; no release needed (worker-only).
   (1) THE BLIND SPOT WAS THE CHECK'S OWN. `token-contract-check.mjs` compared console vs
