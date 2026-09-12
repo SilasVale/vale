@@ -206,6 +206,11 @@ export function App() {
       cards: cmdEvents.cards,
       events: cmdEvents.events,
       firstSeq: cmdEvents.firstSeq,
+      // The SAME object literal that dropped `readState` while carrying
+      // `firstSeq`, which round 27 added here for the identical reason. Now that
+      // the type requires it, a future field cannot be left behind the same way
+      // without the compiler saying so.
+      readState: cmdEvents.readState,
     },
   };
 

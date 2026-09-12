@@ -422,7 +422,7 @@ describe("the archive is reachable from the rail", () => {
         sseState="connected"
         token="t"
         plugins={{ rows: [], specLoaded: true, loadError: "", busy: null, log: [], start: vi.fn(), stop: vi.fn() } as any}
-        cmdEvents={{ cards: [], events: [], firstSeq: 1 }}
+        cmdEvents={{ cards: [], events: [], readState: "ok", firstSeq: 1 }}
         connModal={null}
         onConnClose={vi.fn()}
         onConnConnect={vi.fn(() => Promise.resolve("s1"))}

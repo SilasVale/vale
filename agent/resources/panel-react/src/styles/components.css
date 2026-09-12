@@ -3411,3 +3411,9 @@ button.dtab-close:hover { opacity: 1; }
   color: var(--chrome-ink-dim);
 }
 .path-step-run-id { font: 400 10px var(--font-mono); overflow-wrap: anywhere; }
+
+/* A trail that could not be read is NOT an empty one. The tone is the fail
+   family's, muted rather than alarming: it asks the operator to retry, not to
+   investigate a command that never ran. */
+.traj-empty-fail,
+.path-empty-title-fail { color: var(--state-fail); }

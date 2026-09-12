@@ -14,7 +14,7 @@ import { ApprovalGate } from "./ApprovalGate";
 import { GoalBar } from "./GoalBar";
 import { DetailsPanel } from "./DetailsPanel";
 import { CommandStream } from "./CommandCard";
-import type { CommandEvent } from "../hooks/useCommandEvents";
+import type { CommandEvent, SessionReadState } from "../hooks/useCommandEvents";
 
 /** The command-events slice TerminalWorkspace consumes from App. */
 export interface CommandEvents {
@@ -26,6 +26,12 @@ export interface CommandEvents {
    *  meet: the value was in scope one line above the mount and the type said it
    *  was not there. */
   firstSeq: number;
+  /** Whether the read behind `events` actually SUCCEEDED. REQUIRED, for the same
+   *  reason `firstSeq` is: the live views printed "this session has not run a
+   *  command" during every session switch, from a read that had not finished, and
+   *  a REQUIRED field is what makes that impossible to forget at a mount rather
+   *  than merely discouraged. */
+  readState: SessionReadState;
 }
 
 export interface WorkspaceSession extends Session {
@@ -158,13 +164,14 @@ export function TerminalWorkspace({
               <PathView
                 key={activeSid}
                 events={cmdEvents.events}
+                readState={cmdEvents.readState}
                 sessionKind={activeSession?.kind}
                 sessionLabel={activeSession?.label}
                 goal={activeSession?.goal}
                 plan={activeSession?.plan}
               />
             ) : trajOpen && activeSid ? (
-              <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} />
+              <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} readState={cmdEvents.readState} />
             ) : (
               <>
                 {sessions.filter((s) => !s.closed).map((s) => (
@@ -204,13 +211,14 @@ export function TerminalWorkspace({
             <PathView
               key={activeSid}
               events={cmdEvents.events}
+              readState={cmdEvents.readState}
               sessionKind={activeSession?.kind}
               sessionLabel={activeSession?.label}
               goal={activeSession?.goal}
                 plan={activeSession?.plan}
             />
           ) : trajOpen && activeSid ? (
-            <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} />
+            <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} readState={cmdEvents.readState} />
           ) : (
             <div id="term-container">
               {sessions.length === 0 ? (

@@ -40,7 +40,7 @@ const props = (over: Partial<React.ComponentProps<typeof TerminalWorkspace>> = {
   onRevokeGrants: vi.fn(() => Promise.resolve([])),
   onSetGoal: vi.fn(() => Promise.resolve(null)),
   registerWrite: vi.fn(() => Object.assign(vi.fn(), {})),
-  cmdEvents: { cards: [], events: [], firstSeq: 1 },
+  cmdEvents: { cards: [], events: [], firstSeq: 1, readState: "ok" as const },
   token: "tok",
   density: "panel" as const,
   sseState: "connected" as const,
@@ -73,7 +73,7 @@ describe("TerminalWorkspace", () => {
       id: "c-1", command: "ls", output: "a", startedAt: 1,
       ended: true, exitCode: 0, reason: null, durationMs: 10, seq: 1,
     }];
-    render(<TerminalWorkspace {...props({ cmdEvents: { cards, events: [], firstSeq: 1 } })} />);
+    render(<TerminalWorkspace {...props({ cmdEvents: { cards, events: [], firstSeq: 1, readState: "ok" as const } })} />);
     expect(screen.queryByText("Details")).toBeNull();
     fireEvent.click(screen.getByTitle("Command log"));
     expect(screen.getByText("Details")).toBeTruthy();

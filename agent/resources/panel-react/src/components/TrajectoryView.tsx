@@ -1,4 +1,5 @@
 import type { PathState } from "../lib/path";
+import { trailReadNotice } from "../lib/trailRead";
 import { useEffect, useRef, useState } from "react";
 import type { CommandEvent } from "../hooks/useCommandEvents";
 import { terminalStatus } from "../hooks/useCommandEvents";
@@ -120,6 +121,7 @@ function EventRow({ ev }: { ev: CommandEvent }) {
 export function TrajectoryView({
   events,
   firstSeq,
+  readState = "ok",
 }: {
   events: import("../hooks/useCommandEvents").CommandEvent[];
   /** The `seq` of the first event the DEVICE still has, from the route's
@@ -127,6 +129,12 @@ export function TrajectoryView({
    *  the wire, and this view must say so rather than let the trail read as
    *  complete — see the notice below. */
   firstSeq?: number;
+  /** Whether the read behind `events` succeeded. DEFAULTS TO `"ok"` because this
+   *  view is also mounted directly by tests and by callers that hold events in
+   *  hand — for them the empty line is TRUE. What must never happen is a mount
+   *  that HAS a failed read and does not say so, and `CommandEvents.readState` is
+   *  required precisely so the wiring in `App` cannot be the one that forgets. */
+  readState?: import("../hooks/useCommandEvents").SessionReadState;
 }) {
   // round-128: events come from the App-level shared poll (one fetch per 2s,
   // not a second independent one).
@@ -195,6 +203,9 @@ export function TrajectoryView({
     setExpanded(new Set());
   };
 
+  // Null when the caller's own empty state is TRUE — the read succeeded.
+  const notice = trailReadNotice(readState);
+
   return (
     <div id="traj-view">
       {firstSeq != null && firstSeq > 1 && (
@@ -230,7 +241,14 @@ export function TrajectoryView({
       </div>
       <div className="traj-list" ref={listRef} onScroll={onListScroll}>
         {visible.length === 0 ? (
-          <p className="traj-empty">{searching ? "No matching events." : "No commands in this session yet."}</p>
+          // THREE ANSWERS, NOT ONE. "No commands in this session yet." is a claim
+          // about the session and is only sayable once a read SUCCEEDED — the
+          // wording and the reasoning live in lib/trailRead.ts, shared with the
+          // path view and the archive. A search that matched nothing is a
+          // different sentence again, because the events are in hand.
+          <p className={notice?.failed ? "traj-empty traj-empty-fail" : "traj-empty"}>
+            {searching ? "No matching events." : (notice?.text ?? "No commands in this session yet.")}
+          </p>
         ) : (
           <>
             {hasMore && (

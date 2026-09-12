@@ -159,9 +159,12 @@ export function groupEvents(events: CommandEvent[]): CommandCard[] {
  *                   A failure AFTER a good read keeps "ok": the audit log is
  *                   append-only, so the events already in hand are still true.
  *
- * The archive viewer is the consumer that needs this (a session whose file is
- * gone must say so, not draw an empty history); the live trajectory views
- * ignore it, exactly as they ignore the failed poll.)
+ * EVERY VIEW THAT RENDERS AN EMPTY TRAIL NEEDS THIS, not just the archive. It
+ * said the live views "ignore it, exactly as they ignore the failed poll" — and
+ * that is what they did, so they told the operator a session had run nothing
+ * while the read was still in flight or had failed outright. `lib/trailRead.ts`
+ * owns the wording; the field is REQUIRED on the slice `App` hands to them so a
+ * mount cannot forget it again.
  */
 export type SessionReadState = "reading" | "ok" | "unreadable";
 

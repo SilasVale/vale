@@ -40,6 +40,7 @@
 // exist and why neither replaces the other. It renders in the empty case too:
 // "this session has run nothing" and "this device has run three things" are both
 // true, and the second one is what the operator came back for.
+import { trailReadNotice } from "../lib/trailRead";
 import { useMemo, useState } from "react";
 import { derivePath, attentionSteps, type PathStep, type PathSummary } from "../lib/path";
 import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_TAG } from "../lib/recipe";
@@ -57,8 +58,13 @@ export function summaryDuration(s: PathSummary): string {
   return s.untimed > 0 ? `at least ${base}` : base;
 }
 
-export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal, plan }: {
+export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal, plan, readState = "ok" }: {
   events: CommandEvent[];
+  /** Whether the read behind `events` succeeded — see lib/trailRead.ts. Defaults
+   *  to `"ok"` for direct mounts (tests, and callers holding real events), where
+   *  the empty line is TRUE; the wiring in `App` cannot forget it, because
+   *  `CommandEvents.readState` is required. */
+  readState?: import("../hooks/useCommandEvents").SessionReadState;
   /** Select a step — the caller scrolls/highlights it in the timeline. */
   onJumpToStep?: (step: PathStep) => void;
   /** Context stamped into a saved recipe, so a reader knows what the commands
@@ -87,15 +93,34 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   const [recipeMsg, setRecipeMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
 
   if (path.steps.length === 0) {
+  // Null when our own empty state is TRUE — the read succeeded.
+  const notice = trailReadNotice(readState);
+
   return (
       <div className="path-view">
         <RunStrip />
         <div className="path-empty">
-          <p className="path-empty-title">No path yet</p>
-          <p className="path-empty-body">
-            This session has not run a command. Once it does, each command becomes
-            a step here — with its outcome, how long it took and what came back.
-          </p>
+          {/* "This session has not run a command." IS A CLAIM, and it was printed
+              unconditionally — including during every session switch, when
+              `useCommandEvents` has already reset `events` to `[]` while the new
+              read is in flight. The wording for the other two answers is shared
+              with the trajectory view and the archive (lib/trailRead.ts). */}
+          {notice ? (
+            <>
+              <p className={notice.failed ? "path-empty-title path-empty-title-fail" : "path-empty-title"}>
+                {notice.failed ? "Trail unavailable" : "Reading…"}
+              </p>
+              <p className="path-empty-body">{notice.text}</p>
+            </>
+          ) : (
+            <>
+              <p className="path-empty-title">No path yet</p>
+              <p className="path-empty-body">
+                This session has not run a command. Once it does, each command becomes
+                a step here — with its outcome, how long it took and what came back.
+              </p>
+            </>
+          )}
         </div>
       </div>
     );
