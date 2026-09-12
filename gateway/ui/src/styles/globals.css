@@ -44,6 +44,46 @@
   --accent-shadow: rgba(217, 72, 15, 0.3);
 
   /* States */
+  /* ── THE NEUTRAL LADDER HAS MARK WEIGHTS AND TEXT WEIGHTS ────────────────
+     Measured on the live console, on the surfaces these steps actually sit on:
+
+       #71717a (--text-muted)  white 4.83 | --bg 4.63 | --bg-secondary 4.40 | --bg-tertiary 4.10
+       #a1a1aa (--text-faint)  white 2.56 | --bg 2.46 | --bg-secondary 2.34 | --bg-tertiary 2.18
+
+     `--text-muted` passes on the two LIGHTEST surfaces and fails on the two
+     darker ones; `--text-faint` fails everywhere. So the ladder above `--text`
+     was designed for marks, and text was reaching into it: 25 `color:` rules used
+     `--text-muted` and 5 used `--text-faint`, which is why EVERY view except
+     Users had text under AA — API-key names, model prefixes, the "未配置" badge,
+     the key chips.
+
+     THE TRADE-OFF, stated because it is real: this loses one step of hierarchy on
+     white cards, where 4.83 was already passing. It is taken deliberately — a
+     rule that can be ENFORCED (`color:` may not use a mark weight) beats a nuance
+     that depends on which surface a rule happens to land on and cannot be
+     checked. Both tokens remain valid for `background` and `border-color`. */
+  /* ── TEXT-WEIGHT SEMANTIC COLOURS ────────────────────────────────────────
+     A semantic colour does two different jobs and only one of them tolerates a
+     bright hue: as a MARK (a dot, a border, a filled badge) it needs 3:1; as
+     TEXT it needs 4.5:1. This file had ONE value per state and used it for
+     both, so every status word on the devices view measured under AA — and
+     those words are the most important information on the page:
+
+       在线 / 隧道正常   (--success as text)   3.13
+       可更新到 1.0.106  (--warning on soft)   3.30
+       离线 / 隧道断开   (--error as text)     4.11
+       删除             (--error as text)     4.32
+
+     THE PANEL ALREADY SOLVED THIS and this is where the console follows it:
+     `--success-text` exists there beside `--success` for exactly this reason,
+     as do `--danger-on-soft` and the whole `--chrome-active-*` family. Values
+     below are the panel's where it has one; `--warning-text` has no counterpart
+     there (the panel has no warning state), so it is chosen to clear AA:
+     #b45309 measures 4.90 on --bg. */
+  --success-text: #1e7a33;
+  --warning-text: #b45309;
+  --error-text: #a51d1d;
+
   --success: #2f9e44;
   --success-bg: #ebfbee;
   --error: #e03131;
@@ -129,6 +169,12 @@ body[data-theme="dark"] {
   --accent-dark: #e8590c;
   --accent-ring: rgba(255, 169, 77, 0.22);
   --accent-shadow: rgba(0, 0, 0, 0.45);
+
+  /* Text weights for the dark theme — the light ones above are unreadable on a
+     midnight surface (#1e7a33 on --bg dark is about 1.5:1). */
+  --success-text: #69db7c;
+  --warning-text: #ffc078;
+  --error-text: #ff8787;
 
   --success: #51cf66;
   --success-bg: #21362a;
@@ -366,7 +412,7 @@ pre code { background: none; padding: 0; }
   border-bottom: 1px solid var(--border);
 }
 .user-pop-name { font-size: 13px; font-weight: 650; color: var(--text); }
-.user-pop-role { font-size: 11px; color: var(--text-muted); }
+.user-pop-role { font-size: 11px; color: var(--text-secondary); }
 .user-pop-logout {
   margin-top: 12px;
   width: 100%;
@@ -379,7 +425,7 @@ pre code { background: none; padding: 0; }
   cursor: pointer;
   transition: background var(--ds-dur) var(--ds-ease), color var(--ds-dur) var(--ds-ease);
 }
-.user-pop-logout:hover { background: var(--error-bg); color: var(--error); border-color: transparent; }
+.user-pop-logout:hover { background: var(--error-bg); color: var(--error-text); border-color: transparent; }
 
 /* ── Content scroll container ── */
 .content {
@@ -424,7 +470,7 @@ pre code { background: none; padding: 0; }
   gap: 6px;
   font: 600 11px var(--ds-font-family);
   letter-spacing: 0.03em;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   padding: 4px 10px;
   border-radius: var(--radius-pill);
   background: var(--bg-secondary);
@@ -469,7 +515,7 @@ pre code { background: none; padding: 0; }
   color: var(--text);
   min-width: 96px;
 }
-.ov-keystate { margin-left: auto; color: var(--text-muted); font-size: 11.5px; }
+.ov-keystate { margin-left: auto; color: var(--text-secondary); font-size: 11.5px; }
 
 /* ── Overview dashboard: stat tiles ── */
 .stat-grid {
@@ -522,14 +568,14 @@ pre code { background: none; padding: 0; }
   font-weight: 600;
   text-transform: uppercase;
   letter-spacing: 0.06em;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 /* card header link ("View all →") */
 .card-link {
   font-size: 12.5px;
   font-weight: 600;
-  color: var(--accent);
+  color: var(--accent-on-soft);
   text-decoration: none;
 }
 .card-link:hover { text-decoration: underline; }
@@ -571,7 +617,7 @@ pre code { background: none; padding: 0; }
 .dev-mini-meta {
   margin-left: auto;
   font-size: 11px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   white-space: nowrap;
 }
 
@@ -595,7 +641,7 @@ pre code { background: none; padding: 0; }
   min-width: 110px;
 }
 .health-model {
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font: 12px var(--ds-font-family-code);
   flex: 1;
   min-width: 0;
@@ -604,8 +650,8 @@ pre code { background: none; padding: 0; }
   white-space: nowrap;
 }
 .health-state { font-size: 12px; font-weight: 600; }
-.health-state.ok { color: var(--success); }
-.health-state.err { color: var(--error); }
+.health-state.ok { color: var(--success-text); }
+.health-state.err { color: var(--error-text); }
 
 /* ── Page header ── */
 .page-header {
@@ -626,7 +672,7 @@ pre code { background: none; padding: 0; }
 
 .page-description {
   font-size: 13.5px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 5px;
   line-height: 21px;
 }
@@ -663,12 +709,12 @@ pre code { background: none; padding: 0; }
   font-weight: 650;
   text-transform: uppercase;
   letter-spacing: 0.07em;
-  color: var(--text-muted);
+  color: var(--text-secondary);
 }
 
 .card-description {
   font-size: 12.5px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 3px;
   line-height: 19px;
 }
@@ -714,11 +760,11 @@ pre code { background: none; padding: 0; }
   flex-shrink: 0;
 }
 
-.badge-success { background: var(--success-bg); color: var(--success); }
-.badge-error { background: var(--error-bg); color: var(--error); }
-.badge-warning { background: var(--warning-bg); color: var(--warning); }
+.badge-success { background: var(--success-bg); color: var(--success-text); }
+.badge-error { background: var(--error-bg); color: var(--error-text); }
+.badge-warning { background: var(--warning-bg); color: var(--warning-text); }
 .badge-info { background: var(--info-bg); color: var(--info); }
-.badge-muted { background: var(--bg-tertiary); color: var(--text-muted); }
+.badge-muted { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 /* Neutral chip with a small state dot — for INFORMATIONAL listings (key
    configured?, channel up?). Keeps saturated green/red for real alerts,
@@ -749,12 +795,12 @@ pre code { background: none; padding: 0; }
 .chip.off .dot { background: var(--text-faint); }
 
 /* Legacy aliases */
-.badge.ok { background: var(--success-bg); color: var(--success); }
-.badge.empty { background: var(--bg-tertiary); color: var(--text-muted); }
-.badge.off { background: var(--bg-tertiary); color: var(--text-muted); }
+.badge.ok { background: var(--success-bg); color: var(--success-text); }
+.badge.empty { background: var(--bg-tertiary); color: var(--text-secondary); }
+.badge.off { background: var(--bg-tertiary); color: var(--text-secondary); }
 .badge.admin { background: var(--info-bg); color: var(--info); }
 .badge-admin { background: var(--info-bg); color: var(--info); }
-.badge-user { background: var(--bg-tertiary); color: var(--text-muted); }
+.badge-user { background: var(--bg-tertiary); color: var(--text-secondary); }
 
 .dot {
   display: inline-block;
@@ -821,9 +867,11 @@ pre code { background: none; padding: 0; }
 
 .btn-danger {
   background: transparent;
-  color: var(--error);
+  /* 4.32 measured on the live view; this is a label a person reads before
+     clicking, so it takes the text weight. */
+  color: var(--error-text);
 }
-.btn-danger:hover:not(:disabled) { background: var(--error-bg); }
+.btn-danger:hover:not(:disabled) { background: var(--error-bg); color: var(--error-text); }
 
 .btn-accent {
   background: var(--accent);
@@ -847,7 +895,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
   border-radius: var(--radius-md);
   border: none;
   background: transparent;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--ds-dur) var(--ds-ease);
 }
@@ -938,7 +986,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 
 .list-sub {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: var(--ds-font-family-code);
   font-variant-numeric: tabular-nums;
   margin-top: 2px;
@@ -973,7 +1021,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .u-name { font-size: 14px; font-weight: 600; color: var(--text); }
 .u-sub {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-family: var(--ds-font-family-code);
   margin-top: 2px;
 }
@@ -1045,7 +1093,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 
 .lane-desc {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 1px;
 }
 
@@ -1072,7 +1120,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .channel-label {
   font-size: 11px;
   font-weight: 600;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   margin-bottom: 7px;
@@ -1114,7 +1162,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 
 .key-card-desc {
   font-size: 12px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 2px;
 }
 
@@ -1145,8 +1193,8 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
   word-break: break-word;
 }
 
-.test-result.ok { background: var(--success-bg); color: var(--success); }
-.test-result.err { background: var(--error-bg); color: var(--error); }
+.test-result.ok { background: var(--success-bg); color: var(--success-text); }
+.test-result.err { background: var(--error-bg); color: var(--error-text); }
 
 /* ================================================================
    Forms
@@ -1182,7 +1230,7 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-.form-input::placeholder { color: var(--text-faint); }
+.form-input::placeholder { color: var(--text-secondary); }
 
 .input-row {
   display: flex;
@@ -1226,9 +1274,9 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
 .form-msg {
   font-size: 12.5px;
   margin-top: 10px;
-  color: var(--error);
+  color: var(--error-text);
 }
-.form-msg.ok { color: var(--success); }
+.form-msg.ok { color: var(--success-text); }
 
 .form-message {
   font-size: 12.5px;
@@ -1236,10 +1284,10 @@ button.btn-primary, a.btn-primary { border-radius: var(--radius-pill); }
   border-radius: var(--radius-sm);
   margin-top: 10px;
 }
-.form-message-success { background: var(--success-bg); color: var(--success); }
-.form-message-error { background: var(--error-bg); color: var(--error); }
+.form-message-success { background: var(--success-bg); color: var(--success-text); }
+.form-message-error { background: var(--error-bg); color: var(--error-text); }
 
-.muted { color: var(--text-muted); font-size: 12.5px; line-height: 20px; }
+.muted { color: var(--text-secondary); font-size: 12.5px; line-height: 20px; }
 
 .install-flow-btns {
   display: flex;
@@ -1271,7 +1319,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .note.warn {
   background: var(--warning-bg);
   border-color: transparent;
-  color: var(--warning);
+  color: var(--warning-text);
 }
 
 /* ================================================================
@@ -1399,7 +1447,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 
 .auth-brand p {
   font-size: 12.5px;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   margin-top: 1px;
 }
 
@@ -1420,7 +1468,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   border-radius: var(--radius-sm);
   font-size: 13px;
   font-weight: 500;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--ds-dur) var(--ds-ease);
 }
@@ -1468,7 +1516,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   box-shadow: 0 0 0 3px var(--accent-ring);
 }
 
-.auth-form input::placeholder { color: var(--text-faint); }
+.auth-form input::placeholder { color: var(--text-secondary); }
 
 .lang-btn {
   border: 1px solid var(--border-strong);
@@ -1592,7 +1640,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .empty {
   padding: 28px 16px;
   text-align: center;
-  color: var(--text-muted);
+  color: var(--text-secondary);
   font-size: 13px;
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
@@ -1655,7 +1703,8 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .dev-card-ver {
   margin-left: auto;
   font: 11px var(--ds-font-family-code);
-  color: var(--text-muted);
+  /* 4.10 on --bg-tertiary; --text-secondary clears it. */
+  color: var(--text-secondary);
   background: var(--bg-tertiary);
   border-radius: var(--radius-pill);
   padding: 2px 9px;
@@ -1672,15 +1721,15 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   background: var(--bg-secondary);
 }
 .dev-sig { display: flex; align-items: center; gap: 8px; font-size: 12px; }
-.dev-sig-label { color: var(--text-muted); min-width: 56px; }
+.dev-sig-label { color: var(--text-secondary); min-width: 56px; }
 .sig-dot { width: 7px; height: 7px; border-radius: 50%; flex-shrink: 0; }
 .sig-dot.ok { background: var(--success); }
 .sig-dot.err { background: var(--error); }
 .sig-dot.off { background: var(--text-faint); }
 .dev-sig-state { margin-left: auto; font-weight: 600; }
-.dev-sig-state.ok { color: var(--success); }
-.dev-sig-state.err { color: var(--error); }
-.dev-sig-state.off { color: var(--text-faint); }
+.dev-sig-state.ok { color: var(--success-text); }
+.dev-sig-state.err { color: var(--error-text); }
+.dev-sig-state.off { color: var(--text-secondary); }
 
 .dev-host {
   display: flex;
@@ -1690,10 +1739,10 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   color: var(--text-secondary);
 }
 .dev-host-name { overflow: hidden; text-overflow: ellipsis; white-space: nowrap; }
-.dev-meta { font-size: 11px; color: var(--text-muted); }
+.dev-meta { font-size: 11px; color: var(--text-secondary); }
 .dev-actions { display: flex; gap: 6px; flex-wrap: wrap; margin-top: auto; }
 
-.muted-small { font-size: 12px; color: var(--text-muted); }
+.muted-small { font-size: 12px; color: var(--text-secondary); }
 
 /* Load-failure banner (the list errors used to be swallowed silently). */
 .banner-error {
@@ -1703,7 +1752,7 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
   padding: 10px 14px;
   border: 1px solid var(--error);
   background: var(--error-bg);
-  color: var(--error);
+  color: var(--error-text);
   border-radius: var(--radius-md);
   font-size: 13px;
   margin-bottom: 12px;
@@ -1751,13 +1800,13 @@ body[data-theme="dark"] .note.tip { color: var(--accent); }
 .adv-block > summary::before {
   content: "▸";
   font-size: 11px;
-  color: var(--text-faint);
+  color: var(--text-secondary);
   transition: transform var(--ds-dur) var(--ds-ease);
 }
 .adv-block[open] > summary::before { transform: rotate(90deg); }
 .adv-block > .adv-body { padding: 0 18px 16px; }
 
-.form-hint { font-size: 12px; color: var(--text-muted); margin: 0 0 10px; }
+.form-hint { font-size: 12px; color: var(--text-secondary); margin: 0 0 10px; }
 .modal-strong { font-weight: 600; margin: 0 0 6px; }
 
 /* ================================================================

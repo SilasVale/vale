@@ -361,10 +361,19 @@ export default function DevicesPanel() {
                         LAN/direct command is one copy away. */}
                     <CopyButton text={`ssh ${d.hostname}`} small label="ssh" onCopied={() => toast(t("devices.copySsh"))} />
                   </div>
+                  {/* JOINED, not hand-separated. Each optional part used to carry
+                      its own leading " · " while the token's was UNCONDITIONAL, so a
+                      device with neither lastSeenAt nor registeredAt rendered
+                      "· z9y8x7…t3s2" — an orphan separator with nothing before it.
+                      Measured on the live view: d2's meta read exactly that. */}
                   <div className="dev-meta">
-                    {d.lastSeenAt ? t("devices.lastSeen", { date: fmtRel(d.lastSeenAt, t) }) : ""}
-                    {d.registeredAt ? ` · ${t("devices.registeredAt", { date: fmtDateTime(d.registeredAt) })}` : ""}
-                    {" · "}{maskToken(d.token)}
+                    {[
+                      d.lastSeenAt ? t("devices.lastSeen", { date: fmtRel(d.lastSeenAt, t) }) : null,
+                      d.registeredAt ? t("devices.registeredAt", { date: fmtDateTime(d.registeredAt) }) : null,
+                      maskToken(d.token),
+                    ]
+                      .filter(Boolean)
+                      .join(" · ")}
                   </div>
                   <div className="dev-actions">
                     <button className="btn btn-ghost btn-mini" onClick={() => openPanel(d.name)}>

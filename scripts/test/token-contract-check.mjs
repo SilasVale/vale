@@ -133,6 +133,51 @@ export function deadFallbacks(cssText, defined, skipFile = "") {
 // anyway is exactly what would have hidden it from CI.
 let failures = 0;
 
+// --- a semantic colour has TWO weights, and text needs the readable one -----
+// The console had ONE value per state and used it as both a mark and text, so
+// every status word on the devices view measured under AA — 在线 3.13,
+// 可更新到 3.30, 离线 4.11, 删除 4.32 — and those words are the most important
+// information on the page. The panel already separates the two (`--success-text`
+// beside `--success`, `--danger-on-soft`, the whole `--chrome-active-*` family);
+// the console now does too. Measured after the change: 13 failures -> 1, and that
+// one is a false positive of the sweep (`.rail-avatar` is white on a
+// `background-image` gradient, which a `backgroundColor` walk cannot see).
+{
+  const g = blocks(readFileSync(`${ROOT}gateway/ui/src/styles/globals.css`, "utf8"));
+  const root = g[":root"] || {};
+  const dark = g['body[data-theme="dark"]'] || {};
+  for (const tok of ["--success-text", "--warning-text", "--error-text"]) {
+    if (!(tok in root) || !(tok in dark)) {
+      failures += 1;
+      console.log(`    console: ${tok} must be declared in BOTH theme blocks (light-only freezes against the light background)`);
+    }
+  }
+  const css = readFileSync(`${ROOT}gateway/ui/src/styles/globals.css`, "utf8")
+    .replace(/\/\*[\s\S]*?\*\//g, "");
+  // ...and the NEUTRAL ladder is the same story, measured on the surfaces these
+  // steps actually sit on:
+  //   #71717a (--text-muted)  white 4.83 | --bg 4.63 | --bg-secondary 4.40 | --bg-tertiary 4.10
+  //   #a1a1aa (--text-faint)  white 2.56 | --bg 2.46 | --bg-secondary 2.34 | --bg-tertiary 2.18
+  // `--text-muted` passes on the two lightest and FAILS on the two darker ones,
+  // so whether it was safe depended on which surface a rule happened to land on —
+  // not something a stylesheet check can see. Both remain valid as marks.
+  for (const mark of ["--text-muted", "--text-faint"]) {
+    const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g"))];
+    if (offenders.length) {
+      failures += offenders.length;
+      console.log(`    console: ${offenders.length} rule(s) paint TEXT with ${mark}, a MARK weight — use --text-secondary`);
+    }
+  }
+  for (const mark of ["--success", "--warning", "--error"]) {
+    const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${mark}\\)`, "g"))];
+    if (offenders.length) {
+      failures += offenders.length;
+      console.log(`    console: ${offenders.length} rule(s) paint TEXT with ${mark}, the MARK weight — use ${mark}-text`);
+    }
+  }
+  if (!failures) console.log("  console: semantic colours have a readable text weight");
+}
+
 // --- dead fallbacks, both frontends ----------------------------------------
 for (const [label, dir, tokenFile] of [
   ["console", "gateway/ui/src/", "styles/globals.css"],

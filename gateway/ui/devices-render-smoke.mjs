@@ -63,6 +63,13 @@ const checks = [
   ["reg key listed", text.includes("abcd1234")],
   ["row actions", text.includes("打开面板") && text.includes("复制 MCP") && text.includes("编辑")],
   ["advanced collapsed block", text.includes("网关 MCP 配置")],
+  // A meta line is JOINED, not hand-separated. Each optional part used to carry
+  // its own leading " · " while the token's was unconditional, so d2 — which has
+  // neither lastSeenAt nor registeredAt — rendered "· z9y8x7…t3s2", an orphan
+  // separator with nothing before it. Confirmed in the live DOM before the fix.
+  ["no meta line starts with an orphan separator",
+    [...doc.querySelectorAll(".dev-meta")].every((n) => !/^\s*·/.test(n.textContent || ""))
+      && [...doc.querySelectorAll(".dev-meta")].some((n) => (n.textContent || "").includes("·"))],
 ];
 let fail = 0;
 for (const [name, ok] of checks) {
