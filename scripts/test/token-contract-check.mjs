@@ -23,6 +23,7 @@
 import { readFileSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import assert from "node:assert/strict";
+import { contrastRatio, parseColour } from "../../agent/scripts/lib/contrast-probe.mjs";
 
 const ROOT = fileURLToPath(new URL("../..", import.meta.url));
 const CONSOLE = "gateway/ui/src/styles/globals.css";
@@ -214,6 +215,74 @@ const cases = [
 const gc = blocks(readFileSync(`${ROOT}${CONSOLE}`, "utf8"));
 const pc = blocks(readFileSync(`${ROOT}${PANEL}`, "utf8"));
 
+// --- the accent family must be READABLE, in both directions ------------------
+//
+// The accent is used BOTH ways: as a button background carrying `--accent-fg`, and as
+// TEXT on the page background. It failed BOTH in the light theme — white on #d9480f
+// measured 4.30, and #d9480f as text on #fafafa measured 4.12 — for as long as the
+// value existed, and nothing watched it. The dark theme was worse: white on #ffa94d
+// measured 1.90, a factor of two under AA, on the login button.
+//
+// This is the check that would have caught all three. It reads the tokens the two
+// frontends actually ship, so a palette change that re-breaks them fails here rather
+// than at a user's eyes.
+const AA_TEXT = 4.5;
+function contrastFailures(label, tokens) {
+  const out = [];
+  const get = (k) => {
+    const v = tokens[k];
+    return typeof v === "string" ? v.trim() : null;
+  };
+  // TOKEN values, not computed styles. `parseColour` from the probe library is built
+  // for `getComputedStyle` output — it reads digit runs, so `#ffffff` has NO digits and
+  // parses to null (it handles `rgb()`/`rgba()` only). A hex-aware resolver is needed
+  // here, and an unparseable value must FAIL rather than be skipped: a check that
+  // cannot read its input is not a check that found nothing.
+  const toRgb = (c) => {
+    const v = String(c || "").trim();
+    let m = v.match(/^#([0-9a-f]{3})$/i);
+    if (m) return { r: parseInt(m[1][0] + m[1][0], 16), g: parseInt(m[1][1] + m[1][1], 16), b: parseInt(m[1][2] + m[1][2], 16) };
+    m = v.match(/^#([0-9a-f]{6})$/i);
+    if (m) return { r: parseInt(m[1].slice(0, 2), 16), g: parseInt(m[1].slice(2, 4), 16), b: parseInt(m[1].slice(4, 6), 16) };
+    const rgb = v.match(/^rgba?\(\s*([\d.]+)[,\s]+([\d.]+)[,\s]+([\d.]+)/i);
+    if (rgb) return { r: +rgb[1], g: +rgb[2], b: +rgb[3] };
+    return null;
+  };
+  const ratioOf = (a, b) => {
+    const fgO = toRgb(a), bgO = toRgb(b);
+    if (!fgO || !bgO) return null;
+    return contrastRatio(fgO, bgO);
+  };
+  const check = (what, fg, bg) => {
+    const r = ratioOf(fg, bg);
+    if (r === null) {
+      out.push(`${label}: ${what} could not be measured (${fg} on ${bg})`);
+    } else if (r < AA_TEXT) {
+      out.push(`${label}: ${what} measures ${r.toFixed(2)}, under AA ${AA_TEXT} (${fg} on ${bg})`);
+    }
+  };
+  const fg = get("--accent-fg");
+  const accent = get("--accent");
+  const bg = get("--bg");
+  // A missing token is itself a failure — an absent `--accent-fg` silently falls back
+  // to inheritance, which is how a 1.90:1 button ships.
+  if (!fg) out.push(`${label}: --accent-fg is not declared`);
+  if (!accent) out.push(`${label}: --accent is not declared`);
+  if (fg && accent) check("--accent-fg on --accent", fg, accent);
+  if (accent && bg) check("--accent as text on --bg", accent, bg);
+  return out;
+}
+
+let accentFailures = 0;
+for (const [label, gsel] of [["light", ":root"], ["dark", 'body[data-theme="dark"]']]) {
+  const tokens = { ...(gc[":root"] || {}), ...(gc[gsel] || {}) };
+  const bad = contrastFailures(label, tokens);
+  accentFailures += bad.length;
+  for (const b of bad) console.log(`  ${b}`);
+}
+if (accentFailures === 0) console.log("  accent family: readable in both directions, both themes");
+
+
 for (const [label, gsel, psel] of cases) {
   const g = gc[gsel] || {};
   const p = pc[psel] || {};
@@ -242,6 +311,7 @@ for (const [label, gsel, psel] of cases) {
     for (const d of differ) console.log(`    ${d.token}: console ${d.console} vs panel ${d.panel}`);
   }
 }
+failures += accentFailures;
 if (failures) {
   // The count covers TWO different causes and the old summary named only one —
   // a dead fallback was reported as "N token(s) mean different things on the two
@@ -250,8 +320,10 @@ if (failures) {
   console.error(`\ntoken contract FAILED (${failures}):`);
   console.error("  * a shared token holding DIFFERENT VALUES on the two surfaces -> the panel is");
   console.error("    the device's primary operator surface, so pick ITS value for the console;");
-  console.error("  * or a DEAD fallback (`var(--x, v)` where the system declares --x) -> drop the");
-  console.error("    fallback, it can never apply and it describes a design that is gone.");
+  console.error("  * a DEAD fallback (`var(--x, v)` where the system declares --x) -> drop the");
+  console.error("    fallback, it can never apply and it describes a design that is gone;");
+  console.error("  * or the ACCENT FAMILY is not readable (see the measurements above) -> darken the");
+  console.error("    accent rather than the ink: no foreground passes on #d9480f at the base AND its");
   process.exit(1);
 }
 console.log("token contract: the console and the panel agree on every shared token name.");

@@ -6,7 +6,7 @@
    ============================================================ */
 :root {
   /* ---- brand (Vale sunrise amber) ---- */
-  --accent: #d9480f;
+  --accent: #bf3a0a; /* was #d9480f — see the console; the token contract requires both surfaces to agree. */
   --accent-fg: #ffffff; /* the foreground ON --accent */
   --accent-ink: #d9480f;
   --accent-soft: #ffefe5;
