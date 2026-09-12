@@ -7,6 +7,7 @@ import assert from "node:assert/strict";
 import { createRequire } from "node:module";
 
 const require = createRequire(import.meta.url);
+const fs = require("node:fs");
 const { psq, busyIsFresh, deskShortcutRepairPs, playwrightProbePs, parseAgentPort, agentPort, firewallPs, uninstallVersionPs, uninstallRegBodyPs, BOOT_TASKS, autostartArgv, bootTaskPs, migrateLayoutPs, startDesktopPs, rollbackVersionOk } = require("../bin/vale.js");
 
 test("psq: PowerShell single-quote doubling (injection surface for SYSTEM task scripts)", () => {
@@ -634,5 +635,60 @@ test("psArgv: every ps() script is passed as argv, and ps() never shells out", (
   assert.ok(
     !/shell:\s*true/.test(m[1]),
     "ps() must not use a shell",
+  );
+});
+
+// THE INGRESS ADDRESS AND THE LISTEN ADDRESS ARE CHOSEN IN TWO LANGUAGES, SO
+// NOTHING IN EITHER ONE CAN SEE THE OTHER. They disagreed: this CLI wrote
+// `http://127.0.0.2:<port>` into etc\tunnel.yml while the agent's own
+// provisioning (`agent/src/tunnel.rs`) writes 127.0.0.1, keeps a helper whose
+// comment says it exists to "reach the agent where it actually listens", and
+// calls 127.0.0.2 "a dead address (502)". One file, two writers, two answers —
+// and the LIVE DEVICE settles which is right: `netstat` on d1 shows the listener
+// on 127.0.0.1:18080, and d1's own tunnel.yml says `service: http://127.0.0.1:18080`.
+//
+// This test is the pin across the language boundary — the same shape as the
+// gateway's code-viewer mirror check, and for the same reason: a test on one copy
+// can only ever compare copies.
+test("the tunnel ingress names the address the agent actually listens on", () => {
+  const src = fs.readFileSync(new URL("../src/vale.ts", import.meta.url), "utf8");
+  const built = fs.readFileSync(new URL("../bin/vale.js", import.meta.url), "utf8");
+  for (const [name, text] of [["src", src], ["bin", built]]) {
+    assert.ok(
+      /service: http:\/\/127\.0\.0\.1:/.test(text),
+      `${name}: the tunnel ingress must be 127.0.0.1 — that is where d1's agent ` +
+        `listens (netstat: 127.0.0.1:18080) and what the agent's own writer puts ` +
+        `in the same file. 127.0.0.2 is a socket nobody holds.`,
+    );
+    assert.ok(
+      !/service: http:\/\/127\.0\.0\.2:/.test(text),
+      `${name}: 127.0.0.2 is back — the agent calls it a dead address (502)`,
+    );
+    assert.ok(
+      /allow-remote-config: false/.test(text),
+      `${name}: the writer must keep allow-remote-config: false. cloudflared ` +
+        `prefers a REMOTE config when one exists, so dropping this re-enables a ` +
+        `stale remote ingress pointing at a dead address "no matter what ` +
+        `tunnel.yml says" (tunnel.rs). The agent writes it; this CLI did not.`,
+    );
+  }
+});
+
+test("the agent's own default host agrees with the ingress", () => {
+  // The third spelling. `ServerConfig::default()` said 127.0.0.2 while the
+  // shipped config.yaml, the agent's tunnel writer and the live device all say
+  // 127.0.0.1 — a default that disagreed with the file it exists to replace.
+  const core = fs.readFileSync(
+    new URL("../../vale-command-core/src/config.rs", import.meta.url),
+    "utf8",
+  );
+  assert.ok(
+    /host:\s*"127\.0\.0\.1"\.into\(\)/.test(core),
+    "ServerConfig::default must bind the same address the tunnel ingress names",
+  );
+  assert.ok(
+    !/host:\s*"127\.0\.0\.2"\.into\(\)/.test(core),
+    "the 127.0.0.2 default is back — it disagrees with config.yaml, with " +
+      "tunnel.rs's ingress and with the live device",
   );
 });

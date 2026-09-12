@@ -230,10 +230,19 @@ impl Default for ServerConfig {
         // the /panel/ Host gate (which must accept Host: <device>.agent... for
         // the tunnel) is trivially spoofable with curl — a LAN client could
         // read the injected __PANEL_TOKEN__ and get RCE as SYSTEM.
-        // 127.0.0.2 is cloudflared's canonical ingress for this tunnel;
-        // 127.0.0.1 covers localhost. Nothing else is reachable.
+        // 127.0.0.1, AND THE CLAIM HERE USED TO BE THE OPPOSITE. It read
+        // "127.0.0.2 is cloudflared's canonical ingress for this tunnel;
+        // 127.0.0.1 covers localhost. Nothing else is reachable" — while the
+        // agent's own tunnel provisioning writes 127.0.0.1 and calls 127.0.0.2
+        // "a dead address (502)". BOTH COULD NOT BE TRUE, so the live device was
+        // asked: `netstat` on d1 shows the listener on 127.0.0.1:18080, and d1's
+        // `etc\tunnel.yml` says `service: http://127.0.0.1:18080`. This default
+        // only applies when no config file supplies a host (the shipped
+        // `config.yaml` says 127.0.0.1), so it was a default that disagreed with
+        // the file it exists to replace — and with the ingress the agent writes.
+        // Loopback either way; the point is that ONE address must be canonical.
         Self {
-            host: "127.0.0.2".into(),
+            host: "127.0.0.1".into(),
             port: 18080,
             name: "vale-agent".into(),
             device_token: None,

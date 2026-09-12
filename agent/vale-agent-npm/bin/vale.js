@@ -754,12 +754,28 @@ function initTunnel(hostname, regKey) {
     // Ingress follows the agent's configured bind port (custom ports 502
     // otherwise); DIR/config.yaml may not exist on fresh installs → default.
     const tunPort = agentPort(ETC_DIR);
+    // THE INGRESS MUST NAME THE ADDRESS THE AGENT LISTENS ON, AND IT IS 127.0.0.1.
+    //
+    // This wrote `http://127.0.0.2:<port>` — and the agent's own provisioning
+    // (`agent/src/tunnel.rs`) writes `127.0.0.1`, keeping a helper
+    // (`ingress_service`) whose comment says it exists to "reach the agent where it
+    // actually listens", and calling 127.0.0.2 "a dead address (502)". Two writers,
+    // two answers, one file — and the LIVE DEVICE settles it: `netstat` shows the
+    // listener on `127.0.0.1:18080`, and d1's own `etc\tunnel.yml` (written by the
+    // agent) says `service: http://127.0.0.1:18080`. So this writer would have
+    // repointed a working tunnel at a socket nobody holds.
+    //
+    // `allow-remote-config: false` IS NOT OPTIONAL EITHER, and it was missing here.
+    // The agent writes it deliberately: cloudflared prefers a REMOTE config when one
+    // exists, so a stale remote ingress keeps proxying to a dead address "no matter
+    // what tunnel.yml says" (tunnel.rs). This writer silently re-enabled that.
     fs.writeFileSync(cfg, [
         "tunnel: " + tunnelId,
         "credentials-file: " + cred,
+        "allow-remote-config: false",
         "ingress:",
         "  - hostname: " + host,
-        "    service: http://127.0.0.2:" + tunPort,
+        "    service: http://127.0.0.1:" + tunPort,
         "  - service: http_status:404",
         "",
     ].join("\n"));
