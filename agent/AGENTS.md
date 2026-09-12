@@ -519,7 +519,52 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 88 (FOURTH read-failure-as-absence, in FOUR copies of one
+Last updated: 2026-09-12 round 89 (THE MULTI-AGENT ROUND the objective asks for: TWO
+subagent audits of surfaces nobody had looked at — the gateway's SSRF guard stack and the
+panel's auth surface — and the FIRST brought back a live credential-exfiltration hole).
+Commits: 3bf95999 (gateway, DEPLOYED and verified live), 9ff38858 (agent).
+  (1) GATEWAY — TWO DEVICE-REGISTRY WRITE PATHS SKIPPED THE HOSTNAME ALLOWLIST.
+  `validateDevice` checks the SHAPE of a hostname (an RFC-domain regex `attacker.example`
+  satisfies); it is NOT an allowlist. The allowlist is `hostAllowError`, called by
+  `/api/register` and self-register ONLY. `handleDevicesAdd` and `handleDeviceRename`
+  never called it — and RENAME PRESERVES `token` + `proxySecret`, making it the
+  credential-stealing variant. Consequence, proven against the real dispatcher: register or
+  rename to a hostile host, then `GET /api/devices/<n>/proxy/...` and the worker dials that
+  host with `Authorization: Bearer <the device's own 64-hex token>` and
+  `x-vale-auth: <its proxySecret>` — the token IS the device RCE credential. The file's own
+  comment 320 lines above the hole states the requirement verbatim. SAME SHAPE AS EVER: a
+  fix that already existed, applied to one of a pair. Both paths call it now; 3 tests, and
+  they had none "because there was no check". MY OWN TEST ASSERTED THE WRONG FIELD TWICE
+  (the error body is nested `{type,error:{type,message}}`) — the guard was working from the
+  first run; I measured the shape the third time instead of guessing.
+  (2) AGENT — A BLANK CONFIGURED TOKEN AUTHENTICATED EVERY ROUTE. `timing_safe_eq(b"",
+  b"")` is TRUE, and both `check_auth` and `TokenGate` failed closed only on `None`, never
+  on BLANK: `device_token: Some("")` made `Authorization: Bearer ` authenticate every
+  `/api/*` route and `/mcp`. Reachable via a hand-built `Config` through the public
+  `bind()`; today's only obstacle is `ensure_token()` in another crate, whose own comment
+  already records that `Some("")` "passed auth only with an empty Bearer header". ROUND-104
+  HARDENED THE PROXY-SECRET GATE AGAINST EXACTLY THIS in the same file. One
+  `token_is_usable`, both gates; 2 tests (one requires exactly 3 occurrences — a helper
+  nobody calls is the same defect with better spelling); mutation-proven.
+  (3) VERIFIED LIVE for the gateway (a Windows exe cannot be run here, so the agent half is
+  static + tests): the deployed worker's OWN source mirror shows both guards, and the
+  add-path guard runs BEFORE `upsertDevice`.
+  (4) RECORDED, NOT YET FIXED — the agents' remaining findings, in their ranked order:
+  gateway F2 redirects are followed with NO re-validation and Cloudflare forwards
+  `Authorization`/`x-vale-auth` cross-host (no `redirect` option at reliability.ts:219);
+  gateway F3 `deviceFetch` never applies the suffix allowlist at dial time (`_env` unused)
+  though its docstring lists it as part of the stack; panel F1 the "loopback" branch trusts
+  a client-supplied Host header, not the peer socket, so ANY local process gets the
+  permanent token (needs a `ConnectInfo` check — feasibility unconfirmed on the hand-rolled
+  Tower service); panel F2 the one-time `?grant=` is not single-use over eventually-
+  consistent KV and leaves no device-side audit record; panel F3 `/panel/?grant=` is
+  unauthenticated, unrate-limited, and builds a fresh reqwest client per attempt, with a
+  LOOSER shape check (16..=128 hex) than the gateway's exact 32; panel F5 the host
+  allowlist is a family match (`devil.agent.saisi.online` passes).
+  Gates: gateway 791 + lint + typecheck + format + mirror, DEPLOYED; agent web:: 77 +
+  clippy -D warnings + fmt + xwin check; CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 88 (FOURTH read-failure-as-absence, in FOUR copies of one
 probe: `vale status` said "STOPPED" when it had never looked — and one of the copies was
 MINE, added two rounds earlier).
 Commit: 0a8c3d53. CI green.
