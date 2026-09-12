@@ -519,7 +519,52 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 67 (the console audit is COMPLETE — every finding in it
+Last updated: 2026-09-11 round 68 (the user asked whether models can be added/deleted in
+the page "like DSH" — and that reframing was right: the catalogue is now DATA, so models
+are added, deleted and disabled from the console with no rebuild).
+Commits: ba31d985, 5b626a82. Worker deployed; auth verified live.
+  (1) THE PREMISE, CORRECTED WITH FRESH EVIDENCE: DSH has NO add-model UI. Its models
+  are 20 `- id:` entries in `~/.dsh/settings.yaml`, and its source has no runtime
+  catalogue API at all. Its advantage is DATA vs CODE — edit a config file, no rebuild —
+  while the gateway's catalogue was `MODEL_REGISTRY` in `src/channels.ts`, so adding a
+  model meant editing source, rebuilding and redeploying. THAT was the gap, and closing
+  it is what "like DSH" actually means.
+  (2) WHAT SHIPPED: from the Models page an admin can ADD a model (channel from a
+  select, so the prefix cannot name a route that does not exist; `ownedBy` inherited;
+  `wire` accepted only on `og/` because `wireModelName` ignores it elsewhere and
+  accepting one would be a lie; egress/search as explicit switches), DELETE a custom
+  model, or DISABLE a built-in one. Built-ins are never deleted — six facets cannot be
+  re-derived by a form and a KV record deleted by accident could not be restored — and a
+  "Disabled models" card (only shown when something is off) brings them back.
+  (3) FIVE SITES, because "disabled" must mean disabled everywhere: `/v1/models`,
+  `/api/admin/public`, `setRoute`, `isModelUsable` (an EXISTING route to a just-disabled
+  model stops, or "retired" would mean "retired for new users"), and the per-channel
+  lists.
+  (4) I SHIPPED AN UNAUTHENTICATED ADMIN SURFACE AND CAUGHT IT BY TESTING THE LIVE
+  ROUTES. `GET /api/admin/models` answered **200** with no session while
+  `/api/admin/users` answered 401 — every other handler in that file opens with
+  `requireAdmin` and my four did not. Anyone could have added, deleted or disabled
+  models on production. Fixed and re-verified: all four now 401. WHAT EXPOSED IT WAS
+  COMPARING A NEW ROUTE AGAINST A SIBLING; my own routes "worked" perfectly.
+  (5) MY FIRST TEST HAD THE SAME BLIND SPOT AS THE BUG. It asserted the disabled model
+  leaves its channel's list — which ALSO passes when the bare→full id conversion is
+  removed, because then nothing matches and the whole list empties (round 65's defect,
+  exactly). The mutation did not bite, so the test gained the other half — the siblings
+  must still be listed — and now fails with "disabling one model also removed
+  minimax-m3". 7 checks.
+  (6) "ALL GATES GREEN" WAS FIVE OF SIX, AND CI SAID SO. The gateway has `lint`,
+  `typecheck`, `test` and `format:check`; I had been running three, and eslint caught a
+  useless escape in a regex. Rather than patch the escape I replaced the character class
+  with a looser shape test, because ids legitimately carry `:floor[1m]` and nested
+  slashes — an allow-list is a list to keep getting wrong. The prefix check against the
+  REAL route table is the one that matters. Run `npm run lint` too.
+  (7) STILL OPEN: the panel's five audit items (Ctrl+Shift+Y no-op, the rail's
+  mislabelled ✕, the Memory empty state contradicting its own +New, Logs/accelerators
+  split, the `--dsw-alias-*` rename) — all need a release to reach the device.
+  Gates: gateway 783 (was 776) + lint + typecheck + format; gateway-ui 11 + build +
+  deploy; token contract green; custom-property green; CI green on main; d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 67 (the console audit is COMPLETE — every finding in it
 has now been acted on; this round closed the last two, both on the Overview).
 Commit: 5b930a11. Worker deployed; both verified live.
   (1) "CHANNELS HEALTHY" LINKED TO `/keys`, A PAGE WITH NO CHANNEL INFORMATION. Counted
