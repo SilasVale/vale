@@ -519,7 +519,43 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 74 (Ctrl+Shift+Y did nothing AND round 61's PathView "jump
+Last updated: 2026-09-12 round 75 (the accent failed AA in BOTH directions in BOTH
+frontends, and nothing watched it — the ladder moved one rung, and a guard now measures
+it). Released 1.2.359; d1 on 1.2.359; audit CLEAN; keep-latest applied.
+  (1) THE VALUE, NOT THE INK. Light `--accent: #d9480f` was under AA TWICE:
+  `--accent-fg` on it (white) = 4.30 — the login button — and `--accent` as TEXT on
+  `--bg` = 4.12. The dark theme was 1.90 for the same button. Last round I fixed dark by
+  choosing an ink and said the light half could not be: MEASURED, white gives 4.30 base /
+  5.49 hover and black gives 4.88 base / 3.82 hover, so NO foreground passes both. The
+  value had to move.
+  (2) IT MOVED ONE RUNG DOWN A LADDER THE PALETTE ALREADY HAD: `#bf3a0a` was already the
+  hover. before accent #d9480f (4.30) · hover #bf3a0a · dark #a63308; after accent
+  #bf3a0a (5.49) · hover #a63308 · dark #8f2b06. That also fixes the accent-as-text
+  direction (4.12 -> 5.26), which I had not noticed until the matrix was computed. Every
+  console use of `--accent` is a border (no requirement), accent-coloured TEXT, or a
+  background under `--accent-fg` — all neutral-or-better darkened.
+  (3) VERIFIED LIVE both themes: light white on rgb(191,58,10) = 5.49 PASS; dark
+  rgb(43,26,9) on rgb(255,169,77) = 8.80 PASS. And ON THE DEVICE (1.2.359): the panel's
+  `--accent` is #bf3a0a with `--accent-fg` #ffffff, ratio 5.49, pass.
+  (4) THE GUARD: `token-contract-check.mjs` now reads the tokens the two frontends
+  actually declare, per theme, and requires `--accent-fg` on `--accent` AND `--accent`
+  as text on `--bg` to clear 4.5. A MISSING token is a failure too — an absent
+  `--accent-fg` silently inherits, which is exactly how a 1.90:1 button ships.
+  Mutation-proven by reverting the value: it fails with the historical numbers named.
+  (5) MY FIRST VERSION OF THE GUARD COULD NOT READ ITS OWN INPUT. It called
+  `parseColour` from the probe library, which is built for `getComputedStyle` output and
+  reads DIGIT RUNS — so `#ffffff` has no digits and parses to null, and every case
+  reported "could not be measured". I had made UNMEASURABLE A FAILURE rather than a skip,
+  which is the only reason it did not pass while measuring nothing. The resolver handles
+  hex now.
+  (6) STILL OPEN: the landing page's `--ds-font-family`/`--ds-transition-duration` hold
+  other frontends' names with different values, outside the contract (which compares
+  console vs panel only); Logs is panel-only while the accelerators are desktop-only.
+  Gates: panel 524 (60 files) + build; console 788 + build + deploy; custom-property
+  green; token contract green (with the new assertion); CI + release.yml green; release
+  audit CLEAN; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 74 (Ctrl+Shift+Y did nothing AND round 61's PathView "jump
 to step" fix was inert — three copies of one state, none authoritative). Released
 1.2.358; d1 on 1.2.358; audit CLEAN; keep-latest applied.
   (1) THE DEFECT: `sessionViews` existed in THREE places (App.tsx:82, DesktopShell:179,
