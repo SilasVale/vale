@@ -515,7 +515,40 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 54 (MY OWN MOCKS invented two bugs in one session —
+Last updated: 2026-09-11 round 55 (the third instance of "a skip read as a pass",
+and this one was MINE — with the defect WRITTEN DOWN in its own output and left
+there). Commit: 22ad3289. CI green.
+  (1) `panel-render-audit.mjs` needs a Playwright runtime. Where there is none it
+  emits its harness — deliberate, "a check that can only run in one environment
+  quietly stops running" — but it exited 0, and its message ADMITTED the
+  consequence: "It also exits 0 here, so a caller watching only the exit code reads
+  this skip as a pass." WRITING A DEFECT DOWN IS NOT FIXING IT: that sentence read as
+  a caveat, and survived every round that read past it — including round 46, where
+  the same disease was fixed one file over.
+  (2) THIS IS THE THIRD INSTANCE, which is why the convention is now explicit rather
+  than local: round 33 "a check that reads nothing must not report success"; round 46
+  a harness that could not tell an unmocked request from an empty page; round 55 this.
+    0  the audit RAN and found nothing
+    1  the audit RAN and found failures
+    2  the audit DID NOT RUN
+  The exit code is the only channel a caller is guaranteed to read, so 2 is not 0,
+  and the skip says "EXIT 2: THE AUDIT DID NOT RUN — this is a SKIP, not a pass".
+  (3) `scripts/test/panel-audit-skip-check.mjs` (3 checks, in CI beside the
+  contrast-probe checks) asserts the CODE, not the prose: it spawns the audit with
+  `VALE_BROWSER_HELPER` unset, requires exit 2, requires the words, and requires the
+  convention to be documented where the codes are set so the next person adding an
+  exit path has something to follow. Mutation-proven: reverting to `exit(0)` fails
+  all three, naming the consequence. The real script reports exit=2.
+  (4) NOT DONE, deliberately: this does not make the audit RUN in CI — CI has no
+  Playwright runtime, so it would exit 2 there every time. The point is that a caller
+  can now TELL, which is the difference between a skipped check and a passing one.
+  (5) STILL OPEN: the panel's governance-pill visual prominence (a taste call, not a
+  defect — the controls DO communicate state, checked in round 54), and the
+  `--dsw-alias-*` namespace rename on the landing page.
+  Gates: panel-audit-skip 3 (new); contrast-probe 11; model-drift 6; release-audit 9;
+  token contract green; CI green on main.
+
+Previous round: 2026-09-11 round 54 (MY OWN MOCKS invented two bugs in one session —
 so the console's tests now check their model of the server against the server).
 Commit: f610a0a7. CI green.
   (1) THE MISTAKES. Hand-writing browser mocks I guessed `/api/users` for the user
