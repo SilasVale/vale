@@ -488,7 +488,53 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 26 (`/api/logs` got its first consumer; then a
+Last updated: 2026-09-11 round 27 (the trim disclosure, told ONCE and told
+correctly — and the live view that was structurally unable to tell it). Commit:
+828f0ce2, plus 1.2.331.
+  (1) MY ROUND-23 SENTENCE WAS FALSE BY AN ORDER OF MAGNITUDE, and a scout found
+  it by reading the code rather than the log. The archive told the operator "the
+  device keeps roughly the last 2000 lines of a closed session." That is NOT what
+  `trim_file` does: it DRAINS EVERYTHING BEFORE THE LAST `command/start` — a
+  session that ran commands keeps only its most recent one onward — and the
+  2000-line cap applies only if that window is STILL over it. The code's own test
+  asserts the drain (`!content.contains("first-cmd")`), and round 23's own d1
+  evidence makes it concrete: `first_seq=34 events=26` is 33 events discarded and
+  26 surviving, while the operator was told ~2000 lines were kept.
+  (2) AND THE LIVE VIEW COULD NOT HAVE CORRECTED IT, because it was never given
+  the fact. `useSessionEventsWithState` has returned `firstSeq` since round 23;
+  the Archive disclosed the trim from it; and `App` built the command slice as
+  `{ cards, events }` — dropping the field ONE LINE above the mounts — while
+  `TrajectoryView`'s own comment stated the obligation ("the view must not present
+  such a trail as complete") that the wiring made UNSATISFIABLE. That is a new
+  entry in this log's family: not a comment that describes the code wrongly, but a
+  comment that states a requirement the DATA FLOW cannot meet. It reads as
+  handled, so nobody looks.
+  The fix puts the notice in `TrajectoryView` and makes `firstSeq` a REQUIRED
+  member of the `CommandEvents` slice, so every mount is covered by construction
+  and a future one cannot forget. The Archive's DUPLICATE notice is deleted rather
+  than kept: one implementation, one wording, no chance of the two drifting — this
+  repo's own "two implementations of one read" defect, avoided rather than
+  repeated.
+  MAKING IT REQUIRED WAS THE POINT and it paid immediately: the type surfaced
+  every producer and fixture that had been silently omitting the field, INCLUDING
+  the `App` construction the scout had identified by reading. Absent still means
+  "an older agent that does not report it", which is NOT "not trimmed", so the
+  view claims nothing in that case instead of claiming completeness. Mutation-
+  proven: disabling the notice fails BOTH the live-view and archive tests by name.
+  (3) RELEASED 1.2.331. CI and the release workflow green on the tag; keep-latest
+  left ONE release and ONE tag; the dual-builder audit reported the STRONGER WARN
+  verdict for the SEVENTH consecutive release.
+  (4) STILL OPEN from the same scout, with evidence, unchanged: `evidence.rs` and
+  four `runs.rs` readers still `read_to_string` while `jsonl.rs`'s header claims
+  "every append-only, line-oriented file in this crate shares" the crash-safety
+  rules; `useOperationRuns.ts` claims the session route "carries no `run_id` at
+  all" and it does, so the panel's trail reader drops the attribution already on
+  the wire; and `memory_search` silently ignores `tag` while `MemoryPage.tsx`
+  says round 161 fixed exactly that.
+  Gates: panel 483 (was 481) + build; agent 570 default / 621 feat-gated, clippy
+  -D warnings clean BOTH configs, fmt clean; gateway 764 + format.
+
+Previous round: 2026-09-11 round 26 (`/api/logs` got its first consumer; then a
 scout proved the console ships a browser tool family that CANNOT work — verified
 against the bundle the device installs — and it was fixed on the LIVE worker).
 Commits: 49563387 (logs) + da788294 (browser contract), plus 1.2.330.
