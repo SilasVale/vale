@@ -515,7 +515,52 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 42 (user asked to redesign both frontends; started
+Last updated: 2026-09-11 round 43 (still the frontend redesign, still the axis that
+can be MEASURED: last round the two surfaces disagreed on token VALUES, this round
+on DISCIPLINE — and the panel was the one that was wrong). Commit: 4bcd32bb. NO
+RELEASE: the change is proven rendering-neutral, so there is nothing to ship.
+  (1) THE PANEL'S COMPONENT CSS CARRIED 38 DEAD FALLBACKS. `var(--accent, #4f7cff)`
+  can never apply — `--accent` is always defined — so it is not a safety net but a
+  DESCRIPTION OF A DESIGN THE PANEL NO LONGER HAS. Together the 38 spelled out an
+  entire abandoned palette: a BLUE accent (#4f7cff/#4f6bed/rgba(79,124,255,0.2))
+  where the panel's accent is #d9480f, a darker grey family (#1c1e22/#23262c/
+  #2a2d34) than the zinc scale, plus #4caf50/#d97706/#111/#333/#666/#999/#eee.
+  THE CONSOLE HAS ZERO FALLBACKS OF ANY KIND, so this was a divergence too.
+  (2) VERIFIED DEAD, NOT ASSUMED. All 38 name tokens `tokens.css` declares, with no
+  conditional or scope-limited definitions. A fallback on a variable the system does
+  NOT own is a different thing and is deliberately NOT reported — that is how a
+  caller defaults a variable someone else defines.
+  (3) THE REMOVAL IS PROVEN RENDERING-NEUTRAL RATHER THAN ARGUED: the previously
+  built `panel.css` with its fallbacks mechanically stripped is BYTE-IDENTICAL to
+  the newly built one. THAT IS ALSO WHY THERE IS NO RELEASE. The panel is compiled
+  into the exe, so shipping it means minting a version — for a diff that cannot
+  alter a single computed value. It goes with the next real release; the tracked
+  artifact and `panel-react/src` are both updated so `build.rs`'s staleness gate
+  is satisfied.
+  (4) MY OWN CHECK HAD THE BUG IT EXISTS TO CATCH, and it is the sharpest kind. I
+  inserted the new block ABOVE `let failures = 0`, so on a CLEAN tree the line was
+  never reached and the check PASSED, while on a tree WITH a defect it crashed on a
+  ReferenceError instead of reporting. A gate that only breaks when it has something
+  to say — whose exit code is non-zero either way — is invisible to CI, and the
+  non-zero exit is exactly what would have hidden it. Found by running the mutation
+  and READING THE OUTPUT instead of trusting the exit code. Its failure summary also
+  named only one of the two causes it now covers, which would send a reader hunting
+  a value mismatch that is not there.
+  (5) THE SHAPE WORTH NAMING, because it recurs: fixing a thing exposes the same
+  thing one layer over. Round 42 aligned the console's chrome and left its body;
+  round 43 removed the panel's dead fallbacks and found its own checker was dead
+  code in the same way — an assertion that cannot run is the fallback that cannot
+  apply. Both were caught by making the check and then MUTATING it.
+  (6) STILL TO DECIDE, unchanged: the SUBJECTIVE half of the redesign — layout,
+  density, navigation, whether the console's five views are the right five. Two
+  rounds have now improved the objective half without touching a single page, and
+  that is deliberate: there is no test to appeal to for the rest, so it wants the
+  user's direction rather than my guess.
+  Gates: token contract green (both frontends, both modes, no dead fallbacks);
+  agent 583 default, fmt clean, panel 506 + build; gateway 766; gateway-ui 1.
+  CI green on main including the extended check.
+
+Previous round: 2026-09-11 round 42 (user asked to redesign both frontends; started
 with the half that is MEASURABLE — the two surfaces disagreed on the values of
 their shared design tokens — and it turned out I could make it worse by doing half
 of it). Commits: afb1b721, eb6d9b6c. Deployed to the live worker and verified.
