@@ -515,7 +515,49 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 53 (the console had TWO pages answering "which
+Last updated: 2026-09-11 round 54 (MY OWN MOCKS invented two bugs in one session —
+so the console's tests now check their model of the server against the server).
+Commit: f610a0a7. CI green.
+  (1) THE MISTAKES. Hand-writing browser mocks I guessed `/api/users` for the user
+  list; the real path is `/api/admin/users` and `/api/users` is a 404. The page
+  rendered an EMPTY card and I spent time reading it as a product defect when only
+  my mock was wrong. Earlier the same habit produced a doubled `https://https://`
+  base URL (round 52). Both times the mock — the test's model of the server — was
+  the broken thing, and nothing checked the model.
+  (2) WHY THE SUITE WAS BLIND: every UI test MOCKS `fetch`, so a path no worker route
+  answers produces a 404 the tests feed into an empty view. The page renders blank,
+  the suite stays GREEN, and the defect exists only in production.
+  (3) THE CHECK: `gateway/ui/test/client-paths.test.mjs` reads the client's paths
+  from `api/client.ts`'s `request(...)` calls and the worker's from its route
+  declarations, resolving `${BASE}` from their own constants. A hardcoded list on
+  either side would be a third copy of the thing being checked.
+  (4) IT HAD TO LEARN FIVE DECLARATION STYLES, one per failure: `add("GET",
+  \`${BASE}/x\`)`, `route(ctx, "POST", "/api/x")`, inline `m === "GET" && p === ...`,
+  bare-constant `add("GET", ME_BASE, ...)`, and index.ts's method-less
+  `path === "/api/health"`. Missing one would silently shrink the route set and turn
+  this into a comparison against a list that is too small — the very failure it
+  exists to catch, one level up. Regex matchers reduce to a prefix; query strings are
+  stripped. It asserts it found >= 15 routes AND >= 15 client paths, because a
+  comparison over zero routes passes for ever.
+  (5) MUTATION-PROVEN WITH MY OWN MISTAKE: `getUsers` back to `/api/users` fails with
+  "1 path(s) no worker route answers … these would 404 in production with a green
+  suite".
+  (6) AND THE HARNESS NOW SAYS WHEN IT IS THE PROBLEM: `devices-render-smoke.mjs`
+  used to answer 404 for unmocked paths and say nothing more, so "the app rendered
+  nothing" and "I did not mock that" were indistinguishable. It records every
+  unmocked request and FAILS, naming them. Mutation-proven by deleting one route.
+  (7) ALSO CHECKED AND FOUND GOOD, so not changed: the panel's governance controls
+  communicate STATE properly — `#approval-arm` changes label ("Ask before each
+  command" <-> "Asking first"), dot (`data-state`) AND background, with
+  `aria-pressed`; `SessionControl` has the same shape. My earlier note about their
+  "low emphasis" was about visual weight, which is taste, not a defect. The console's
+  Keys view renders correctly; Users was the mock's fault, now impossible to misread.
+  (8) STILL OPEN: the panel's governance-pill visual prominence (a taste call), the
+  `--dsw-alias-*` namespace rename on the landing page.
+  Gates: gateway-ui 7 (was 5) + both render smokes; gateway 772 + format; token
+  contract green; CI green on main.
+
+Previous round: 2026-09-11 round 53 (the console had TWO pages answering "which
 model?" — and the overlap was MINE, created when I added the Models page two rounds
 earlier; this round gives each page one job and makes the nav say so).
 Commit: a58f301d. Worker deployed twice (the page, then its copy).
