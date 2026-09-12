@@ -937,7 +937,10 @@ function stageDesktopShell(installDir: string, suffix: "" | ".new"): void {
 }
 
 function svc(action) {
-  sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
+  // RETURN the status. It used to be discarded, which is why `stop` printed "stopped"
+  // and exited 0 for a missing task or an access-denied, and why `start`/`restart` were
+  // silent either way. `autostart` already checks; this is the same pattern.
+  return sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
 }
 
 // Shared tunnel bootstrap: login (token or interactive) → create tunnel →
@@ -1505,7 +1508,13 @@ const commands = {
   },
 
   stop() {
-    svc("End");
+    const r = svc("End");
+    if (r && r.status !== 0) {
+      console.error(
+        `vale stop: schtasks /End failed (status ${r.status}) -- the agent may still be running`,
+      );
+      process.exit(1);
+    }
     console.log(
       "stopped -- revives via 'vale start' or the 5-min watchdog ('vale autostart off' opts out of autostart)",
     );
@@ -1566,7 +1575,7 @@ const commands = {
     if (failed) process.exit(1);
   },
 
-  update() {
+  async update() {
     // npm audit #10: no mutual exclusion — two updates (or setup racing a
     // swap) interleave Copy-Item on *.new, leaving a half-written exe "ok".
     // setup REMOVES the marker; update now CREATES it (refuse if <10 min
@@ -1935,7 +1944,38 @@ const commands = {
       );
       process.exit(1);
     }
-    console.log("update: swap launched (connection drops, reconnect in ~10s)");
+    // ASK THE DEVICE, DO NOT TRUST THE HANDOFF. `ReturnValue=0` means a process was
+    // created; every decision that matters (the fail-closed migration gate, the 12x
+    // copy retry, the task restart) happens after, in a WmiPrvSE-parented script whose
+    // exit code nobody reads — so a swap that fails one second later looked identical
+    // to one that worked. `rollback` already solves this by reading the release marker
+    // back; `update` reported the HANDOFF instead and this is the only reason the two
+    // commands disagreed about whether an update took.
+    //
+    // The read is a FILE, not the network, so the dropped connection does not matter.
+    // A successful swap finishes in ~10s; the bound only elapses on failure, and it is
+    // the same bound `rollback` uses.
+    console.log("update: swap launched -- waiting for the device to confirm");
+    const markerFile = path.join(ETC_DIR, ".vale-release");
+    const check = await awaitReleaseMarker({
+      want: toVersion,
+      timeoutMs: 90_000,
+      intervalMs: 2_000,
+      read: () => fs.readFileSync(markerFile, "utf8"),
+      sleep: (ms) => new Promise((r) => setTimeout(r, ms)),
+      now: () => Date.now(),
+    });
+    const verdict = releaseMarkerVerdict({ ...check, want: toVersion });
+    if (verdict.writePin) {
+      console.log(
+        `update: ${fromVersion || "?"} -> ${toVersion} COMPLETE (the device reported the new release)`,
+      );
+    } else {
+      // Not a pin decision here — `update` never writes one — but the same verdict
+      // logic answers "did it take", which is the question the operator asked.
+      console.error(verdict.message);
+      process.exit(1);
+    }
   },
 
   // `vale rollback <x.y.z> | --clear` — pin the device to a CDN-retained
@@ -2223,11 +2263,26 @@ const commands = {
   },
 
   run(args) {
+    // EXE_DST is always truthy, so the old `EXE_DST || EXE_SRC` was dead code and there
+    // was no existence check: ENOENT yields `status: null`, and `?? 0` reported that as
+    // a clean run. The banner printed either way.
+    if (!fs.existsSync(EXE_DST)) {
+      console.error(
+        `vale run: agent binary not found at ${EXE_DST} -- run 'vale setup' first`,
+      );
+      process.exit(1);
+    }
     console.log("running vale-agent (foreground, Ctrl+C to stop)");
-    const r = spawnSync(EXE_DST || EXE_SRC, args.length ? args : [], {
+    const r = spawnSync(EXE_DST, args.length ? args : [], {
       stdio: "inherit",
     });
-    process.exitCode = r.status ?? 0;
+    if (r.error || r.status === null) {
+      console.error(
+        `vale run: could not start the agent (${r.error ? r.error.message : "no exit status"})`,
+      );
+      process.exit(1);
+    }
+    process.exitCode = r.status;
   },
 
   // C2: cloudflared is a boxed, Vale-supervised component — operators never
