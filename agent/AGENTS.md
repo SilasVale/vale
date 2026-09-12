@@ -519,7 +519,47 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 90 (second finding from the SSRF subagent audit: the
+Last updated: 2026-09-12 round 91 (two more panel-auth findings: the grant shape check
+contradicted the sentence directly above it, and a redemption left NO device-side trace —
+plus a FEASIBILITY ANSWER for the remaining HIGH one).
+Commit: 50c99b4d. CI green.
+  (1) THE GRANT WIDTH IS THE GATEWAY'S CONTRACT, NOT A WINDOW. `plausible_grant` accepted
+  `16..=128` hex "for forward-compatibility", contradicting its own comment ("the gateway
+  mints 32 lowercase hex chars ... anything else is a probe and must not cost a redeem
+  round-trip") — a 16-hex probe DID cost one, on an unauthenticated, unrate-limited route
+  that builds a FRESH reqwest client (a new TLS handshake) per attempt. And
+  `is_ascii_hexdigit()` accepted UPPERCASE, which the gateway's gate
+  (`/^[0-9a-f]{32}$/`, no `i` flag, store/grants.ts:59) rejects outright. It requires
+  exactly 32 lowercase hex now, and `panel_grant_shape_matches_the_gateway` PINS THE PAIR so
+  they cannot drift: agent-looser costs a round-trip per probe, agent-tighter costs codes
+  that never redeem.
+  (2) BOTH EXISTING TESTS ASSERTED THE DEFECT — `plausible_grant(&"a".repeat(16))` as
+  "floor accepted", an uppercase 32 as "uppercase hex ok". Corrected, not deleted: the same
+  assertions now pin the real contract. MUTATION-PROVEN (window restored -> 75/3).
+  (3) A SUCCESSFUL REDEMPTION LEFT NO DEVICE-SIDE TRACE. `redeem_panel_grant` returned a
+  bool and logged NOTHING, and the grant is the credential an attacker would rather STEAL
+  than forge — redeemed by whoever holds the URL, unauthenticated, with single-use only
+  best-effort over eventually-consistent KV. Attempt and outcome are logged now, `warn` on
+  success with the consequence named. The grant itself is NOT logged (a live credential;
+  logs outlive the gateway's delete), only an 8-char prefix that correlates without being
+  replayable.
+  (4) FEASIBILITY ANSWERED FOR THE REMAINING HIGH ONE (panel F1, the "loopback" branch
+  trusting a client-supplied Host header instead of the peer socket): the panel is a TOWER
+  SERVICE, so `ConnectInfo` is not an extractor — but `axum::serve(...,
+  app.into_make_service_with_connect_info::<SocketAddr>())` injects it as a REQUEST
+  EXTENSION, and a Tower service CAN read `req.extensions()`. So the check is reachable and
+  F1 is fixable; it touches `src/mcp/server.rs`'s serve call, which is the most critical
+  path in the agent and cannot be verified by running the exe here — it needs a release to
+  confirm on-device, so it is next round's work rather than a rushed one.
+  (5) STILL OPEN: panel F1 (above); gateway F3 `deviceFetch` never applies the suffix
+  allowlist at dial time (`_env` unused) though its docstring lists it as part of the stack;
+  panel F2's other half — the grant is not single-use over eventually-consistent KV (the
+  fix pattern already exists in this repo: the single-flight claim keys `regclaim2:` /
+  `regclaim:`); panel F5 the host allowlist is a family match
+  (`devil.agent.saisi.online` passes).
+  Gates: agent web:: 78 + clippy -D warnings + fmt + xwin check; CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 90 (second finding from the SSRF subagent audit: the
 device dial followed redirects carrying the device's token, and the guard only ever saw
 the first URL).
 Commit: e46ec7e5 (DEPLOYED, verified live). CI green.
