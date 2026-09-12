@@ -519,7 +519,55 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 60 (I went hunting a "two lists that must agree"
+Last updated: 2026-09-11 round 61 (the first MULTI-AGENT round in a while — two audit
+subagents, one per frontend, as the objective asks — and the console audit's top
+finding was a logged-in NON-ADMIN being signed out by their own landing page).
+Commits: 497ee5dd, 2fdf9814, ba56babc. Worker deployed; three fixes verified live.
+  (1) DANGLING `var()` SILENTLY DELETES ITS DECLARATION. `color: var(--x)` with `--x`
+  undefined makes the declaration INVALID, so the property is DROPPED and the element
+  inherits — no error, no log, the page renders, just not the rule. The Models page
+  named THREE tokens that exist in the PANEL's set and not the console's
+  (`--accent-soft`, `--accent-on-soft`, `--danger`), so the AMD lane had NO stripe and
+  the current chip was not highlighted. EVERY CONTRAST SWEEP STILL READ 0/AA: a
+  dropped `color` leaves an INHERITED colour, which measures fine. A probe cannot see
+  a declaration that never applied, and the token contract could not either — it
+  compares names BOTH sides declare and these were declared by neither.
+  `scripts/custom-prop-check.mjs` (in CI) now requires every custom property USED in a
+  frontend to be DEFINED in it: console 50/47, panel 82/72, landing 28/19, zero
+  dangling. Mutation-proven, and it exits 1 rather than warning.
+  (2) AND THE TOKEN CONTRACT CAUGHT MY OWN FIX: I defined `--accent-on-soft` with a
+  value I picked (#a63308); the contract failed with "console #a63308 vs panel
+  #9c3a0a" because that name is shared and round 42's rule is that the panel's value
+  wins. Taking it was also better — 6.20 on #ffefe5 against 6.04. A shared name
+  meaning two things is exactly what that check exists to prevent.
+  (3) THE SEVERE ONE: a logged-in NON-ADMIN was signed out by the Overview's load.
+  It probed `/api/plugins/status` for every role; that endpoint answered 401 "Not
+  logged in" to an authenticated non-admin, and the client treats ANY 401 as a dead
+  session. PROVEN LIVE before fixing: `/api/me -> 200`, `/api/devices -> 403`,
+  `/api/health -> 200`, `/api/plugins/status -> 401` => `isLogin: true`. Fixed on BOTH
+  sides: the worker now separates `!user -> 401` from `role !== admin -> 403` (as
+  `auth.ts` already did), and the console puts every admin-only read behind the one
+  guard that already existed. Verified: no plugins/status request at all, stays on
+  Overview.
+  (4) THE PANEL AUDIT'S TOP FINDING: `onJumpToStep` was declared in `PathView.tsx` and
+  passed by NEITHER mount, so every "show this step in the timeline" button was inert
+  in both shells — and the component test passed because it INJECTS the handler. The
+  component worked; the wiring did not; no test could see the difference. Both mounts
+  wired; the tooltip now says what the control does.
+  (5) THE REST OF BOTH AUDITS IS RECORDED, NOT LOST. Console: false zeros/empties for
+  failed reads plus `/devices` links that dead-end for non-admins; "Restore default
+  (ds)" naming a default the server contradicts; `Users` rendering "not set" for a
+  failed read; the `none` Models card that can only ever show 0; "Clear all" revoking
+  without confirmation and toasting the opposite; the 8-key status shown twice; four
+  strings bypassing i18n. Panel: DesktopShell shadowing App's sessionViews so
+  Ctrl+Shift+Y does nothing; Playwright Stop with no confirm; the rail's ✕ mislabelled
+  "Archive session" with no undo; a Playwright security claim the agent removed;
+  ConnectCard showing the frozen Cargo version; the Memory empty state contradicting
+  its own +New; Logs panel-only / accelerators desktop-only.
+  Gates: gateway 775 + format; gateway-ui 10 + build + deploy; panel 516 + build;
+  custom-prop green; token contract green; CI green on main.
+
+Previous round: 2026-09-11 round 60 (I went hunting a "two lists that must agree"
 defect, found the code CORRECT twice, and closed the structural gap that keeps it
 correct: the rail has a compile-time guard, the two SHELLS had none).
 Commit: f8917360. CI green.
