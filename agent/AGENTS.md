@@ -515,7 +515,47 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 55 (the third instance of "a skip read as a pass",
+Last updated: 2026-09-11 round 56 (the FOURTH instance of one disease, and the worst:
+a CI gate that runs on EVERY PUSH passed while testing nothing — I stopped fixing
+instances and audited the whole repo for the pattern). Commit: 22494a05. CI green.
+  (1) THE AUDIT FIRST, and it is part of the result: no `continue-on-error` anywhere
+  in `.github/workflows/`; the only conditional steps are `if: failure()` (correct)
+  and one `workflow_dispatch`-gated job (by design); ZERO test skips
+  (`.skip(`/`it.skip`/`#[ignore]`) in agent, gateway, panel or scripts. The pattern
+  was not lurking in the places I expected.
+  (2) IT WAS IN THE E2E GATE. CI runs, on every push:
+      node scripts/e2e/e2e.js --token "$TOKEN" --base http://127.0.0.1:18811 --only governance,runs
+  and the suite ended on `process.exit(failed.length ? 1 : 0)`. `--only` is a FILTER,
+  so a name that no longer exists made `want()` false for every section: nothing ran,
+  `failed` was empty, and it printed `== 0/0 passed ==` and exited 0. MEASURED before
+  the guard: `--only governance-typo,nonexistent` -> `== 0/0 passed ==`, exit 0. One
+  renamed section and the gate becomes a no-op that reports success.
+  (3) FOURTH INSTANCE OF ONE DISEASE: round 33 "a check that reads nothing must not
+  report success"; round 46 an unmocked request rendering as an empty page; round 47
+  an audit skip that exited 0; round 56 a gate that passes empty. Unlike the other
+  three, this one ran on every push.
+  (4) THREE FIXES, because one was not enough: `SECTIONS` is DECLARED and `--only` is
+  validated against it (unknown name -> exit 2, printing both the bad names and the
+  valid ones); ZERO CHECKS IS NOT A PASS (exit 2, convention now shared with
+  panel-render-audit.mjs: 0 ran+passed, 1 ran+failed, 2 DID NOT RUN); and `SECTIONS`
+  vs the `want()` call sites must be the SAME SET in BOTH directions, asserted
+  statically — a declared name with no dispatch is a ghost, and a `want('x')` not
+  declared can never be selected, so that section is dead and nothing said so.
+  (5) THE FIRST MUTATION DID NOT BITE AND THAT MATTERED: deleting the zero-check
+  guard left the test GREEN because guard 1 already rejected the bogus name, so guard
+  2 was untested and I had nearly recorded it as proven. Exercising it directly (a
+  valid name with no dispatch) shows it catching the run; removing it then reproduces
+  the original defect exactly, `== 0/0 passed ==` exit 0.
+  (6) `scripts/test/e2e-only-check.mjs` (5 checks, in CI) also asserts a VALID
+  `--only` still RUNS, so the guards cannot be satisfied by making everything exit 2:
+  against a closed port `--only governance,runs` exits 1 having executed a check
+  (`0/1 passed`, never `0/0`). The ghost drift is mutation-proven.
+  (7) STILL OPEN: the panel's governance-pill visual prominence (a taste call), and
+  the `--dsw-alias-*` namespace rename on the landing page.
+  Gates: e2e-only 5 (new); panel-audit-skip 3; contrast-probe 11; model-drift 6;
+  release-audit 9; token contract green; agent fmt clean; CI green on main.
+
+Previous round: 2026-09-11 round 55 (the third instance of "a skip read as a pass",
 and this one was MINE — with the defect WRITTEN DOWN in its own output and left
 there). Commit: 22ad3289. CI green.
   (1) `panel-render-audit.mjs` needs a Playwright runtime. Where there is none it
