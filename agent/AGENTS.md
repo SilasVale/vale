@@ -515,7 +515,56 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 48 (four rounds of contrast sweeps retyped an ad-hoc
+Last updated: 2026-09-11 round 49 (the user said they saw NO CHANGE on the console —
+and they were right, because almost everything I had done there was invisible; this
+round ships the first page that is NEW). Commit: eb9ee2b2. Worker deployed. d1 on
+1.2.354 and current.
+  (1) ANSWERING "WHAT IS ai.saisi.online?" WITH CLOUDFLARE, NOT WITH A GUESS. Custom
+  domains are bound in the DASHBOARD, not in the repo (`index/wrangler.jsonc` says
+  so outright), so the repo cannot answer it. The API can:
+    vale-gate -> api.saisi.online AND ai.saisi.online
+    vale-dist -> agent.saisi.online AND command.saisi.online
+  So `ai.saisi.online` is a SECOND DOMAIN ON THE SAME WORKER — same assets, same
+  deploy, and it is behind Cloudflare Access (302 to vale-saisi.cloudflareaccess.com,
+  which swallows even /assets/*). Nothing about it needs separate work.
+  (2) BUT THERE IS A THIRD FRONTEND NOBODY HAD OPENED: `agent.saisi.online` and
+  `command.saisi.online` serve a self-contained "Vale Agent" page from
+  `index/src/page.js` — 330 lines building one HTML string, NO framework and no
+  external CSS/JS, carrying its OWN token namespace (`--dsw-alias-*`, 66 uses,
+  "DSH-aligned"). So the product has THREE design token systems, not two. Untouched
+  and still open.
+  (3) THE ROUND'S DELIVERABLE, AND WHY IT TOOK THIS TO SEE IT: almost everything I
+  had done on the console was invisible by construction — aligned token VALUES,
+  contrast, dead-code removal. The login split was visible but only on the login
+  screen. A "redesign" that cannot be seen is not what was asked for.
+  (4) THE NEW PAGE IS MOSTLY DELETION OF AN OVERSIGHT: `/api/admin/public` returns
+  `ROUTE_INFO` — every channel with `prefix`, `backend`, `desc` and a `models` list
+  the server DERIVES from `MODEL_REGISTRY`, so it cannot drift from `/v1/models`.
+  The Routes page has ALWAYS fetched it and used exactly ONE field, `apiHost`. The
+  console showed a route SWITCHER and never the catalogue: you could pick a model
+  only if you already knew its name. `#/models` renders it — no model id typed in
+  the view, because a hand-maintained second copy is what `channels.ts` records as
+  the FIFTH drifted copy of the catalogue.
+  (5) DESIGN DECISIONS WORTH KEEPING: the channel's lane hue rides a LEFT BORDER,
+  not the text, so the colour stays vivid while the label keeps a readable ink; the
+  health badge has THREE states (up / down / NOT PROBED), because an unprobed
+  channel is not a down one and must not borrow either colour; and a catalogue that
+  could not be read SAYS SO, because an empty list claims the gateway advertises
+  nothing, which is a different fact.
+  (6) THE BUILD'S TYPE-CHECK CAUGHT TWO REAL ERRORS before the page was ever seen —
+  no `models` rail icon existed, and `PageHeader` takes props not children. The same
+  type-check that sat red for months in the Electron shell because nothing built it.
+  (7) VERIFIED: rendered against the real response shape (5 channels / 20 chips /
+  1 current / three-state health), screenshotted, and swept with the TESTED probe in
+  BOTH themes — 0 under AA across 36 rows. Deployed and the live bundle confirmed
+  against the local build. The gateway suite showed ONE 765/1 run; it was chased, not
+  assumed, and three consecutive re-runs are 766/0.
+  (8) STILL OPEN: the subjective half of the redesign — layout, density, navigation,
+  whether the FIVE views are the right five; and the third frontend in (2).
+  Gates: gateway 766 + format; gateway-ui 1 + render smoke; token contract green;
+  contrast-probe 11; CI green on main.
+
+Previous round: 2026-09-11 round 48 (four rounds of contrast sweeps retyped an ad-hoc
 snippet, and it was wrong twice — so the math is now ONE tested copy, and the
 correct implementation turned out to have been sitting inside another script the
 whole time). Commit: 9576e72d. NO RELEASE: tooling only, nothing a device runs.
