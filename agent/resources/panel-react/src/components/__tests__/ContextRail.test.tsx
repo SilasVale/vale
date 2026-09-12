@@ -21,7 +21,11 @@ const session = (over: Partial<Session> = {}): Session => ({
   closedAt: null,
   heldByHuman: false,
   approvalRequired: false,
-  pendingApproval: null, approvalGrants: [], goal: null, plan: [], ...over,
+  pendingApproval: null,
+  approvalGrants: [],
+  goal: null,
+  plan: [],
+  ...over,
 });
 
 const plugins = (over: Partial<Plugins> = {}): Plugins => ({
@@ -37,7 +41,9 @@ const plugins = (over: Partial<Plugins> = {}): Plugins => ({
   ...over,
 });
 
-const props = (over: Partial<React.ComponentProps<typeof ContextRail>> = {}) => ({
+const props = (
+  over: Partial<React.ComponentProps<typeof ContextRail>> = {},
+) => ({
   page: "terminal" as const,
   sessions: [session()],
   activeSid: "s1" as string | null,
@@ -49,7 +55,9 @@ const props = (over: Partial<React.ComponentProps<typeof ContextRail>> = {}) => 
 
 describe("ContextRail", () => {
   it("renders nothing on pages without a context", () => {
-    const { container } = render(<ContextRail {...props({ page: "browser" })} />);
+    const { container } = render(
+      <ContextRail {...props({ page: "browser" })} />,
+    );
     expect(container.textContent).toBe("");
   });
 
@@ -59,10 +67,17 @@ describe("ContextRail", () => {
         {...props({
           page: "plugins",
           plugins: plugins({
-            rows: [{
-              name: "memory", displayName: "Memory", description: "KB",
-              enabled: true, state: "success", stateLabel: "Loaded", toolCount: 6,
-            }],
+            rows: [
+              {
+                name: "memory",
+                displayName: "Memory",
+                description: "KB",
+                enabled: true,
+                state: "success",
+                stateLabel: "Loaded",
+                toolCount: 6,
+              },
+            ],
           }),
         })}
       />,
@@ -70,7 +85,11 @@ describe("ContextRail", () => {
     expect(screen.getByText("Plugins")).toBeTruthy();
     expect(screen.getByText("Memory")).toBeTruthy();
     expect(screen.getByText("Loaded")).toBeTruthy();
-    rerender(<ContextRail {...props({ page: "plugins", plugins: plugins({ specLoaded: false }) })} />);
+    rerender(
+      <ContextRail
+        {...props({ page: "plugins", plugins: plugins({ specLoaded: false }) })}
+      />,
+    );
     expect(screen.getByText("Inventory loading…")).toBeTruthy();
   });
 
@@ -84,7 +103,9 @@ describe("ContextRail", () => {
       ],
     });
     const { container } = render(<ContextRail {...p} />);
-    const labels = [...container.querySelectorAll(".side-row .side-label")].map((e) => e.textContent);
+    const labels = [...container.querySelectorAll(".side-row .side-label")].map(
+      (e) => e.textContent,
+    );
     expect(labels).toEqual(["new", "old", "dead"]);
     fireEvent.click(screen.getByText("new"));
     expect(p.onActivate).toHaveBeenCalledWith("new");
@@ -126,13 +147,42 @@ describe("ContextRail", () => {
     expect(screen.getByText("main")).toBeTruthy();
   });
 
-  it("archive hides the row; relTime renders", () => {
-    const p = props({ sessions: [session({ firstSeenAt: Date.now() - 30_000 }), session({ sid: "s2", label: "two", firstSeenAt: Date.now() - 5 * 60_000 })] });
+  it("hiding a row is reversible, counted, and named for what it does", () => {
+    const p = props({
+      sessions: [
+        session({ firstSeenAt: Date.now() - 30_000 }),
+        session({
+          sid: "s2",
+          label: "two",
+          firstSeenAt: Date.now() - 5 * 60_000,
+        }),
+      ],
+    });
     render(<ContextRail {...p} />);
     expect(screen.getByText("now")).toBeTruthy();
     expect(screen.getByText("5m")).toBeTruthy();
-    fireEvent.click(screen.getAllByLabelText("Archive session")[0]);
+
+    // THE ACCESSIBLE NAME IS THE ACTION'S NAME. This button hides a row from this
+    // list; it does not archive anything, and `aria-label` used to say "Archive
+    // session" while its own tooltip said "Hide from list" — a stronger claim,
+    // heard only by screen-reader users.
+    expect(screen.queryByLabelText("Archive session")).toBeNull();
+    fireEvent.click(screen.getAllByLabelText("Hide from list")[0]);
     expect(screen.queryByText("shell")).toBeNull();
     expect(screen.getByText("two")).toBeTruthy();
+
+    // THE HEADER COUNT MUST DESCRIBE THE LIST. It used `sessions.length` while the
+    // rows were filtered, so it kept counting the hidden one.
+    const count = document.querySelector(".side-count");
+    expect(count?.textContent).toBe("1");
+
+    // AND THERE IS A WAY BACK. The only mutation used to be `.add`, so a row hidden
+    // by accident was gone until reload — the "destructive with no undo" shape this
+    // project keeps finding.
+    const undo = screen.getByText("+1 hidden");
+    fireEvent.click(undo);
+    expect(screen.getByText("shell")).toBeTruthy();
+    expect(document.querySelector(".side-count")?.textContent).toBe("2");
+    expect(screen.queryByText("+1 hidden")).toBeNull();
   });
 });

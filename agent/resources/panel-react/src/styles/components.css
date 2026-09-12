@@ -196,6 +196,28 @@
   border-radius: 999px;
   padding: 1px 8px;
 }
+
+/* The way back from "Hide from list". Small and quiet — it reports state, it is not
+   a primary action — but always present once anything is hidden, because a hide
+   with no undo is how a session gets lost. */
+.side-unhide {
+  margin-left: 6px;
+  padding: 1px 6px;
+  border-radius: 999px;
+  /* THE SAME TOKEN PAIR AS .side-count BESIDE IT, for the same measured reason:
+     `--chrome-ink-dim` on `--surface-chip`, not `--muted`, which measured 4.40
+     there — just under AA. The three tokens I reached for first (`--border`,
+     `--text`, `--text-secondary`) are defined in NEITHER frontend, so every
+     declaration using them was silently DROPPED; `scripts/custom-prop-check.mjs`
+     caught it, which is exactly the failure it was written for two rounds ago. */
+  color: var(--chrome-ink-dim);
+  background: var(--surface-chip);
+  border: 1px solid var(--line);
+  font-size: 11px;
+  cursor: pointer;
+  white-space: nowrap;
+}
+.side-unhide:hover { color: var(--ink); }
 .side-list {
   flex: 1;
   min-height: 0;

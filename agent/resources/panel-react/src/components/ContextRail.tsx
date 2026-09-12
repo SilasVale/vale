@@ -21,7 +21,14 @@ function relTime(ts: number): string {
   return day < 7 ? `${day}d` : new Date(ts).toLocaleDateString();
 }
 
-export function ContextRail({ page, sessions, activeSid, onActivate, onNewSession, plugins }: {
+export function ContextRail({
+  page,
+  sessions,
+  activeSid,
+  onActivate,
+  onNewSession,
+  plugins,
+}: {
   page: Page;
   sessions: Session[];
   activeSid: string | null;
@@ -43,7 +50,8 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
   useEffect(() => {
     if (!menuOpen) return;
     const close = (e: MouseEvent) => {
-      if (menuRef.current && !menuRef.current.contains(e.target as Node)) setMenuOpen(false);
+      if (menuRef.current && !menuRef.current.contains(e.target as Node))
+        setMenuOpen(false);
     };
     document.addEventListener("mousedown", close);
     return () => document.removeEventListener("mousedown", close);
@@ -67,7 +75,9 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
     // ordering the data supports — the device sends no open time. It is stable
     // and it puts a session you just created on top, which is what the rail is
     // for; it is NOT "newest session first", and the label beside it says so.
-    .sort((a, b) => (a.closed === b.closed ? b.firstSeenAt - a.firstSeenAt : a.closed ? 1 : -1));
+    .sort((a, b) =>
+      a.closed === b.closed ? b.firstSeenAt - a.firstSeenAt : a.closed ? 1 : -1,
+    );
 
   if (page === "plugins") {
     return (
@@ -77,8 +87,12 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
           <span className="side-count">{plugins.rows.length}</span>
         </div>
         <div className="side-list">
-          {!plugins.specLoaded && <p className="side-empty">Inventory loading…</p>}
-          {plugins.specLoaded && plugins.rows.length === 0 && <p className="side-empty">No plugins</p>}
+          {!plugins.specLoaded && (
+            <p className="side-empty">Inventory loading…</p>
+          )}
+          {plugins.specLoaded && plugins.rows.length === 0 && (
+            <p className="side-empty">No plugins</p>
+          )}
           {plugins.rows.map((r) => (
             <div key={r.name} className="side-plug-row" title={r.description}>
               <span className="plug-dot" data-state={r.state} />
@@ -97,7 +111,19 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
     <>
       <div className="side-header">
         <h1 className="side-title">Sessions</h1>
-        <span className="side-count">{sessions.length}</span>
+        {/* The count of what is LISTED, not of what was loaded: `rows` is filtered
+            below, and using `sessions.length` here made the header disagree with the
+            list under it the moment anything was hidden. */}
+        <span className="side-count">{rows.length}</span>
+        {archived.size > 0 && (
+          <button
+            className="side-unhide"
+            title={`Show ${archived.size} hidden session${archived.size === 1 ? "" : "s"}`}
+            onClick={() => setArchived(new Set())}
+          >
+            +{archived.size} hidden
+          </button>
+        )}
         <div className="side-add-wrap" ref={menuRef}>
           <button
             className="side-add"
@@ -109,10 +135,42 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
           </button>
           {menuOpen && (
             <div className="side-menu" role="menu">
-              <button role="menuitem" onClick={() => { onNewSession("pty"); setMenuOpen(false); }}>Local shell</button>
-              <button role="menuitem" onClick={() => { onNewSession("ssh"); setMenuOpen(false); }}>SSH…</button>
-              <button role="menuitem" onClick={() => { onNewSession("serial"); setMenuOpen(false); }}>Serial…</button>
-              <button role="menuitem" onClick={() => { onNewSession("browser"); setMenuOpen(false); }}>Browser…</button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onNewSession("pty");
+                  setMenuOpen(false);
+                }}
+              >
+                Local shell
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onNewSession("ssh");
+                  setMenuOpen(false);
+                }}
+              >
+                SSH…
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onNewSession("serial");
+                  setMenuOpen(false);
+                }}
+              >
+                Serial…
+              </button>
+              <button
+                role="menuitem"
+                onClick={() => {
+                  onNewSession("browser");
+                  setMenuOpen(false);
+                }}
+              >
+                Browser…
+              </button>
             </div>
           )}
         </div>
@@ -126,7 +184,9 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
             tabIndex={0}
             title={s.sid}
             className={`side-row ${s.closed ? "closed" : ""} ${s.sid === activeSid ? "active" : ""}`}
-            onClick={() => { if (!s.closed) onActivate(s.sid); }}
+            onClick={() => {
+              if (!s.closed) onActivate(s.sid);
+            }}
             onKeyDown={(e) => {
               if ((e.key === "Enter" || e.key === " ") && !s.closed) {
                 e.preventDefault();
@@ -158,7 +218,10 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
                 which of the two this is; a bare "2h" beside a session name reads
                 as the session's age, and until this round that is exactly what it
                 claimed. */}
-            <span className="side-time" title="how long this panel has known about this session">
+            <span
+              className="side-time"
+              title="how long this panel has known about this session"
+            >
               {relTime(s.firstSeenAt)}
             </span>
             <span className="side-actions">
@@ -177,10 +240,14 @@ export function ContextRail({ page, sessions, activeSid, onActivate, onNewSessio
               <button
                 className="side-action archive"
                 title="Hide from list"
-                aria-label="Archive session"
+                aria-label="Hide from list"
                 onClick={(e) => {
                   e.stopPropagation();
-                  setArchived((prev) => { const next = new Set(prev); next.add(s.sid); return next; });
+                  setArchived((prev) => {
+                    const next = new Set(prev);
+                    next.add(s.sid);
+                    return next;
+                  });
                 }}
               >
                 <Icon name="close" size={12} />
