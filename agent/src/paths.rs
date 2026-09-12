@@ -251,7 +251,20 @@ pub fn shell_integration_dir() -> PathBuf {
 /// once the oldest release kept by the CDN last-5-per-minor policy is a
 /// layout-v2 build, this shim (marker check + move plan) can be removed.
 pub fn layout_marker_file() -> PathBuf {
-    etc_dir().join(".layout-v2")
+    marker_in(&install_dir())
+}
+
+/// The layout-v2 marker inside a GIVEN install root.
+///
+/// ONE expression, three uses. `layout_marker_file()` derives from the live
+/// install dir for callers that have no root in hand, while `migration_notes`
+/// takes its roots as ARGUMENTS (it is pure so tests can pin the plan without
+/// touching the process-global cached dirs) and therefore cannot call the
+/// accessor. That is a good reason to have two functions and no reason to have
+/// three copies of the literal: the marker WROTE here and was READ here, and a
+/// path that must agree in two places is a path that will eventually disagree.
+fn marker_in(install: &std::path::Path) -> PathBuf {
+    install.join("etc").join(".layout-v2")
 }
 
 /// Layout-v2 migration plan (ADR 0008): (old, new) pairs for every path
@@ -322,6 +335,72 @@ fn migration_moves(install: &std::path::Path, data: &std::path::Path) -> Vec<(Pa
     moves
 }
 
+/// Copy a file or a directory TREE, used when `rename` cannot be used.
+///
+/// Only the fallback for a cross-device move needs the recursion; a same-device
+/// move never reaches here.
+fn copy_tree(old: &std::path::Path, new: &std::path::Path) -> std::io::Result<()> {
+    let meta = std::fs::symlink_metadata(old)?;
+    if meta.is_dir() {
+        std::fs::create_dir_all(new)?;
+        for entry in std::fs::read_dir(old)? {
+            let entry = entry?;
+            copy_tree(&entry.path(), &new.join(entry.file_name()))?;
+        }
+        Ok(())
+    } else {
+        std::fs::copy(old, new).map(|_| ())
+    }
+}
+
+/// Move `old` to `new`, working ACROSS VOLUMES.
+///
+/// `std::fs::rename` is documented to fail when the two paths are on different
+/// mount points (`EXDEV`, "Invalid cross-device link"). That is not a corner case
+/// here: the layout-v2 migration moves the LOGS and `pwout` from InstallDir to
+/// DataDir, and on the project's own device those are `D:\Vale` and
+/// `C:\ProgramData\Vale` — two volumes. So every data-side move failed, the
+/// migration reported `INCOMPLETE (pending moves locked?)` on EVERY boot, and the
+/// marker was never written. The diagnosis was wrong too: nothing was locked; the
+/// rename simply cannot work between volumes, and the message sent a reader
+/// looking for a file lock that never existed.
+///
+/// The fallback is copy-then-remove, which is what every cross-device mover does.
+/// Only on rename failure, so a same-volume move keeps its atomicity.
+///
+/// PRECONDITION, and it is the caller's: `new`'s PARENT exists. `move_one` creates
+/// it before calling; this does not, so that a directory merge and a fresh move
+/// cannot disagree about who owns creation.
+fn move_path(old: &std::path::Path, new: &std::path::Path) -> bool {
+    if std::fs::rename(old, new).is_ok() {
+        return true;
+    }
+    // The target must not exist for a copy to be unambiguous — `move_one`'s
+    // callers decide that, and this only runs after rename failed, so clearing
+    // nothing here is deliberate: a partial copy is worse than a refused move.
+    if new.exists() {
+        return false;
+    }
+    if copy_tree(old, new).is_err() {
+        // Leave the source in place: a half-copied tree that also deleted its
+        // origin would lose data, and the next boot retries.
+        return false;
+    }
+    let removed = if old.is_dir() {
+        std::fs::remove_dir_all(old).is_ok()
+    } else {
+        std::fs::remove_file(old).is_ok()
+    };
+    if !removed {
+        // The COPY succeeded, so the data is safe at the new home; the leftover
+        // is a duplicate, not a loss. Report the move as done so the marker can
+        // be written — retrying forever over an undeletable leftover would keep
+        // the device permanently "INCOMPLETE".
+        return true;
+    }
+    true
+}
+
 fn move_one(old: &std::path::Path, new: &std::path::Path) -> bool {
     if !old.exists() {
         return false;
@@ -337,12 +416,12 @@ fn move_one(old: &std::path::Path, new: &std::path::Path) -> bool {
         if new.exists() {
             return false;
         }
-        return std::fs::rename(old, new).is_ok();
+        return move_path(old, new);
     }
     // Dirs: fast rename when the target is absent, else merge children one
     // level (a staged tree or a previous partial migration must never be
     // clobbered): move what's missing, keep what's there.
-    if !new.exists() && std::fs::rename(old, new).is_ok() {
+    if !new.exists() && move_path(old, new) {
         return true;
     }
     if new.exists() {
@@ -390,7 +469,7 @@ pub fn migrate_layout_v2() -> Vec<String> {
     }
     let install = install_dir();
     let data = data_dir();
-    if install.join("etc").join(".layout-v2").exists() {
+    if marker_in(&install).exists() {
         notes.push("layout v2 marker present (migration done)".into());
         return notes;
     }
@@ -406,11 +485,19 @@ pub fn migrate_layout_v2() -> Vec<String> {
     // uninstall, but a MISSING new home — config.yaml especially — must
     // never be accepted silently).
     if migration_pending(&install, &data) {
+        // NOT "(pending moves locked?)" — that guess was WRONG and it sent a
+        // reader after a file lock that never existed. The moves it describes
+        // cross volumes (InstallDir -> DataDir), and before the fallback landed
+        // they could not succeed at all. Name the condition, and the two things
+        // that actually cause it.
         notes.push(
-            "layout v2 migration INCOMPLETE (pending moves locked?) — retrying next boot".into(),
+            "layout v2 migration INCOMPLETE — some paths are still at their old \
+             home; a move either could not be written (permissions/space) or its \
+             target already exists. Retrying next boot."
+                .into(),
         );
     } else {
-        let marker = install.join("etc").join(".layout-v2");
+        let marker = marker_in(&install);
         // BOOT-PATH RULE (SOLID R110): this function is called FIRST in
         // `main()`, BEFORE tracing is initialized — a panic here is a device
         // that never starts and leaves no log at all (the 1.2.223 dark-device
@@ -518,6 +605,80 @@ mod resolution_tests {
             return;
         }
         assert_eq!(compute_data_dir(), compute_install_dir());
+    }
+
+    /// A MOVE ACROSS VOLUMES MUST WORK — and on the project's own device it must.
+    ///
+    /// The layout-v2 migration moves the logs and `pwout` from InstallDir to
+    /// DataDir. On d1 those are `D:\Vale` and `C:\ProgramData\Vale`: DIFFERENT
+    /// VOLUMES. `std::fs::rename` is documented to fail across mount points, so
+    /// every data-side move failed, `migration_pending` stayed true forever, the
+    /// marker was never written, and every boot announced
+    /// "INCOMPLETE (pending moves locked?)" — blaming a file lock that was never
+    /// there and sending a reader after it.
+    ///
+    /// THE TEST USES A REAL CROSS-DEVICE RENAME. `/tmp` is ext4 and `/dev/shm` is
+    /// tmpfs on the development box, so `rename` between them fails with EXDEV
+    /// for the same reason it does on the device. That makes this behavioural
+    /// rather than structural — it exercises the fallback the way production does.
+    ///
+    /// LABELLED LIMIT: it is `cfg(target_os = "linux")` because it needs a second
+    /// filesystem that exists on this box, while the product ships on Windows.
+    /// The FALLBACK is platform-neutral and the migration's own tests cover the
+    /// same-volume path on every platform.
+    #[cfg(target_os = "linux")]
+    #[test]
+    fn a_move_across_volumes_actually_moves() {
+        let src_root =
+            std::path::Path::new("/tmp").join(format!("vale-xdev-{}", std::process::id()));
+        let dst_root =
+            std::path::Path::new("/dev/shm").join(format!("vale-xdev-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&src_root);
+        let _ = std::fs::remove_dir_all(&dst_root);
+        std::fs::create_dir_all(src_root.join("tree/inner")).expect("mkdir");
+        std::fs::write(src_root.join("tree/top.txt"), b"top").expect("write");
+        std::fs::write(src_root.join("tree/inner/deep.txt"), b"deep").expect("write");
+
+        // The premise: a plain rename across these two paths really does fail,
+        // so the test would be vacuous if it did not.
+        assert!(
+            std::fs::rename(src_root.join("tree/top.txt"), dst_root.join("probe.txt")).is_err(),
+            "the two paths are on the same filesystem — this test cannot exercise \
+             the cross-device path and must be re-pointed"
+        );
+
+        // A FILE and a DIRECTORY TREE, both across the boundary. The parent must
+        // exist: `move_path` assumes its caller created it, which `move_one`
+        // does before calling.
+        std::fs::create_dir_all(&dst_root).expect("mkdir dst");
+        let file_old = src_root.join("tree/top.txt");
+        let file_new = dst_root.join("top.txt");
+        assert!(
+            move_path(&file_old, &file_new),
+            "a file must move across volumes"
+        );
+        assert_eq!(std::fs::read(&file_new).expect("read"), b"top");
+        assert!(
+            !file_old.exists(),
+            "the source must be gone, not duplicated"
+        );
+
+        let dir_new = dst_root.join("moved-tree");
+        assert!(
+            move_one(&src_root.join("tree"), &dir_new),
+            "a directory TREE must move across volumes"
+        );
+        assert_eq!(
+            std::fs::read(dir_new.join("inner/deep.txt")).expect("deep"),
+            b"deep"
+        );
+        assert!(
+            !src_root.join("tree").exists(),
+            "the tree's source must be gone"
+        );
+
+        let _ = std::fs::remove_dir_all(&src_root);
+        let _ = std::fs::remove_dir_all(&dst_root);
     }
 
     #[test]

@@ -155,11 +155,28 @@ pub(crate) fn self_heal() {
     };
     // 0. Half-swap recovery (round-57): the NSIS upgrade swaps via
     //    exe → .bak then .new → exe — a power cut between the two renames
-    //    leaves ONLY .bak + .new (no exe), the boot task fails to start the
-    //    agent, and the device is offline with no recovery (self_heal never
-    //    ran because the exe couldn't start). This runs from the BOOT task
-    //    wrapper (which exists independently), so it can repair before the
-    //    exe itself is needed. Idempotent, same naming as the NSIS swap.
+    //    leaves ONLY .bak + .new (no exe). Idempotent, same naming as the swap.
+    //
+    //    WHAT THIS CANNOT DO, stated because the comment here used to claim
+    //    otherwise and the claim made the gap invisible. It said this "runs from
+    //    the BOOT task wrapper (which exists independently), so it can repair
+    //    before the exe itself is needed". THERE IS NO WRAPPER. `self_heal` is
+    //    called from inside this process (`main.rs`), and the boot task's Execute
+    //    IS this exe — so the `!exe.exists()` branch below cannot run in the one
+    //    situation it was written for. If the swap leaves no exe, nothing starts
+    //    the agent and nothing repairs it; the device is offline until someone
+    //    touches it.
+    //
+    //    The branch is still correct and worth keeping: it is reachable when the
+    //    exe exists but is a DOUBLED-UP state with a `.bak`/`.new` sibling, and
+    //    the renames are checked and logged, which is what makes an actual
+    //    half-swap diagnosable from `startup.log` afterwards.
+    //
+    //    CLOSING THE GAP NEEDS A LAUNCHER THAT IS NOT THE EXE (a scheduled task
+    //    running a script, as the update path already uses for the swap). NOT
+    //    DONE HERE, deliberately: it is Windows-only boot behaviour that cannot be
+    //    exercised on this box, and shipping an untested recovery path is worse
+    //    than a documented absence.
     let bak = install_dir.join("vale-agent.exe.bak");
     let new = install_dir.join("vale-agent.exe.new");
     // Half-swap failures must be LOUD and recoverable: every rename result

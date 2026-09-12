@@ -374,6 +374,12 @@ Get-Process vale-agent -ErrorAction SilentlyContinue | Stop-Process -Force -Erro
 Get-Process node -ErrorAction SilentlyContinue | Where-Object {{ $_.Path -like '*vale-agent*' }} | Stop-Process -Force -ErrorAction SilentlyContinue;
 Start-Sleep -Milliseconds 1500;
 $ok=$false;
+# MANUAL-ONLY BACKUP: nothing automated reads vale-agent.old.exe, and nothing
+# deletes it either, so one accumulates per update. It is kept for a human who
+# wants the previous binary in hand; the SANCTIONED recovery path is
+# `vale rollback <ver>`, which restores from the CDN and proves the swap landed.
+# If this is ever wired to anything, it must be as a LAST resort: it is the build
+# the device was already running, never the one it was trying to reach.
 if (Test-Path '{q}\vale-agent.exe') {{ try {{ Copy-Item -Force '{q}\vale-agent.exe' '{q}\vale-agent.old.exe' }} catch {{}} }}
 foreach($i in 1..12){{ try {{ Copy-Item -Force -ErrorAction Stop '{q}\vale-agent.new.exe' '{q}\vale-agent.exe'; $ok=$true; break }} catch {{ Start-Sleep -Milliseconds 800 }} }};
 "[$(Get-Date -Format o)] copy ok=$ok" | Out-File '{logs}\vale-update.log' -Append;
