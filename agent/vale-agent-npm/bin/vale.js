@@ -116,6 +116,37 @@ function resolveDataDir() {
     }
     return path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
 }
+/**
+ * Write one HKLM value and VERIFY IT. The registry is the single source of truth for
+ * path resolution — `paths.rs` on the Rust side and `resolveDataDir()` here both read it
+ * — so a silent failure means the agent and this CLI can disagree about where the install
+ * IS, and `vale status` then prints the default dir and "panel: (not installed)" for an
+ * install that succeeded somewhere else.
+ *
+ * It used to be `spawnSync("reg", [...], { stdio: "ignore" })` inside a `try` that could
+ * never fire: spawnSync does NOT throw on a failing program, and stdio ignored suppressed
+ * the only evidence.
+ */
+function regWrite(name, value) {
+    const r = (0, child_process_1.spawnSync)("reg", [
+        "add",
+        "HKLM\\SOFTWARE\\Vale\\Agent",
+        "/v",
+        name,
+        "/t",
+        "REG_SZ",
+        "/d",
+        value,
+        "/f",
+    ], { encoding: "utf8" });
+    if (r.status !== 0) {
+        console.error(`setup: WARNING -- could not record ${name} in HKLM\\SOFTWARE\\Vale\\Agent` +
+            (r.stderr ? ` (${String(r.stderr).trim()})` : "") +
+            " -- path resolution will fall back to the default");
+        return false;
+    }
+    return true;
+}
 const DATA_DIR = resolveDataDir();
 const LOGS_DIR = path.join(DATA_DIR, "logs");
 const CFG_FILE = path.join(ETC_DIR, "config.yaml");
@@ -933,6 +964,7 @@ const commands = {
     //   --reg-key <key>   register the device with the gateway console now
     //   --tunnel <host>   also provision the (free) cloudflared tunnel
     setup(args) {
+        const regOk = [];
         let i = args.indexOf("--reg-key");
         let regKey = i >= 0 ? args[i + 1] : process.env.VALE_REG_KEY;
         let ti = args.indexOf("--tunnel");
@@ -1036,33 +1068,10 @@ const commands = {
         sh(`powershell -NoProfile -Command "${deskShortcutRepairPs((0, exports.psq)(SCRIPTS_DIR), (0, exports.psq)(DESK_DIR), "Write-Host").join("; ").replace(/"/g, '\\"')}"`);
         // C1: write the registry single source of truth (InstallDir; DataDir
         // defaults to %ProgramData%\Vale). Everything else reads it back.
-        try {
-            (0, child_process_1.spawnSync)("reg", [
-                "add",
-                "HKLM\\SOFTWARE\\Vale\\Agent",
-                "/v",
-                "InstallDir",
-                "/t",
-                "REG_SZ",
-                "/d",
-                DIR,
-                "/f",
-            ], { stdio: "ignore" });
-            (0, child_process_1.spawnSync)("reg", [
-                "add",
-                "HKLM\\SOFTWARE\\Vale\\Agent",
-                "/v",
-                "DataDir",
-                "/t",
-                "REG_SZ",
-                "/d",
-                path.join(process.env.ProgramData || "C:\\ProgramData", "Vale"),
-                "/f",
-            ], { stdio: "ignore" });
-        }
-        catch {
-            /* non-fatal — runtime falls back to exe dir */
-        }
+        // `regOk` is collected here and summarised at the end of setup: best-effort, but the
+        // operator should be told once, with the consequence, rather than not at all.
+        regOk.push(regWrite("InstallDir", DIR));
+        regOk.push(regWrite("DataDir", path.join(process.env.ProgramData || "C:\\ProgramData", "Vale")));
         // Pre-create the data dir tree (sessions/memory/logs — C1 separation).
         const DATA = DATA_DIR;
         for (const sub of ["sessions", "memory", "logs"]) {
@@ -1157,17 +1166,7 @@ const commands = {
             : "";
         if (nodePath) {
             try {
-                (0, child_process_1.spawnSync)("reg", [
-                    "add",
-                    "HKLM\\SOFTWARE\\Vale\\Agent",
-                    "/v",
-                    "NodePath",
-                    "/t",
-                    "REG_SZ",
-                    "/d",
-                    nodePath,
-                    "/f",
-                ], { stdio: "ignore" });
+                regOk.push(regWrite("NodePath", nodePath));
                 console.log("setup: system node detected:", nodePath);
             }
             catch {
@@ -1243,6 +1242,17 @@ const commands = {
             console.log("setup: control-panel entry skipped (uninstall via `vale uninstall`)");
         }
         console.log("setup: installed to", DIR);
+        // One summary rather than N scattered warnings, and it names the CONSEQUENCE
+        // (path resolution disagrees) instead of just the failed call.
+        if (regOk.includes(false)) {
+            console.error("setup: WARNING -- the registry entry for this install is INCOMPLETE (" +
+                regOk.filter((ok) => !ok).length +
+                " of " +
+                regOk.length +
+                " writes failed). The agent resolves its paths from the registry, so it may look in the DEFAULT location instead of " +
+                DIR +
+                ". Re-run `vale setup` elevated if that matters.");
+        }
         console.log("setup: device registers on start -- check the console Devices list");
         // Inbound firewall for the agent port (idempotent; inert when bound to
         // loopback, required for LAN clients otherwise). Best-effort, never
