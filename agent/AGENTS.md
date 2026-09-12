@@ -519,7 +519,41 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 58 (I finally COMPARED the two live catalogue surfaces
+Last updated: 2026-09-11 round 59 (the console got its URL contract in round 46; the
+PANEL — which ships INSIDE the exe — had none, so it now has one, and writing it
+reproduced the very bug the contract exists to catch).
+Commit: 642bd484. CI green.
+  (1) WHY IT MATTERS MORE ON THE PANEL: every panel test stubs `fetch`, so a path the
+  agent does not answer renders an empty view with a GREEN suite — and the panel is
+  compiled into the binary, so the defect is not a bad deploy that can be rolled back
+  but something baked into a release.
+  (2) BOTH SIDES ARE READ: the panel's paths from its own source, the agent's from the
+  route literals in `src/web/*.rs`. A hardcoded list on either side would be a third
+  copy of the thing being checked.
+  (3) MY FIRST VERSION HAD THE BUG THIS FAMILY KEEPS PRODUCING: it stripped `//`-to-end-
+  of-line by hand to drop comments, which ate `${proto}//${hostname}/api/events/term`
+  — the `//` after `}` is a protocol-relative separator, not a comment — so the real
+  path vanished and the check reported one it could no longer see. Replaced with the
+  TYPESCRIPT AST (`ts.createSourceFile` + a literal walk). A hand-rolled parser for a
+  language that ships its own lexer is a check that can only be wrong: round 48's
+  lesson, and round 42's token parser matching inside a comment.
+  (4) IT SURFACED A PATH THAT IS CORRECTLY NOT THE AGENT'S: `/api/browser-session/open`
+  is on `http://127.0.0.1:9444`, the ELECTRON SHELL's origin. Absolute URLs naming a
+  host are excluded — they target a different server by design.
+  (5) MUTATION-PROVEN IN BOTH DIRECTIONS, and the first attempt taught something: the
+  panel-side rename bit immediately; the AGENT-side rename did NOT, because the literal
+  appears FOUR TIMES in `mod.rs` so one edit left the route set intact. I checked why
+  instead of recording a proof I did not have — renaming all four fails naming it.
+  (6) ALSO CHECKED, found consistent, deliberately unchanged: the console's rail nav and
+  its router declare the SAME six paths (no entry can land on a dead route); and the
+  panel has NO i18n (hardcoded English), so round 58's zh/en parity defect has no
+  counterpart there.
+  (7) STILL OPEN: the panel's governance-pill visual prominence (a taste call), the
+  `--dsw-alias-*` namespace rename on the landing page, and the drift tool's
+  "opportunity" rows.
+  Gates: panel 513 (was 510) + build; prettier clean; CI green on main.
+
+Previous round: 2026-09-11 round 58 (I finally COMPARED the two live catalogue surfaces
 instead of trusting the word "derived" — and the page I shipped in round 49 was
 setting the WRONG CHANNEL and rendering Chinese in an English UI).
 Commit: 36d25142. Worker deployed; both verified live in both languages.
