@@ -519,7 +519,41 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 70 (released 1.2.356 — five verified panel fixes had
+Last updated: 2026-09-11 round 71 (the rail's ✕ — three defects in one control: an
+accessible name that lied, no way to undo, and a header counting a row it had hidden).
+Commit: 064f8b7c. CI green; NOT yet released (the panel ships inside the exe).
+  (1) THE ACCESSIBLE NAME SAID SOMETHING THE ACTION DID NOT DO: `title="Hide from list"`
+  and `aria-label="Archive session"` on the same button. A sighted user hovering read the
+  truth; a screen-reader user heard a STRONGER claim — archiving implies persisted,
+  recoverable state, and this is a local Set in React state. Both say "Hide from list"
+  now. The existing test asserted the WRONG name, so it was asserting the defect.
+  (2) IT COULD NOT BE UNDONE. The only mutation in the file was `.add` — no removal
+  anywhere — so a row hidden by accident was gone until a reload. A "+N hidden" chip now
+  appears in the header whenever anything is hidden, restores all of them in one click,
+  and disappears at zero.
+  (3) THE HEADER COUNTED A ROW IT WAS NOT SHOWING. `rows` is filtered by `archived` and
+  the header used the UNFILTERED `sessions.length`, so hiding one made the count
+  disagree with the list directly beneath it. It reads `rows.length` now.
+  (4) MUTATION-PROVEN BOTH HALVES, and the second restore FAILED: reverting the count
+  gives "expected '2' to be '1'"; disabling the undo chip gives "Unable to find the text:
+  +1 hidden". But `cp` for the second restore hit a path error and LEFT THE FILE MUTATED
+  (`{false && (` still in place). I checked the file rather than assuming the restore
+  worked and repaired it. A mutation harness that can silently leave its subject disabled
+  is worse than no mutation test — check the subject after every mutation.
+  (5) THE REPO CAUGHT MY OWN FIX, which is what the check is for: the new `.side-unhide`
+  rule used `--border`, `--text` and `--text-secondary`, defined in NEITHER frontend, so
+  every declaration using them was silently DROPPED — the exact round-61 disease.
+  `custom-prop-check.mjs` failed naming all three. It now uses the measured pair from
+  `.side-count` beside it (`--chrome-ink-dim` on `--surface-chip`, picked there because
+  `--muted` measured 4.40, just under AA).
+  (6) STILL OPEN: Ctrl+Shift+Y is shadowed by DesktopShell so it does nothing; the Memory
+  empty state contradicts its own +New; Logs is panel-only while accelerators are
+  desktop-only; the landing page's `--dsw-alias-*` rename. This round's fix needs a
+  release to reach the device.
+  Gates: panel 521 (60 files) + build; custom-property green; token contract green;
+  prettier clean; CI green on main; d1 on 1.2.356.
+
+Previous round: 2026-09-11 round 70 (released 1.2.356 — five verified panel fixes had
 been sitting unreleased, and the panel is compiled INTO the exe, so unshipped means
 unfixed). Tag v1.2.356; d1 on 1.2.356; audit CLEAN; keep-latest applied.
   (1) WHY A RELEASE AND NOT MORE FEATURES: rounds 53 and 63 produced five verified panel
