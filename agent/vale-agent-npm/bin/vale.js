@@ -86,7 +86,9 @@ function resolveDir() {
                 return m[1].trim();
         }
     }
-    catch { /* fall through */ }
+    catch {
+        /* fall through */
+    }
     return "C:\\Program Files\\Vale";
 }
 const DIR = resolveDir();
@@ -109,7 +111,9 @@ function resolveDataDir() {
                 return m[1].trim();
         }
     }
-    catch { /* fall through */ }
+    catch {
+        /* fall through */
+    }
     return path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
 }
 const DATA_DIR = resolveDataDir();
@@ -124,10 +128,18 @@ const TASK = "ValeAgent";
 const API_BASE = process.env.VALE_API_BASE || "https://api.saisi.online";
 // POST JSON to the gateway, return parsed JSON or throw with the error text.
 function apiPost(pathname, body) {
-    const res = (0, child_process_1.spawnSync)("curl", ["-sS", "-m", "30", "-X", "POST",
-        "-H", "content-type: application/json",
-        "-d", JSON.stringify(body),
-        API_BASE + pathname], { encoding: "utf8" });
+    const res = (0, child_process_1.spawnSync)("curl", [
+        "-sS",
+        "-m",
+        "30",
+        "-X",
+        "POST",
+        "-H",
+        "content-type: application/json",
+        "-d",
+        JSON.stringify(body),
+        API_BASE + pathname,
+    ], { encoding: "utf8" });
     if (res.status !== 0)
         throw new Error("gateway unreachable: " + (res.stderr || "").trim());
     const out = (res.stdout || "").trim();
@@ -191,7 +203,9 @@ function psFile(script) {
         try {
             fs.unlinkSync(tmp);
         }
-        catch { /* best-effort */ }
+        catch {
+            /* best-effort */
+        }
     }
 }
 // npm audit #6: setup interpolated RAW paths into PS single-quote literals;
@@ -264,7 +278,8 @@ function parseAgentPort(yamlText) {
 }
 function agentPort(dir) {
     try {
-        return parseAgentPort(fs.readFileSync(path.join(dir, "config.yaml"), "utf8")) ?? 18080;
+        return (parseAgentPort(fs.readFileSync(path.join(dir, "config.yaml"), "utf8")) ??
+            18080);
     }
     catch {
         return 18080;
@@ -405,11 +420,7 @@ function uninstallRegBodyPs(q, ver) {
 function uninstallVersionPs(q, ver) {
     if (!ver)
         return [];
-    return [
-        `if ($ok -and '${ver}') {`,
-        ...uninstallRegBodyPs(q, ver),
-        `}`,
-    ];
+    return [`if ($ok -and '${ver}') {`, ...uninstallRegBodyPs(q, ver), `}`];
 }
 // exported: autostart (boot) switch for the two scheduled tasks. ValeAgent
 // (SYSTEM service task) + ValeDesktop (logon shell task) ARE the autostart
@@ -420,7 +431,13 @@ function uninstallVersionPs(q, ver) {
 // the caller) — never add /RI /RU /RP /TR here. unit-tested.
 exports.BOOT_TASKS = ["ValeAgent", "ValeDesktop"];
 function autostartArgv(task, action) {
-    return ["schtasks", "/Change", "/TN", task, action === "on" ? "/ENABLE" : "/DISABLE"];
+    return [
+        "schtasks",
+        "/Change",
+        "/TN",
+        task,
+        action === "on" ? "/ENABLE" : "/DISABLE",
+    ];
 }
 // exported: the ValePlaywright probe launcher (playwright-probe.ps1).
 // Probe order matches the agent's preferred_cdp_endpoint(): 9333
@@ -482,7 +499,10 @@ function busyIsFresh(mtimeMs, nowMs) {
  */
 function latestCdnVersion() {
     const base = (process.env.VALE_CDN || "https://agent.saisi.online").replace(/\/+$/, "");
-    const r = (0, child_process_1.spawnSync)("curl", ["-s", "-m", "3", `${base}/api/version`], { encoding: "utf8", timeout: 5000 });
+    const r = (0, child_process_1.spawnSync)("curl", ["-s", "-m", "3", `${base}/api/version`], {
+        encoding: "utf8",
+        timeout: 5000,
+    });
     if (r.status !== 0 || !r.stdout)
         return null;
     try {
@@ -500,11 +520,13 @@ function statusReport(f) {
     const out = [];
     out.push(f.agentRunning ? "status: RUNNING" : "status: STOPPED");
     out.push("install dir: " + f.installDir);
-    out.push("panel: " + (f.exeExists ? `http://127.0.0.1:${f.port}/panel/` : "(not installed)"));
+    out.push("panel: " +
+        (f.exeExists ? `http://127.0.0.1:${f.port}/panel/` : "(not installed)"));
     // A device without a release marker is not "on some version" — it is a device
     // whose version is UNKNOWN (a fresh box, or an install predating the marker).
     // Printing this CLI's version here would be a fabricated fact.
-    out.push("release: " + (f.releaseVersion ? f.releaseVersion : "unknown (no release marker)"));
+    out.push("release: " +
+        (f.releaseVersion ? f.releaseVersion : "unknown (no release marker)"));
     out.push("this CLI: " + f.packageVersion);
     if (f.updateMarkerMs === null) {
         out.push("update: none in flight");
@@ -564,7 +586,9 @@ function statusReport(f) {
 function behindBy(device, latest) {
     const a = device.split(".").map(Number);
     const b = latest.split(".").map(Number);
-    if (a.length !== 3 || b.length !== 3 || [...a, ...b].some((n) => !Number.isFinite(n))) {
+    if (a.length !== 3 ||
+        b.length !== 3 ||
+        [...a, ...b].some((n) => !Number.isFinite(n))) {
         return "an unknown number of releases";
     }
     if (a[0] !== b[0] || a[1] !== b[1])
@@ -664,7 +688,9 @@ function boxedVersions(installDir, pkgDir) {
     const pkgVer = (p) => {
         try {
             const j = JSON.parse(fs.readFileSync(p, "utf8"));
-            return typeof j?.version === "string" && j.version ? j.version : "unknown";
+            return typeof j?.version === "string" && j.version
+                ? j.version
+                : "unknown";
         }
         catch {
             return "unknown";
@@ -675,7 +701,10 @@ function boxedVersions(installDir, pkgDir) {
             const st = fs.statSync(p);
             if (!st.isFile() || st.size > 300 * 1024 * 1024)
                 return "unknown";
-            return crypto.createHash("sha256").update(fs.readFileSync(p)).digest("hex");
+            return crypto
+                .createHash("sha256")
+                .update(fs.readFileSync(p))
+                .digest("hex");
         }
         catch {
             return "unknown";
@@ -689,13 +718,20 @@ function boxedVersions(installDir, pkgDir) {
     let cfVer = "unknown";
     try {
         if (fs.existsSync(cfBin)) {
-            const r = (0, child_process_1.spawnSync)(cfBin, ["--version"], { encoding: "utf8", timeout: 15000 });
-            const line = ((r.stdout || "") + (r.stderr || "")).split(/\r?\n/)[0].trim();
+            const r = (0, child_process_1.spawnSync)(cfBin, ["--version"], {
+                encoding: "utf8",
+                timeout: 15000,
+            });
+            const line = ((r.stdout || "") + (r.stderr || ""))
+                .split(/\r?\n/)[0]
+                .trim();
             if (line)
                 cfVer = line.slice(0, 120);
         }
     }
-    catch { /* best-effort */ }
+    catch {
+        /* best-effort */
+    }
     const pwRoot = path.join(installDir, "components", "playwright");
     return {
         updated: new Date().toISOString(),
@@ -707,7 +743,10 @@ function boxedVersions(installDir, pkgDir) {
             version: pkgVer(path.join(pwRoot, "node_modules", "playwright-core", "package.json")),
             sha256: "unknown",
         },
-        cloudflared: { version: cfVer, sha256: fs.existsSync(cfBin) ? shaOf(cfBin) : "unknown" },
+        cloudflared: {
+            version: cfVer,
+            sha256: fs.existsSync(cfBin) ? shaOf(cfBin) : "unknown",
+        },
     };
 }
 // exported: best-effort writer for the P2-4 manifest (never throws).
@@ -737,7 +776,9 @@ function writeReleaseMarker(installDir) {
         // so etc\ exists — a missing dir stays a silent best-effort skip.
         fs.writeFileSync(path.join(installDir, "etc", ".vale-release"), v, "utf8");
     }
-    catch { /* best-effort */ }
+    catch {
+        /* best-effort */
+    }
 }
 /**
  * Stage the Electron desktop shell sources (main/preload/url-policy +
@@ -773,9 +814,16 @@ function stageDesktopShell(installDir, suffix) {
     // running shell).
     const shellDir = path.join(installDir, "components", "vale-desktop-electron");
     try {
-        fs.writeFileSync(path.join(shellDir, "package.json"), JSON.stringify({ name: "vale-desktop-electron", version: "0.2.0", main: "src/main.js", private: true }, null, 2), "utf8");
+        fs.writeFileSync(path.join(shellDir, "package.json"), JSON.stringify({
+            name: "vale-desktop-electron",
+            version: "0.2.0",
+            main: "src/main.js",
+            private: true,
+        }, null, 2), "utf8");
     }
-    catch { /* best-effort — a failed write must not break staging */ }
+    catch {
+        /* best-effort — a failed write must not break staging */
+    }
 }
 function svc(action) {
     sh(`schtasks /${action} /TN ${TASK}`, { stdio: "inherit" });
@@ -806,7 +854,9 @@ function initTunnel(hostname, regKey) {
                 console.log("tunnel: key exchanged (consumed once)");
             }
             else
-                console.log("tunnel: tunnel-token exchange failed (" + (r && r.error ? r.error : "no token") + ") -- falling back");
+                console.log("tunnel: tunnel-token exchange failed (" +
+                    (r && r.error ? r.error : "no token") +
+                    ") -- falling back");
         }
         catch (e) {
             console.log("tunnel: exchange unavailable (" + e.message + ") -- falling back");
@@ -819,14 +869,17 @@ function initTunnel(hostname, regKey) {
     }
     const name = "vale-agent-" + host.split(".")[0];
     (0, child_process_1.spawnSync)(cf, ["tunnel", "create", name], { stdio: "inherit" });
-    const list = (0, child_process_1.spawnSync)(cf, ["tunnel", "list", "--name", name], { encoding: "utf8" }).stdout || "";
+    const list = (0, child_process_1.spawnSync)(cf, ["tunnel", "list", "--name", name], { encoding: "utf8" })
+        .stdout || "";
     const m = /([0-9a-fA-F]{8}-[0-9a-fA-F-]{27})/.exec(list);
     const tunnelId = m ? m[1] : null;
     if (!tunnelId) {
         console.error("tunnel: could not determine tunnel id");
         process.exit(1);
     }
-    const r3 = (0, child_process_1.spawnSync)(cf, ["tunnel", "route", "dns", name, host], { stdio: "inherit" });
+    const r3 = (0, child_process_1.spawnSync)(cf, ["tunnel", "route", "dns", name, host], {
+        stdio: "inherit",
+    });
     if (r3.status !== 0) {
         console.error("tunnel: dns route failed");
         process.exit(1);
@@ -884,7 +937,9 @@ const commands = {
         // d1.agent.saisi.online. Written to vale-agent.hostname (the agent's
         // self-register reads it at boot).
         const hi = args.indexOf("--hostname");
-        const deviceHost = hi >= 0 ? args[hi + 1] : (process.env.VALE_HOSTNAME || "d1.agent.saisi.online");
+        const deviceHost = hi >= 0
+            ? args[hi + 1]
+            : process.env.VALE_HOSTNAME || "d1.agent.saisi.online";
         // review #1 (HIGH): the hostname write ran BEFORE the mkdirSync below —
         // on a FRESH machine DIR doesn't exist yet → ENOENT throw → setup died
         // having installed nothing. Ensure the dir first.
@@ -977,10 +1032,32 @@ const commands = {
         // C1: write the registry single source of truth (InstallDir; DataDir
         // defaults to %ProgramData%\Vale). Everything else reads it back.
         try {
-            (0, child_process_1.spawnSync)("reg", ["add", "HKLM\\SOFTWARE\\Vale\\Agent", "/v", "InstallDir", "/t", "REG_SZ", "/d", DIR, "/f"], { stdio: "ignore" });
-            (0, child_process_1.spawnSync)("reg", ["add", "HKLM\\SOFTWARE\\Vale\\Agent", "/v", "DataDir", "/t", "REG_SZ", "/d", path.join(process.env.ProgramData || "C:\\ProgramData", "Vale"), "/f"], { stdio: "ignore" });
+            (0, child_process_1.spawnSync)("reg", [
+                "add",
+                "HKLM\\SOFTWARE\\Vale\\Agent",
+                "/v",
+                "InstallDir",
+                "/t",
+                "REG_SZ",
+                "/d",
+                DIR,
+                "/f",
+            ], { stdio: "ignore" });
+            (0, child_process_1.spawnSync)("reg", [
+                "add",
+                "HKLM\\SOFTWARE\\Vale\\Agent",
+                "/v",
+                "DataDir",
+                "/t",
+                "REG_SZ",
+                "/d",
+                path.join(process.env.ProgramData || "C:\\ProgramData", "Vale"),
+                "/f",
+            ], { stdio: "ignore" });
         }
-        catch { /* non-fatal — runtime falls back to exe dir */ }
+        catch {
+            /* non-fatal — runtime falls back to exe dir */
+        }
         // Pre-create the data dir tree (sessions/memory/logs — C1 separation).
         const DATA = DATA_DIR;
         for (const sub of ["sessions", "memory", "logs"]) {
@@ -1003,15 +1080,21 @@ const commands = {
                     break;
                 }
                 catch (e) {
-                    if (e?.code !== "EBUSY" && e?.code !== "EPERM" && e?.code !== "EACCES") {
+                    if (e?.code !== "EBUSY" &&
+                        e?.code !== "EPERM" &&
+                        e?.code !== "EACCES") {
                         console.error("setup: exe copy failed:", e?.message || e);
                         process.exit(1);
                     }
-                    (0, child_process_1.spawnSync)("cmd", ["/c", "taskkill", "/F", "/IM", "vale-agent.exe"], { stdio: "ignore" });
+                    (0, child_process_1.spawnSync)("cmd", ["/c", "taskkill", "/F", "/IM", "vale-agent.exe"], {
+                        stdio: "ignore",
+                    });
                     try {
                         Atomics.wait(new Int32Array(new SharedArrayBuffer(4)), 0, 0, 700);
                     }
-                    catch { /* best-effort sleep */ }
+                    catch {
+                        /* best-effort sleep */
+                    }
                 }
             }
             if (!copied) {
@@ -1048,7 +1131,9 @@ const commands = {
                 try {
                     fs.rmSync(pwDir, { recursive: true, force: true });
                 }
-                catch { /* best-effort */ }
+                catch {
+                    /* best-effort */
+                }
             }
         }
         else {
@@ -1058,13 +1143,27 @@ const commands = {
         // SYSTEM which may not see the user PATH — resolve the ABSOLUTE node path
         // now and record it in the registry so the agent can spawn it.
         const nodeWhich = (0, child_process_1.spawnSync)("where", ["node"], { encoding: "utf8" });
-        const nodePath = (nodeWhich.status === 0 && nodeWhich.stdout) ? nodeWhich.stdout.split(/\r?\n/)[0].trim() : "";
+        const nodePath = nodeWhich.status === 0 && nodeWhich.stdout
+            ? nodeWhich.stdout.split(/\r?\n/)[0].trim()
+            : "";
         if (nodePath) {
             try {
-                (0, child_process_1.spawnSync)("reg", ["add", "HKLM\\SOFTWARE\\Vale\\Agent", "/v", "NodePath", "/t", "REG_SZ", "/d", nodePath, "/f"], { stdio: "ignore" });
+                (0, child_process_1.spawnSync)("reg", [
+                    "add",
+                    "HKLM\\SOFTWARE\\Vale\\Agent",
+                    "/v",
+                    "NodePath",
+                    "/t",
+                    "REG_SZ",
+                    "/d",
+                    nodePath,
+                    "/f",
+                ], { stdio: "ignore" });
                 console.log("setup: system node detected:", nodePath);
             }
-            catch { /* non-fatal */ }
+            catch {
+                /* non-fatal */
+            }
         }
         else {
             console.log("setup: WARNING -- node not found in PATH (browser tools need node)");
@@ -1120,7 +1219,10 @@ const commands = {
         try {
             const pkgVer = String(require("../package.json").version || "");
             const ureg = ps(uninstallRegBodyPs((0, exports.psq)(DIR), pkgVer).join("; "));
-            console.log("setup: control-panel uninstall entry" + (ureg && ureg.status === 0 ? " ensured" : " (ensure failed -- uninstall via `vale uninstall`)"));
+            console.log("setup: control-panel uninstall entry" +
+                (ureg && ureg.status === 0
+                    ? " ensured"
+                    : " (ensure failed -- uninstall via `vale uninstall`)"));
         }
         catch {
             console.log("setup: control-panel entry skipped (uninstall via `vale uninstall`)");
@@ -1133,7 +1235,11 @@ const commands = {
         try {
             const fwPort = agentPort(ETC_DIR);
             const fw = ps(firewallPs(fwPort).join("; "));
-            console.log("setup: firewall inbound TCP " + fwPort + (fw && fw.status === 0 ? " ensured" : " (ensure failed -- LAN clients may be blocked)"));
+            console.log("setup: firewall inbound TCP " +
+                fwPort +
+                (fw && fw.status === 0
+                    ? " ensured"
+                    : " (ensure failed -- LAN clients may be blocked)"));
         }
         catch {
             console.log("setup: firewall ensure skipped (LAN clients may be blocked)");
@@ -1161,21 +1267,29 @@ const commands = {
         // `statusReport`, which is where the tests can reach it.
         let releaseVersion = null;
         try {
-            const v = fs.readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8").trim();
+            const v = fs
+                .readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8")
+                .trim();
             if (v)
                 releaseVersion = v;
         }
-        catch { /* absent => unknown, never fabricated */ }
+        catch {
+            /* absent => unknown, never fabricated */
+        }
         let updateMarkerMs = null;
         try {
             updateMarkerMs = fs.statSync(updateBusyPath()).mtimeMs;
         }
-        catch { /* no marker => nothing in flight */ }
+        catch {
+            /* no marker => nothing in flight */
+        }
         let packageVersion = "";
         try {
             packageVersion = String(require("../package.json").version || "");
         }
-        catch { /* best-effort */ }
+        catch {
+            /* best-effort */
+        }
         // What the CDN advertises, so `status` can answer "is this device current" —
         // the question every round of this project's log answered by hand. Bounded
         // HARD (3 s): `status` is the command an operator runs when something is
@@ -1220,7 +1334,11 @@ const commands = {
         const sub = String(args[0] || "status").toLowerCase();
         if (sub === "status") {
             for (const t of exports.BOOT_TASKS) {
-                const r = (0, child_process_1.spawnSync)("powershell", ["-NoProfile", "-Command", `(Get-ScheduledTask -TaskName '${t}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State -ErrorAction SilentlyContinue)`], { encoding: "utf8" });
+                const r = (0, child_process_1.spawnSync)("powershell", [
+                    "-NoProfile",
+                    "-Command",
+                    `(Get-ScheduledTask -TaskName '${t}' -ErrorAction SilentlyContinue | Select-Object -ExpandProperty State -ErrorAction SilentlyContinue)`,
+                ], { encoding: "utf8" });
                 const s = String((r && r.stdout) || "").trim();
                 console.log(`${t}: ${s || "(not installed)"}`);
             }
@@ -1268,14 +1386,18 @@ const commands = {
                 try {
                     const st = fs.statSync(BUSYM);
                     if (busyIsFresh(st.mtimeMs, Date.now())) {
-                        console.error("update: another update looks in progress (" + BUSYM + " <10 min old) -- wait, or delete the marker after a mid-swap reboot");
+                        console.error("update: another update looks in progress (" +
+                            BUSYM +
+                            " <10 min old) -- wait, or delete the marker after a mid-swap reboot");
                         process.exit(1);
                     }
                     // Stale marker — overwrite it.
                     fs.writeFileSync(BUSYM, String(Date.now()));
                 }
                 catch {
-                    console.error("update: another update looks in progress (cannot stat " + BUSYM + ")");
+                    console.error("update: another update looks in progress (cannot stat " +
+                        BUSYM +
+                        ")");
                     process.exit(1);
                 }
             }
@@ -1291,19 +1413,27 @@ const commands = {
         // whoever reads the device afterwards.
         let fromVersion = "";
         try {
-            fromVersion = fs.readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8").trim();
+            fromVersion = fs
+                .readFileSync(path.join(ETC_DIR, ".vale-release"), "utf8")
+                .trim();
         }
-        catch { /* unknown */ }
+        catch {
+            /* unknown */
+        }
         let toVersion = "";
         try {
             toVersion = String(require("../package.json").version || "");
         }
-        catch { /* best-effort */ }
+        catch {
+            /* best-effort */
+        }
         console.log(`update: ${fromVersion || "unknown"} -> ${toVersion || "unknown"} -- staging, the connection will drop`);
         try {
             ps(updateReceiptPs((0, exports.psq)(DATA_DIR), fromVersion || "unknown", toVersion || "unknown").join("; "));
         }
-        catch { /* best-effort: a missing receipt must never block a real update */ }
+        catch {
+            /* best-effort: a missing receipt must never block a real update */
+        }
         // Swap the exe in-place: stop -> replace (with retry; the running agent
         // locks its own file) -> start.
         //
@@ -1333,8 +1463,12 @@ const commands = {
             try {
                 fs.unlinkSync(BUSYM);
             }
-            catch { /* never created, or already gone */ }
-            console.error("update: staging failed before the swap (" + (e && e.message ? e.message : e) + ")");
+            catch {
+                /* never created, or already gone */
+            }
+            console.error("update: staging failed before the swap (" +
+                (e && e.message ? e.message : e) +
+                ")");
             console.error("update: nothing was swapped and the in-progress marker was released -- safe to re-run");
             process.exit(1);
         }
@@ -1369,10 +1503,10 @@ const commands = {
             // to produce literal double-quotes without string-escaping issues.
             fs.writeFileSync(vbsPath, [
                 "Dim sh,cmd,i",
-                "Set sh=CreateObject(\"WScript.Shell\")",
-                "cmd=chr(34) & WScript.Arguments(0) & chr(34) & \" \" & chr(34) & WScript.Arguments(1) & chr(34)",
+                'Set sh=CreateObject("WScript.Shell")',
+                'cmd=chr(34) & WScript.Arguments(0) & chr(34) & " " & chr(34) & WScript.Arguments(1) & chr(34)',
                 "For i=2 To WScript.Arguments.Count-1",
-                "  cmd=cmd & \" \" & WScript.Arguments(i)",
+                '  cmd=cmd & " " & WScript.Arguments(i)',
                 "Next",
                 "sh.Run cmd,0,False",
             ].join("\r\n"));
@@ -1395,7 +1529,9 @@ const commands = {
         try {
             relVer = String(require("../package.json").version || "");
         }
-        catch { /* best-effort */ }
+        catch {
+            /* best-effort */
+        }
         const script = [
             `"[$(Get-Date -Format o)] update start" | ${log}`,
             // Layout v2 FIRST: repoint the boot task at the explicit config path
@@ -1562,14 +1698,18 @@ const commands = {
             const j = JSON.parse((r.stdout || Buffer.from("")).toString().trim());
             retval = typeof j?.ReturnValue === "number" ? j.ReturnValue : null;
         }
-        catch { /* fall through to the status/retval guard below */ }
+        catch {
+            /* fall through to the status/retval guard below */
+        }
         if (r.status !== 0 || retval !== 0) {
             try {
                 fs.unlinkSync(BUSYM);
             }
-            catch { /* never created */ }
-            console.error(`update: WMI handoff failed (ps status ${r.status}, ReturnValue ${retval ?? "?"})`
-                + (r.stderr ? " — " + r.stderr.toString().trim() : ""));
+            catch {
+                /* never created */
+            }
+            console.error(`update: WMI handoff failed (ps status ${r.status}, ReturnValue ${retval ?? "?"})` +
+                (r.stderr ? " — " + r.stderr.toString().trim() : ""));
             process.exit(1);
         }
         console.log("update: swap launched (connection drops, reconnect in ~10s)");
@@ -1598,12 +1738,36 @@ const commands = {
         const PIN = path.join(ETC_DIR, ".rollback-pin");
         const val = String(args[0] || "");
         if (val === "--clear") {
+            // A FAILED DELETE IS NOT AN ABSENT PIN. `rmSync(force)` ignores only ENOENT;
+            // EPERM/EACCES/EBUSY/EISDIR landed in this same catch, so a pin that SURVIVED was
+            // reported as "nothing to clear" and the command returned 0 — while
+            // `rollback status` still said "pinned" and agent_update kept refusing every
+            // release, which is the state that governs auto-updates.
+            let cur = null;
             try {
-                const cur = fs.readFileSync(PIN, "utf8").trim();
+                cur = fs.readFileSync(PIN, "utf8").trim();
+            }
+            catch (e) {
+                if (e && e.code !== "ENOENT") {
+                    console.error(`rollback: could not READ ${PIN} (${e.code || e.message}) -- not assuming it is absent`);
+                    process.exitCode = 1;
+                    return;
+                }
+            }
+            try {
                 fs.rmSync(PIN, { force: true });
+            }
+            catch (e) {
+                // fall through to the read-back below, which is what decides.
+            }
+            if (fs.existsSync(PIN)) {
+                console.error(`rollback: FAILED to clear ${PIN} -- the pin is still in place and agent_update keeps refusing releases`);
+                process.exitCode = 1;
+            }
+            else if (cur !== null) {
                 console.log(`rollback: pin cleared (was ${cur || "?"}) -- agent_update tracks the release channel again`);
             }
-            catch {
+            else {
                 console.log("rollback: no pin present (nothing to clear)");
             }
             return;
@@ -1623,11 +1787,21 @@ const commands = {
         }
         const base = (process.env.VALE_CDN || "https://agent.saisi.online").replace(/\/+$/, "");
         const url = `${base}/vale-agent/vale-agent-${val}.tgz`;
-        const head = (0, child_process_1.spawnSync)("curl", ["-s", "-o", "/dev/null", "-w", "%{http_code}", "-m", "30", "--head", url], { encoding: "utf8", timeout: 40000 });
+        const head = (0, child_process_1.spawnSync)("curl", [
+            "-s",
+            "-o",
+            "/dev/null",
+            "-w",
+            "%{http_code}",
+            "-m",
+            "30",
+            "--head",
+            url,
+        ], { encoding: "utf8", timeout: 40000 });
         const code = String(head.stdout || "").trim();
         if (head.status !== 0 || code !== "200") {
-            console.error(`rollback: ${val} is not on the release CDN (HTTP ${code || "?"}) -- the last-5-per-minor prune removed it;`
-                + " pick a retained version (see https://agent.saisi.online/vale-agent/version.json for the current line)");
+            console.error(`rollback: ${val} is not on the release CDN (HTTP ${code || "?"}) -- the last-5-per-minor prune removed it;` +
+                " pick a retained version (see https://agent.saisi.online/vale-agent/version.json for the current line)");
             process.exit(1);
         }
         console.log(`rollback: installing vale-agent ${val} into ${NPM_GLOBAL} ...`);
@@ -1643,7 +1817,10 @@ const commands = {
             process.exit(1);
         }
         console.log(`rollback: swapping in ${val} (connection drops ~10s) ...`);
-        const upd = (0, child_process_1.spawnSync)(valeCmd, ["update"], { stdio: "inherit", timeout: 120000 });
+        const upd = (0, child_process_1.spawnSync)(valeCmd, ["update"], {
+            stdio: "inherit",
+            timeout: 120000,
+        });
         if (upd.status !== 0) {
             console.error("rollback: swap failed -- pin NOT written, device still runs the previous release");
             process.exit(1);
@@ -1678,7 +1855,11 @@ const commands = {
             console.log(verdict.message);
         }
         catch (e) {
-            console.error("rollback: WARNING -- pin write failed (" + e.message + "); device runs " + val + " but agent_update is NOT blocked");
+            console.error("rollback: WARNING -- pin write failed (" +
+                e.message +
+                "); device runs " +
+                val +
+                " but agent_update is NOT blocked");
         }
     },
     // The ONLY uninstall path (NSIS installer is retired — npm CLI is the
@@ -1688,14 +1869,20 @@ const commands = {
     // pass --purge-data to delete it too.
     uninstall(args) {
         const purge = args.includes("--purge-data");
-        const DATA = path.join(process.env.ProgramData || "C:\\ProgramData", "Vale");
+        // DATA_DIR, not a local recomputation: the registry-first resolver is the single
+        // source of truth (setup already uses it), and a second copy here meant a
+        // registry-remapped install had the WRONG directory purged — and named in
+        // "data kept at" — while the command reported success.
+        const DATA = DATA_DIR;
         // HIGH npm audit: verify DIR is actually a Vale install dir before
         // recursively deleting — an attacker who controls VALE_AGENT_DIR (env
         // var) or the registry key could point it at D:\Windows or C:\.
         if (!fs.existsSync(path.join(DIR, "vale-agent.exe")) &&
             !fs.existsSync(path.join(ETC_DIR, "vale-agent.hostname")) &&
             !fs.existsSync(path.join(DIR, "vale-agent.hostname"))) {
-            console.error("uninstall: REFUSE — " + DIR + " does not look like a Vale install dir (no vale-agent.exe/hostname). Set VALE_AGENT_DIR to the correct path.");
+            console.error("uninstall: REFUSE — " +
+                DIR +
+                " does not look like a Vale install dir (no vale-agent.exe/hostname). Set VALE_AGENT_DIR to the correct path.");
             process.exit(1);
         }
         console.log("uninstall: stopping ValeAgent...");
@@ -1735,10 +1922,34 @@ const commands = {
             }
         }
         sh("reg delete HKLM\\SOFTWARE\\Vale\\Agent /f 2>NUL");
-        console.log("uninstall: program dir + registry removed");
+        // VERIFY, because `sh()` discards its result at every one of its call sites — so a
+        // locked file, an AV hold or a denied HKLM write produced "removed" with the thing
+        // still there, and exit 0. The legacy-dir loop just above is the pattern.
+        const survivors = [];
+        if (fs.existsSync(DIR))
+            survivors.push(`install dir ${DIR}`);
+        const regLeft = (0, child_process_1.spawnSync)("reg", ["query", "HKLM\\SOFTWARE\\Vale\\Agent"], {
+            encoding: "utf8",
+        });
+        if (regLeft.status === 0)
+            survivors.push("registry key HKLM\\SOFTWARE\\Vale\\Agent");
+        if (survivors.length) {
+            console.log("uninstall: WARNING -- still present after removal:", survivors.join(", "));
+            console.log("uninstall: a locked file or a permission problem; re-run after stopping the agent.");
+        }
+        else {
+            console.log("uninstall: program dir + registry removed");
+        }
         if (purge) {
             sh(`rmdir /s /q "${DATA}"`);
-            console.log("uninstall: data dir purged");
+            // A failed rmdir used to print "data dir purged" anyway.
+            if (fs.existsSync(DATA)) {
+                console.error(`uninstall: FAILED to purge the data dir -- ${DATA} is still present`);
+                process.exitCode = 1;
+            }
+            else {
+                console.log("uninstall: data dir purged");
+            }
         }
         else {
             console.log("uninstall: data kept at", DATA, "(pass --purge-data to delete)");
@@ -1767,8 +1978,12 @@ const commands = {
                 }
                 // No shell:true — see status(): an unquoted filter through cmd.exe is
                 // split at its spaces, so this reported STOPPED while cloudflared ran.
-                const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], { encoding: "utf8" }).stdout || "";
-                console.log(out.toLowerCase().includes("cloudflared") ? "tunnel: RUNNING" : "tunnel: STOPPED");
+                const out = (0, child_process_1.spawnSync)("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], {
+                    encoding: "utf8",
+                }).stdout || "";
+                console.log(out.toLowerCase().includes("cloudflared")
+                    ? "tunnel: RUNNING"
+                    : "tunnel: STOPPED");
                 console.log("  binary:", cf);
                 console.log("  config:", cfg);
                 return;
@@ -1789,13 +2004,18 @@ const commands = {
                 // npm audit #12: detached/unref are NO-OPS on spawnSync —
                 // `vale tunnel start` blocked the CLI until the tunnel died.
                 // intent to background the tunnel); kept for parity.
-                const ch = (0, child_process_1.spawn)(cf, ["tunnel", "--config", cfg, "run"], { stdio: "ignore", detached: true });
+                const ch = (0, child_process_1.spawn)(cf, ["tunnel", "--config", cfg, "run"], {
+                    stdio: "ignore",
+                    detached: true,
+                });
                 ch.unref();
                 console.log("tunnel: started in background (agent also auto-spawns it on boot)");
                 return;
             }
             case "stop": {
-                const r = (0, child_process_1.spawnSync)("taskkill", ["/F", "/IM", "cloudflared.exe"], { stdio: "inherit" });
+                const r = (0, child_process_1.spawnSync)("taskkill", ["/F", "/IM", "cloudflared.exe"], {
+                    stdio: "inherit",
+                });
                 if (r.status !== 0)
                     console.log("tunnel: nothing to stop");
                 return;
