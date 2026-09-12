@@ -52,7 +52,7 @@
   height: 26px;
   border-radius: 8px;
   background: var(--accent-soft);
-  color: var(--accent-ink);
+  color: var(--accent-on-soft);
 }
 
 /* Session tabs — compact pills in the header */

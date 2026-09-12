@@ -133,7 +133,7 @@
 #drawer-head button {
   border: none;
   background: transparent;
-  color: var(--faint);
+  color: var(--muted);
   font-size: 13px;
   cursor: pointer;
   border-radius: 6px;

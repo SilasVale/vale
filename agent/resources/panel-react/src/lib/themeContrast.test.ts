@@ -406,6 +406,50 @@ describe("opacity is not used to dim text", () => {
     ).toContain("background: var(--accent-solid)");
   });
 
+  it("--accent-ink and --faint never paint TEXT", () => {
+    // The dark theme was NEVER SWEPT until now — every contrast measurement in
+    // this file before it was taken in LIGHT mode, and the dark block holds its
+    // own 39 values. Swept on the DEVICE, alpha-compositing the background stack
+    // (reading `rgba(255,255,255,0.07)` raw measures a near-invisible chip as a
+    // WHITE surface): **50 text elements under AA across 1434**, from two causes
+    // that the repo had ALREADY WRITTEN DOWN:
+    //
+    //   --faint       #6f707a on #1c1d22 = 3.42   (text bar 4.5)
+    //   --accent-ink  #d9480f on #3d2817 = 3.23, on #1c1d22 = 3.91, on white = 4.27
+    //
+    // `tokens.css` says of `--accent-ink`: "the accent for CHROME — icons, dots,
+    // borders … it was also being used as TEXT on two different chrome surfaces
+    // and failed on both". Sixteen call sites were still doing exactly that.
+    // `--muted` (4.63 light / 6.97 dark) and `--accent-on-soft` (6.21 / 9.19) are
+    // the text counterparts.
+    //
+    // `--faint` keeps its `background` uses — DOTS and marks, where the dark value
+    // clears the 3.0 bar. The rule is written against `color:` alone.
+    const css = builtCss();
+    // `--faint` too: #a1a1aa in LIGHT is 2.56 — below even the 3.0 bar that
+    // applies to a dot or a border — and #6f707a in dark is 3.42, below the 4.5
+    // text bar. Forty more rules used it as `color:`. It keeps its `background`
+    // and `border-color` uses, which the word-boundary guard leaves alone.
+    for (const [tok, replacement] of [
+      ["--accent-ink", "--accent-on-soft"],
+      ["--faint", "--muted"],
+    ]) {
+      const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${tok}\\)`, "g"))];
+      expect(
+        offenders.length,
+        `${offenders.length} rule(s) paint TEXT with ${tok}, a MARK weight (#a1a1aa/#6f707a for ` +
+          `--faint, #d9480f for --accent-ink) that measures 2.56-4.27 wherever it is used as ` +
+          `text. Use ${replacement}. It stays valid for background and border-color.`,
+      ).toBe(0);
+    }
+    // The specific inherited-colour twin: a `<strong>` with no colour of its own
+    // takes its parent's, and `.browser-placeholder` gave it --faint. The SAME
+    // defect was already fixed for `.browser-crash-banner` and this sibling was
+    // missed.
+    expect(blockOf(css, ".browser-placeholder")).toContain("color: var(--muted)");
+    expect(blockOf(css, ".plug-sub")).toContain("color: var(--muted)");
+  });
+
   it("--chrome-ink-faint never paints TEXT or a glyph", () => {
     // MEASURED IN A REAL BROWSER on the live panel, not inferred: the steady
     // status readout (`.desktop-status.idle` — session count, release, uptime,
