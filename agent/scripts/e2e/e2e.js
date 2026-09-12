@@ -40,9 +40,34 @@ const BASE = (() => {
   const i = process.argv.indexOf('--base');
   return i >= 0 ? process.argv[i + 1] : 'http://127.0.0.1:18080';
 })();
+// THE SECTION NAMES, DECLARED ONCE, so `--only` can be CHECKED against them.
+// `want()` below is driven by these; a name that is not in this list selects
+// nothing, and that used to be indistinguishable from success — see the guard
+// after the suite for what that cost.
+const SECTIONS = ['terminal', 'file', 'workflow', 'panel', 'mcp', 'evidence', 'browser', 'governance', 'runs'];
 const ONLY = (() => {
   const i = process.argv.indexOf('--only');
-  return i >= 0 ? process.argv[i + 1].split(',').map((s) => s.trim()) : null;
+  if (i < 0) return null;
+  const asked = String(process.argv[i + 1] || '')
+    .split(',')
+    .map((s) => s.trim())
+    .filter(Boolean);
+  // An unknown section is a CONFIGURATION ERROR, not a filter that matches
+  // nothing. CI runs `--only governance,runs`; rename a section and the step
+  // would otherwise keep "passing" while testing nothing at all.
+  const unknown = asked.filter((s) => !SECTIONS.includes(s));
+  if (unknown.length) {
+    console.error('unknown --only section(s): ' + unknown.join(', '));
+    console.error('known sections: ' + SECTIONS.join(', '));
+    console.error('EXIT 2: THE SUITE DID NOT RUN — a name that selects nothing is not a pass.');
+    process.exit(2);
+  }
+  if (!asked.length) {
+    console.error('--only was given with no section names');
+    console.error('known sections: ' + SECTIONS.join(', '));
+    process.exit(2);
+  }
+  return asked;
 })();
 const NO_BROWSER = process.argv.includes('--no-browser');
 const PW_DIR = process.env.VALE_PW_DIR || 'D:\\Vale\\components\\playwright';
@@ -848,5 +873,17 @@ async function sectionRuns() {
   }
   const failed = results.filter((r) => !r.pass);
   console.log('\n== ' + (results.length - failed.length) + '/' + results.length + ' passed ==');
+  // ZERO CHECKS IS NOT A PASS. `exit(failed.length ? 1 : 0)` read an empty result
+  // list as success, so a run that executed NOTHING printed "== 0/0 passed ==" and
+  // exited 0 — observed with `--only governance-typo,nonexistent` before this guard
+  // existed. CI runs this with `--only governance,runs`: one renamed section and the
+  // gate would have gone on reporting success while testing nothing.
+  //
+  // The exit codes, matching panel-render-audit.mjs: 0 ran and all passed,
+  // 1 ran and something failed, 2 DID NOT RUN (bad --only, or no checks executed).
+  if (results.length === 0) {
+    console.error('EXIT 2: THE SUITE DID NOT RUN — zero checks executed. A skip is not a pass.');
+    process.exit(2);
+  }
   process.exit(failed.length ? 1 : 0);
 })();
