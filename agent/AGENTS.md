@@ -515,7 +515,48 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 51 (the THIRD frontend — the one the user's question
+Last updated: 2026-09-11 round 52 (I went looking for the console's remaining weak
+pages and found the Overview already good — but the CLIENT CONFIG it hands a user
+doubled its scheme for one of the two ways an operator writes `API_HOST`).
+Commit: 4c0597d8. Worker deployed; all three spellings verified live.
+  (1) WHAT I LOOKED AT FIRST, and did NOT change: the console's Overview is a real
+  dashboard (four stat cards with lane accents, a gateway-token card with
+  copy/show/regenerate, device and channel summaries, a keys list) and the panel's
+  governance row + status bar are present and readable since round 47. INVENTING
+  churn on a page that is already designed is not iteration; recording that it was
+  checked is.
+  (2) THE DEFECT: `Routes.tsx` built the copy-paste client config as
+  `apiHost ? `https://${apiHost}` : ...` — the scheme prefixed UNCONDITIONALLY.
+  `API_HOST` is operator-set and `https://api.saisi.online` is as natural to write as
+  `api.saisi.online`, so the second spelling produced
+  `"ANTHROPIC_BASE_URL": "https://https://api.saisi.online"` in every copied config,
+  on the ONE screen whose purpose is to be pasted into a client, and nothing
+  validated it.
+  (3) FOUND IN A MOCK, AND THE DISTINCTION MATTERS: my harness set `apiHost` WITH the
+  scheme, the live value is BARE, so PRODUCTION WAS CORRECT and only the assumption
+  was wrong. A mock more permissive than production invents bugs; one less
+  permissive hides them. This one surfaced a real FRAGILITY (an operator-set value
+  with two spellings, one of which silently breaks the output) rather than a real
+  outage — worth closing either way, because the failure mode is a broken config
+  handed to a user.
+  (4) EXTRACTED TO `src/lib/baseUrl.ts` so the rule can be PINNED — `clientBase()`
+  adds the scheme only when missing, and trims. Four tests in `test/baseurl.test.mjs`
+  (the console's second unit test, beside `maskToken`); one sweeps five inputs
+  asserting no output ever contains a doubled scheme, a missing scheme or stray
+  whitespace. Mutation-proven: removing the scheme test fails with "doubled scheme".
+  (5) VERIFIED ON THE LIVE PAGE, all three spellings through the real app:
+  bare -> https://api.saisi.online, WITH-scheme -> https://api.saisi.online (the one
+  that broke), unset -> https://api.saisi.online. No doubling anywhere.
+  (6) STILL OPEN: the console's subjective information architecture beyond this —
+  Routes and the new Models page OVERLAP (Routes switches the active route and shows
+  the client config; Models lists every model of every channel and also switches),
+  and that overlap is MINE, created in round 49. Naming the two roles clearly, or
+  merging them, is the next real IA decision. Also open: the panel's governance-pill
+  prominence, and the `--dsw-alias-*` namespace rename on the landing page.
+  Gates: gateway 770 (was 766) + format; gateway-ui 5 (was 1); token contract green;
+  CI green on main.
+
+Previous round: 2026-09-11 round 51 (the THIRD frontend — the one the user's question
 about ai.saisi.online surfaced — was the last holdout of a blue brand the rest of the
 product had already abandoned). Commit: 0755d51b. vale-dist deployed; live verified.
   (1) THREE FRONTENDS, ONE OF THEM NEVER OPENED. `agent.saisi.online` and
