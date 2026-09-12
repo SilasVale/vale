@@ -519,7 +519,33 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 86 (a cleanup failure reported as "the pin was NOT
+Last updated: 2026-09-12 round 87 (`autostart status` reported a failed READ as "not
+installed" — the THIRD instance of that shape — and the update receipt's try/catch could
+never fire because `ps()` returns rather than throws).
+Commit: 58b62623. CI green.
+  (1) THREE STATES COLLAPSED INTO ONE. `autostart status` printed `(not installed)` whenever
+  the state string came back empty — covering a missing/unspawnable powershell (spawn
+  error), a `Get-ScheduledTask` that threw on permissions, AND a genuinely absent task. An
+  operator asking "is autostart on?" was told the task does not exist and sent to re-run
+  setup — by an access-denied. THIRD instance of the shape fixed in round 82 for
+  `statusReport` and `rollback status`: a failed READ is not evidence of ABSENCE.
+  (2) VERIFIED BY EFFECT, and this box is the strongest case because it has NO powershell,
+  so every read genuinely fails: before it printed "(not installed)" for both tasks —
+  claiming they were absent when the command never looked; now "state UNKNOWN -- could not
+  read it (spawnSync powershell ENOENT)".
+  (3) THE UPDATE RECEIPT'S try/catch COULD NEVER FIRE — `ps()` RETURNS its spawn result (it
+  was made to return precisely because discarding it printed success anyway, npm audit #7),
+  so a failed receipt write was SILENT. The receipt is the ONE artifact separating "the CLI
+  ran but the swap did not" from "nothing ran at all" (round-17), so losing it silently
+  makes the log look like the command never arrived. It warns, naming that consequence, and
+  stays non-fatal as documented.
+  (4) STILL OPEN: L2b the rollback path's `npm install -g` is judged on exit status only;
+  L12 `vale tunnel`'s config path is computed before the install check; L9 `vale status`'s
+  "release" line can read the Cargo fallback for a fresh install; L13 the `save`/`restore`
+  pair can write a settings file the agent will reject.
+  Gates: CLI 35 + freshness gate (re-checked after prettier); CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 86 (a cleanup failure reported as "the pin was NOT
 written" — the exact INVERSE of the truth — and "sources staged" printed when nothing was
 staged).
 Commit: 4cd9b716. CI green.
