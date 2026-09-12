@@ -488,7 +488,81 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 35 (the live views claimed a session had run
+Last updated: 2026-09-11 round 36 (a browser action that never started was shown
+as "running" while the device's explanation went undrawn; and ROUND 26'S FIX HAD
+PROMISED A SAFETY NET IT NEVER WOVE). Commit: 58814a1c, plus 1.2.342.
+  (1) A BROWSER ACTION THAT NEVER STARTED WAS SHOWN AS "running". The panel mapped
+  `exit_code === null` to that badge, and NO RECORD IN THE FEED CAN BE RUNNING —
+  every writer appends only after the action ends (the playwright producer writes
+  the result triple; the mcp-client producers write `exit_code: if ok { 0 } else
+  { 1 }`). The device distinguishes the two null-code cases with `timed_out`:
+  `Err(_)` = timed out, `Ok(Err(e))` = SPAWN FAILURE, and it writes
+  "spawn failed: {e}" to stderr. That sentence — `stderr_tail` — was DECLARED on
+  the panel's type, FETCHED from the route, and rendered NOWHERE, so every failure
+  arrived with no visible reason. The device did its job; the surface dropped it.
+  TWO MORE COLLAPSES FIXED: `undefined` is not `null` (the old `=== null` test
+  sent an absent field down the exit-code branch and rendered the literal string
+  "exit undefined" in the error class), and success is `exit_code === 0` and
+  nothing else. All of it is one `actionVerdict()` now, not a re-derivation at the
+  badge. Mutation-proven: making a null code read "running" fails the test naming
+  it. Also: `recipe.ts` omitted `bg`, so a path whose commands were all handed off
+  produced a recipe reading complete — the FOURTH place round 31's state had to be
+  added by hand, which is why `PATH_STATES` now exists as the one list.
+  (2) ROUND 26'S FIX SHIPPED ITS OWN DEFECT, and it is the sharpest instance of
+  this log's family yet. `browser-contract.test.mjs` documented: "WHEN THE BUNDLE
+  IS PRESENT we also check the snapshot against it, so a stale snapshot fails on
+  any box that has the artifact ... the banner below says so rather than letting a
+  skip look like a pass." THERE WAS NO SUCH CHECK, NO BANNER, AND `shippedBundle()`
+  WAS CALLED BY NOTHING — the comment and the orphan arrived in the SAME COMMIT,
+  the one that replaced both call sites with the snapshot reader. So the snapshot
+  could go stale in silence while every contract below it validated the console
+  against a server that is not the one we ship, which is EXACTLY the failure the
+  snapshot exists to prevent. Not a comment describing code wrongly: a comment
+  describing a SAFETY NET that was never woven, in the round that shipped the net.
+  THE VERSION IS NOW REALLY CROSS-CHECKED (`shippedMcpVersion()` vs the snapshot's
+  declared source), and the skip PRINTS what it did not verify. Mutation-proven:
+  a snapshot claiming 0.0.78 fails with "the snapshot is STALE".
+  WHAT IT STILL DOES NOT CHECK, stated in the code instead of implied away: the
+  schema TEXT. Each entry is a NON-CONTIGUOUS concatenation — a bundle slice plus
+  referenced definitions appended from elsewhere — so "does the bundle contain this
+  string" is FALSE for 28 of the 78 tools and a naive containment check would fail
+  on a CORRECT snapshot. Measured before ruling out; a real text check needs the
+  extractor's own logic.
+  (3) THE STALENESS GATE CAUGHT MY OWN RELEASE. An unused test helper broke the
+  panel build (unused locals are errors), so `build.sh` refused to ship an older
+  exe: "predates the newest exe-input commit — rebuild, re-stage, retry". The gate
+  worked exactly as designed, on me, before any device saw it.
+  (4) RELEASED 1.2.342, deployed the gateway (no targets — only a test file
+  changed), updated d1 and verified by effect (`release: 1.2.342`). CI and the
+  release workflow green on the tag; keep-latest left ONE release and ONE tag; the
+  dual-builder audit reported the STRONGER WARN verdict for the SEVENTEENTH
+  consecutive release.
+  (5) CLI/GATEWAY AUDIT FINDINGS NOT ACTED ON, recorded with evidence. The two
+  sharpest: `etc\tunnel.yml` has TWO WRITERS THAT DISAGREE — the CLI writes
+  `service: http://127.0.0.2:<port>` (`vale.ts:767`) while the agent's own
+  provisioning writes `127.0.0.1` (`tunnel.rs:405-407`, test-pinned) and its
+  comment calls 127.0.0.2 "a dead address (502)"; fresh installs bind 127.0.0.1,
+  so the CLI's file points the tunnel at a socket nobody holds, and `vale tunnel
+  status` reports RUNNING from the process table, never reachability. And ONE
+  UPDATE LOCK WITH TWO STALENESS RULES: the marker PATH agrees across languages
+  but the WINDOW does not (CLI 10 min, Rust 3600 s), so the CLI OVERWRITES a
+  marker the Rust side still refuses, and either swap script's unconditional
+  `Remove-Item` releases the other's exclusion — while the operator docs state
+  only the 10-minute rule. Also open: `vale uninstall` cannot report failure (it
+  claims removal and exits 0 whatever happened, while its LEGACY-dir twin IS
+  verified and prints a warning); `vale update`'s receipt is written but its
+  `ps()` result discarded, so a failed write manufactures the documented "the
+  command never reached the device" conclusion; the staging guard is a REGION, so
+  five later writes (including the swap script itself) can strand the busy marker;
+  the CLI's fallback roots (`C:\Program Files\Vale`) are not the agent's (exe
+  dir), and `update` — unlike `uninstall` — has no guard against staging into a
+  directory the agent is not running from; `autostart off` prints a success
+  sentence after a per-task failure; and the gateway turns a 2xx with a non-JSON
+  body into a SUCCESSFUL tool result (`resp.json().catch(() => ({}))`).
+  Gates: agent 583 default / 634 feat-gated, clippy -D warnings clean BOTH configs,
+  fmt clean, xwin OK; gateway 765 (was 764) + format; panel 503 + build.
+
+Previous round: 2026-09-11 round 35 (the live views claimed a session had run
 NOTHING, from a read that had not finished or had failed — round 27's defect one
 field over, in the same object literal). Commit: 832c7aa4, plus 1.2.341.
   (1) `useCommandEvents` HAS REPORTED `readState` FOR LONGER THAN THE ARCHIVE HAS
