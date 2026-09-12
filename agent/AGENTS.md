@@ -519,7 +519,37 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 64 (the console rendered "I could not read it" as a
+Last updated: 2026-09-11 round 65 (two more console items, both "the UI states
+something the server contradicts" — including a button naming a channel that is not in
+the catalogue at all). Commit: da3575eb. Worker deployed; both verified live.
+  (1) THE MODELS PAGE'S DEFAULT CARD WAS STRUCTURALLY ALWAYS EMPTY. `"none"` is the
+  server's sentinel for "no prefix -> Command Code (GOAT), name passed through as-is".
+  Round 58 derived every card's chips from the PREFIXED catalogue — right for the real
+  channels, and for the default card it filters for "ids matching no known prefix",
+  which is ALWAYS nothing because every advertised id is prefixed. Measured on live
+  data: unmatched = []. The card rendered 0 and an empty list while the server's own
+  entry lists models and the header badge said 21.
+  THE TWO CASES ARE OPPOSITES, and the code now says so: for THAT card
+  `routes[].models` are the right source AND the right form (bare names are exactly
+  what routes there), while for every other card they are the trap that set the wrong
+  channel in round 58. VERIFIED LIVE: n=1, chip `deepseek/deepseek-v4.1-flash`, and
+  clicking sends exactly it.
+  (2) "RESTORE DEFAULT (ds)" NAMED A CHANNEL THAT DOES NOT EXIST. The button calls
+  `setRoute(null)`, whose real default is `cm/deepseek/deepseek-v4.1-flash` (Command
+  Code); the live catalogue advertises og/, or/, nv/, gmi/, qw/, cm/ — there is no `ds/`
+  at all. The label no longer names a channel, because the description directly above it
+  already states the real one in both languages. A label that repeats a server constant
+  is a second copy that can drift, and this one had. VERIFIED LIVE.
+  (3) STILL OPEN, from the two audits: console — the Overview's false zeros for failed
+  reads plus `/devices` links that dead-end for non-admins, and the 8-key status shown
+  twice. Panel — DesktopShell shadowing App's sessionViews (Ctrl+Shift+Y is a no-op),
+  the rail's ✕ mislabelled "Archive session" with no undo, the Memory empty state
+  contradicting its own +New, Logs panel-only while accelerators are desktop-only, and
+  the landing page's `--dsw-alias-*` rename.
+  Gates: gateway-ui 11 + build + deploy; custom-property green; token contract green;
+  prettier clean; CI green on main; d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 64 (the console rendered "I could not read it" as a
 definite negative, and the console already had the pattern that fixes it — one file
 over). Commit: 467b1a30. Worker deployed; three states verified live.
   (1) THE DEFECT: `Users.tsx`'s loader swallowed BOTH reads into `/* noop */`. A failed
