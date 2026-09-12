@@ -1981,8 +1981,15 @@ const commands = {
         console.log(`rollback: installing vale-agent ${val} into ${NPM_GLOBAL} ...`);
         const npmCmd = process.platform === "win32" ? "npm.cmd" : "npm";
         const inst = (0, child_process_1.spawnSync)(npmCmd, ["install", "-g", "--prefix", NPM_GLOBAL, url], { stdio: "inherit", timeout: 300000 });
-        if (inst.status !== 0) {
-            console.error("rollback: npm install failed -- device left untouched");
+        // `status !== 0` is the FAIL-CLOSED test here — unlike the reversed checks fixed
+        // elsewhere in this file, a spawn failure or timeout yields `status: null`, which is
+        // also `!== 0`, so it aborts. Only the MESSAGE conflated the two, which matters
+        // because "npm install failed" sends an operator to look at the registry while
+        // "npm could not be run" sends them to look at PATH.
+        if (inst.error || inst.status !== 0) {
+            console.error(inst.error
+                ? `rollback: could not RUN npm (${inst.error.message}) -- device left untouched`
+                : `rollback: npm install failed (exit ${inst.status}) -- device left untouched`);
             process.exit(1);
         }
         const valeCmd = path.join(NPM_GLOBAL, "vale.cmd");
