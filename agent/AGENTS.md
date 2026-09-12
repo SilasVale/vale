@@ -519,7 +519,39 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 66 (the console's LAST structural audit item: the
+Last updated: 2026-09-11 round 67 (the console audit is COMPLETE — every finding in it
+has now been acted on; this round closed the last two, both on the Overview).
+Commit: 5b930a11. Worker deployed; both verified live.
+  (1) "CHANNELS HEALTHY" LINKED TO `/keys`, A PAGE WITH NO CHANNEL INFORMATION. Counted
+  rather than assumed: `Keys.tsx` mentions channels ZERO times, and `/models` is where
+  the per-channel health (up / down / not probed) renders. A tile about channel health
+  took you to a page about credentials. Now `to: "/models"`.
+  (2) THE SAME EIGHT KEYS WERE RENDERED TWICE ON ONE SCREEN: eight chips inside the
+  token card and eight rows in the keys card below, both from `KEY_ORDER`. The LIST is
+  strictly more informative — it names each provider and says "configured"/"not
+  configured" in WORDS — while the chips encoded the same state as a DOT COLOUR with no
+  text. The weaker copy is the one that went. This was the audit's softest finding and
+  I nearly left it as dashboard-style redundancy; a colour-only duplicate of a list
+  that already says it in words is noise on the page a user lands on.
+  VERIFIED LIVE: channels tile href "#/models"; `.ov-keychips .kchip` 0 (was 8);
+  `.ov-keylist .ov-keyrow` 8; "DEEPSEEK" appears ONCE (was twice).
+  (3) THE CONSOLE AUDIT, ALL 8 FINDINGS, ALL ACTED ON: the non-admin logout (r61); the
+  four i18n bypasses + the guard that could not see them (r62); "Clear all" revoking
+  without asking and toasting the opposite (r62); `Users` rendering "unknown" as a
+  definite negative (r64); the default-channel card that could only be empty, and
+  "Restore default (ds)" naming a channel that does not exist (r65); the Overview
+  asserting a false zero about a fleet it could not read, plus admin dead links (r66);
+  the channels tile and the duplicated key surface (r67). The console's own
+  `i18n-parity`, `client-paths` and custom-property guards came out of the same work.
+  (4) WHAT REMAINS IS THE PANEL, and all of it needs a release to reach the device:
+  DesktopShell shadowing App's sessionViews (Ctrl+Shift+Y is a no-op), the rail's ✕
+  mislabelled "Archive session" with no undo, the Memory empty state contradicting its
+  own +New (and the page having no heading), Logs panel-only while accelerators are
+  desktop-only, and the landing page's `--dsw-alias-*` rename.
+  Gates: gateway-ui 11 + build + deploy + devices render smoke; custom-property green;
+  token contract green; CI green on main; d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 66 (the console's LAST structural audit item: the
 Overview asserted a false zero about a fleet it could not read, and linked non-admins
 at a page that bounces them — the same shape as round 64, and fixed the same way).
 Commit: 2107e396. Worker deployed; three cases verified live.
