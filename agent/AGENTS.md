@@ -515,7 +515,58 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 46 (I opened the console's FIVE VIEWS BEHIND THE
+Last updated: 2026-09-11 round 47 (every contrast measurement in this repo had been
+taken in LIGHT mode; the DARK theme is a second surface with its own 39 values, and
+it held 50 text elements under AA — while MY OWN SWEEP was hiding them, two ways).
+Commits: c0651a12, f0fa4544. Released 1.2.352 and 1.2.353; d1 is on 1.2.353 and
+current; audit CLEAN (`CDN == GitHub asset byte-for-byte`).
+  (1) THE SWEEP WAS THE STORY. It hid the defects TWO ways, and I only caught both
+  by PRINTING THE COUNTS:
+  * it skipped any element with a background-image ANYWHERE among its ancestors, so
+    the panel's one gradient wrapper skipped EVERY text node and it reported
+    `checked=0, underAA=0` — which reads exactly like a pass. It now walks to the
+    NEAREST painted background and decides there. THIS IS ROUND 33'S LESSON ("a
+    check that reads nothing must not report success") committed again by me, in the
+    tool built to apply it.
+  * it read `rgba(255,255,255,0.07)` as WHITE: twenty of the 50 were near-invisible
+    chips measured against the wrong surface. It now alpha-composites the whole
+    background stack.
+  (2) THE TWO CAUSES WERE ALREADY WRITTEN DOWN IN THE REPO.
+  * `tokens.css` says of `--accent-ink`: "the accent for CHROME — icons, dots,
+    borders … it was also being used as TEXT on two different chrome surfaces and
+    failed on both". SIXTEEN call sites were still doing exactly that.
+  * `themeContrast.test.ts` already pins the `--faint`-inherited `<strong>` defect
+    for `.browser-crash-banner` — and `.browser-placeholder`'s `<strong>` had no
+    colour of its own either and inherited `--faint`, unnoticed, because the fix
+    went to ONE banner.
+  Measured: `--faint` #6f707a on #1c1d22 = 3.42 (and #a1a1aa in LIGHT is 2.56 —
+  below even the 3.0 bar for a mark); `--accent-ink` #d9480f = 3.23-4.27 wherever it
+  is text; `--danger` #dc2626 = 3.32 on its own dark soft chip.
+  Fixed 16 `--accent-ink`, 40 `--faint` and 18 `--danger` `color:` declarations to
+  their text counterparts (`--accent-on-soft` 6.21/9.19, `--muted` 4.63-4.83/6.97,
+  `--danger-on-soft` 6.91). All three tokens keep `background` and `border-color`:
+  the rule is written against `color:` with a word-boundary guard.
+  (3) THE INJECTION PROVED MY FIRST PASS INCOMPLETE, WHICH IS WHY THE FIX WENT TO
+  THE TOKEN. Injecting the three declarations I had written took Archive 1 -> 0, but
+  pages whose state I had not rendered (Plugins, Settings) then surfaced FURTHER
+  `--faint` text rules (`plug-meta`, `plug-btn`, `connect-where`, `connect-muted`).
+  Fixing selectors I had measured would have left those; fixing the TOKEN did not.
+  (4) AND THE RULE THEN FOUND 18 MORE, again: adding `--danger` to the pinned list
+  immediately failed on seventeen further declarations, mostly `:hover` states a
+  sweep cannot render. Fixing the measured instance, then writing the rule, then
+  letting the rule find the rest — third round running, and still the highest-yield
+  move here.
+  (5) FINAL STATE, VERIFIED ON THE DEVICE RUNNING 1.2.353, alpha-composited, all
+  eight rail pages, dark theme: **0 under AA across 1508 text nodes** (was 50).
+  Injection checks along the way: `.plug-btn.danger` 3.32 -> 6.91.
+  (6) BOTH SURFACES ARE NOW CLEAN IN BOTH THEMES: console light 0/223 and dark
+  0/264 (round 46), panel light (rounds 35-36) and dark 0/1508. THE SUBJECTIVE HALF
+  OF THE REDESIGN IS STILL OPEN AND STILL WANTS THE USER'S DIRECTION — layout,
+  density, navigation, whether the console's five views are the right five.
+  Gates: panel 509 + build; agent 583 + fmt clean; gateway 766; token contract
+  green; CI green on main; audit CLEAN.
+
+Previous round: 2026-09-11 round 46 (I opened the console's FIVE VIEWS BEHIND THE
 LOGIN for the first time — by mocking the admin APIs in a real browser — and the
 whole accessibility class turned out to have one cause the theme was missing).
 Commit: 4f80ba15. Worker deployed; live bundle verified. NO DEVICE RELEASE: the
