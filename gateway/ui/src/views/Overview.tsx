@@ -145,7 +145,10 @@ export default function Overview() {
       value: channels.length ? `${channelsOk}/${channels.length}` : "—",
       tone:
         channels.length && channelsOk === channels.length ? "ok" : channels.length ? "warn" : "off",
-      to: "/keys",
+      // `/models` is where channel health lives (per-channel up/down/not-probed).
+      // `/keys` contains no channel information at all — a tile about CHANNELS sent
+      // you to a page about credentials.
+      to: "/models",
     },
     {
       label: t("stat.keys"),
@@ -221,14 +224,6 @@ export default function Overview() {
             </button>
           </div>
           {tokenNote && <p className="form-message form-message-success">{tokenNote}</p>}
-          <div className="ov-keychips">
-            {keyEntries.map(({ name, info }) => (
-              <span key={name} className={`kchip${info?.configured ? " on" : ""}`} title={name}>
-                <span className="kchip-dot" />
-                {keyLabel(name)}
-              </span>
-            ))}
-          </div>
         </Card>
       </div>
 
