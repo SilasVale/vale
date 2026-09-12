@@ -40,4 +40,4 @@ code {
 
 .muted { color: var(--muted); }
 .hint { font-size: 12px; color: var(--muted); }
-.error { color: var(--danger); font-size: 12px; }
+.error { color: var(--danger-on-soft); font-size: 12px; }

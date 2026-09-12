@@ -131,7 +131,7 @@
 }
 .dtab:hover .dtab-close,
 .dtab.active .dtab-close { opacity: 1; }
-.dtab-close:hover { background: var(--danger-soft); color: var(--danger); }
+.dtab-close:hover { background: var(--danger-soft); color: var(--danger-on-soft); }
 
 /* Trajectory/terminal toggle (header, desktop density) */
 .desktop-view-switch {
@@ -292,7 +292,7 @@
   border-radius: 0 0 var(--radius) var(--radius);
 }
 .desktop-status.error { background: var(--danger-soft); }
-.desktop-status.error .desktop-status-msg { color: var(--danger); font-weight: 600; }
+.desktop-status.error .desktop-status-msg { color: var(--danger-on-soft); font-weight: 600; }
 /* THE STEADY READOUT, AND IT WAS UNREADABLE. This branch is what an operator
    sees almost all the time — session count, release, uptime, CPU and memory —
    and it is the ONLY place the release is shown anywhere in the panel. It was

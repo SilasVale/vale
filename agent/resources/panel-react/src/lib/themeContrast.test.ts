@@ -433,6 +433,9 @@ describe("opacity is not used to dim text", () => {
     for (const [tok, replacement] of [
       ["--accent-ink", "--accent-on-soft"],
       ["--faint", "--muted"],
+      // `--danger` is the MARK weight too: 3.32 as text on the dark danger-soft
+      // chip (measured on the shipped build, the LAST of the 50 to fall).
+      ["--danger", "--danger-on-soft"],
     ]) {
       const offenders = [...css.matchAll(new RegExp(`(?<![\\w-])color:\\s*var\\(${tok}\\)`, "g"))];
       expect(
