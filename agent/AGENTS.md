@@ -519,7 +519,45 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 77 (the MIRROR of the dangling check had no guard
+Last updated: 2026-09-12 round 78 (TWO subagent audits of surfaces nobody had looked at
+— the CLI and the gateway's MCP registry — and both found reasons that state something
+false). Commits: d271cdba, 6dd8c820, 65ec4133. CI green; gateway deployed; panel audit
+CLOSED (the Logs/accelerators split is a coverage difference, not a defect).
+  (1) THE MCP REGISTRY: 7 of its 26 NOT_EXPOSED reasons were FALSE, and two of them hid a
+  tool no surface could call. `terminal_jobs` mattered because `terminal_execute` EXPOSES
+  `run_in_background` (mcp-tools.ts:155) while the job registry that exists so callers
+  "poll terminal_jobs instead of blind-read loops" (exec.rs:1090) was uncallable.
+  `terminal_forget_saved` was worse: the device's own comment records that `forget()`
+  existed but was UNREACHABLE once before — "saved connections accumulated forever and
+  their keychain passwords orphaned" (connections.rs:36-38, MED-4) — so an exemption
+  claiming a phantom surface PUT THAT DEFECT BACK. Both are registered now (device-direct
+  by prefix, no routing change). Five more false reasons corrected; the count 49 -> 52.
+  THE GUARD IS REAL and mutation-proven both ways; no phantom entries; 52 = 26 + 26 + 0.
+  The defect was never the mechanism — it was that a reason is prose, and nothing checked
+  it.
+  (2) THE CLI: 13 ranked findings from a full read of bin/vale.js, and the one fixed here
+  is the clearest falsehood — a no-key `vale setup` printed "LOCAL install (no cloud)"
+  while the agent creates config.yaml from an embedded default pointing at the public
+  console and self-registers at boot and every 6h. Privacy-relevant, and the NEXT line
+  already said the opposite. The message now states what happens and how to opt out.
+  (3) AND CI CAUGHT ME EDITING A GENERATED FILE. `bin/vale.js` is compiled from
+  `src/vale.ts`; the freshness gate recompiles and cmps, so my direct edit failed the PR.
+  Fixed at the source and verified the gate locally before committing. Same shape as the
+  code-viewer mirror that caught me twice — a generated artifact is not a source.
+  (4) RECORDED, NOT FIXED — the CLI audit's remaining ranked findings: F1 `vale update`
+  exits 0 on HANDOFF not outcome (the guide documents this as deliberate, and `rollback`
+  already has the bounded read-back to reuse); F2/F3 `uninstall` claims "program dir +
+  registry removed" and "data purged" with every `sh()` result discarded at all 48 call
+  sites AND computes the data dir from %ProgramData% instead of its own registry-first
+  DATA_DIR, so a remapped install purges the WRONG directory; F8 `rollback --clear`
+  reports a failed delete as "no pin present"; F5/F6/F7/F10 similar.
+  (5) THE PANEL AUDIT IS CLOSED. The Logs drawer is panel-only and the accelerators are
+  desktop-only, but the desktop has the same DATA via Trajectory/Path, nothing promises
+  otherwise, and the drawer arrived with the panel redesign rather than being removed —
+  a coverage difference, not a defect by this project's standard.
+  Gates: gateway 788 + format + mirror; CLI 35 + freshness gate; CI green; d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 77 (the MIRROR of the dangling check had no guard
 either: 24 declarations nothing read, FOUR of them mine from the round before). CI green;
 landing deployed; no release needed.
   (1) `custom-prop-check.mjs` failed on USED-but-not-DEFINED. Nothing failed on the
