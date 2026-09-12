@@ -366,6 +366,46 @@ describe("opacity is not used to dim text", () => {
     ).toEqual([]);
   });
 
+  it("no TEXT is painted with a token that only marks: the three twins", () => {
+    // ONE ROOT CAUSE, THREE SYMPTOMS, ALL MEASURED ON THE LIVE PANEL at 1440x900
+    // by sweeping every visible text node for anything under the AA bar:
+    //
+    //   .dtab.active                    3.83  (needs 4.5, 12.5px)
+    //   .desktop-view-switch ...active  4.30  (needs 4.5, 11.5px)
+    //   .btn-new                        4.30  (needs 4.5, 12.5px)
+    //
+    // Every one is a fix that ALREADY EXISTED, applied to a sibling:
+    //   * `tokens.css` documents 3.83 on the active tab as a defect FIXED by
+    //     `--chrome-active-text`, and `.tab.active` uses it — while
+    //     `.dtab.active`, the rule the DESKTOP shell actually renders, kept
+    //     `--accent-ink`;
+    //   * `.view-switch-btn.active` got the same fix, but
+    //     `.desktop-view-switch .view-switch-btn.active` is MORE SPECIFIC (three
+    //     classes against two) and silently WON with the old token;
+    //   * `components.css` says outright "White on --accent-solid, not on
+    //     --accent: the brand orange gives white text 4.30, under AA at this
+    //     size" — and fixed `.goal-save`, while `.btn-new`, the other primary
+    //     action in the same header, kept the brand orange.
+    //
+    // Two surfaces, one product, and in each pair the fixed one sat next to the
+    // broken one in the same file.
+    const css = builtCss();
+    const needReadable = [
+      [".dtab.active", "--chrome-active-text"],
+      [".desktop-view-switch .view-switch-btn.active", "--chrome-active-text"],
+    ] as const;
+    for (const [sel, token] of needReadable) {
+      expect(blockOf(css, sel), `${sel} must paint its text with ${token}`).toContain(
+        `color: var(${token})`,
+      );
+    }
+    // The button carries WHITE text, so its background is what must be readable.
+    expect(
+      blockOf(css, ".btn-new"),
+      "white on --accent measures 4.30; .btn-new must use --accent-solid like .goal-save",
+    ).toContain("background: var(--accent-solid)");
+  });
+
   it("--chrome-ink-faint never paints TEXT or a glyph", () => {
     // MEASURED IN A REAL BROWSER on the live panel, not inferred: the steady
     // status readout (`.desktop-status.idle` — session count, release, uptime,

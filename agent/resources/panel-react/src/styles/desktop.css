@@ -85,7 +85,14 @@
 .dtab.active {
   background: var(--accent-soft);
   border-color: rgba(217, 72, 15, 0.22);
-  color: var(--accent-ink);
+  /* THE READABLE TOKEN, like its twin in components.css. This rule used
+     `--accent-ink` (#d9480f), which `tokens.css` documents as "the accent for
+     CHROME — icons, dots, borders" and which measures **3.83:1** as text on
+     `--accent-soft`. The comment there records that exact 3.83 as a defect that
+     was FIXED by introducing `--chrome-active-text` — and the fix landed on
+     `.tab.active` and `.view-switch-btn.active` while THIS rule, the one the
+     desktop shell actually renders, kept the old token. The twin rule again. */
+  color: var(--chrome-active-text);
   font-weight: 600;
 }
 .dtab-dot {
@@ -153,7 +160,10 @@
    accent-on-chrome value, where the orange measured 3.27 against this surface. */
 .desktop-view-switch .view-switch-btn.active {
   background: var(--surface);
-  color: var(--chrome-active-ink);
+  /* Same defect as `.dtab.active` above, and this selector is MORE SPECIFIC than
+     `components.css`'s `.view-switch-btn.active` — three classes against two — so
+     it silently WON over the rule that had already been fixed. */
+  color: var(--chrome-active-text);
   box-shadow: 0 1px 2px rgba(0, 0, 0, 0.08);
 }
 
@@ -166,14 +176,22 @@
   padding: 6px 12px;
   border: none;
   border-radius: 9px;
-  background: var(--accent);
+  /* White on --accent-solid, NOT on --accent, for the same reason `components.css`
+     already does it for `.goal-save`: the brand orange gives white text **4.30**,
+     under AA at this size, and this is a primary action. THAT COMMENT IS THE
+     PRECEDENT — a previous round measured exactly this and fixed the sibling
+     button while this one, in the same desktop header, kept the brand orange.
+     Measured on the live panel: 4.3, needing 4.5. `--accent-solid` gives 6.05. */
+  background: var(--accent-solid);
   color: #fff;
   font: 600 12.5px var(--font);
   cursor: pointer;
-  box-shadow: 0 1px 2px rgba(217, 72, 15, 0.35);
+  box-shadow: 0 1px 2px rgba(176, 58, 10, 0.35);
   transition: background 0.12s ease, transform 0.06s ease;
 }
-.btn-new:hover { background: var(--accent-ink); }
+/* Hover DARKENS. It used `--accent-ink` (#d9480f), which is LIGHTER than the new
+   base — a hover that reduced contrast to 4.27. */
+.btn-new:hover { background: var(--accent-on-soft); }
 .btn-new:active { transform: translateY(1px); }
 .new-menu {
   position: absolute;
