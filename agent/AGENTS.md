@@ -519,7 +519,46 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 62 (acting on the round-61 audit backlog: a
+Last updated: 2026-09-11 round 63 (three more audit findings fixed AND SHIPPED —
+released 1.2.355 because the panel is compiled into the exe, so a panel fix that is
+not released is not a fix). Commits: c918f3f7, 58aaadc6. Tag v1.2.355; d1 on 1.2.355.
+Audit CLEAN (`CDN == GitHub asset byte-for-byte`); keep-latest applied (v1.2.353/354
+releases and tags deleted, v1.2.355 is the only one).
+  (1) THE DEVICE REPORTS TWO VERSIONS AND THE PANEL SHOWED BOTH. `release` is the npm
+  release (1.2.x) — the number that changes and the only one that answers "is my device
+  current?"; `version` is the FROZEN Cargo protocol version (1.0.x). `DesktopShell` had
+  learned this and says so in a comment beside its own copy of the rule; `ConnectCard`'s
+  probe kept using `version`. In the desktop shell both are on screen AT ONCE — status
+  strip v1.2.354, Settings v1.0.145, same device. The rule is now ONE function
+  (`lib/agentVersion.ts`) used by both, because two copies is what let them disagree;
+  fixing only the second caller would have left the cause. Five tests, one the exact
+  regression.
+  (2) THE PLAYWRIGHT CARD PROMISED A SECURITY BOUNDARY THE AGENT REMOVED: "loopback-only
+  listener with a per-launch token", while `manager.rs` records the token plan as "a
+  no-go … no longer a security boundary" (the flag does not exist). The card now states
+  what does: 127.0.0.1 binding + `--allowed-hosts 127.0.0.1`, and says plainly there is
+  no token.
+  (3) "STOP" KILLED THE BROWSER WITH NO CONFIRMATION — `taskkill /T /F` on the whole
+  node+Chromium tree, killing a browser an AI client may be driving, while every other
+  destructive control in the panel asks first. Same inline two-step now, SHARING one css
+  rule with `mem-confirm-hint` instead of adding a second copy of three declarations.
+  (4) WHY A RELEASE WAS THE POINT: the panel is embedded in the exe via include_str!,
+  so all of it — including round 53's PathView wiring — was invisible until shipped.
+  VERIFIED IN THE BINARY before publishing (`strings`: the new security text present,
+  the old false claim ABSENT), then on the device after: `release: 1.2.355`, `this CLI:
+  1.2.355`, `this device is current`, and the live Plugins page shows the new text with
+  the old claim gone.
+  (5) STILL OPEN, from the two audits: console — false zeros for failed reads plus
+  `/devices` links that dead-end for non-admins, the `none` Models card that can only
+  show 0, "Restore default (ds)" naming a default the server contradicts, `Users`
+  rendering "not set" for a failed read, the 8-key status shown twice. Panel —
+  DesktopShell shadowing App's sessionViews (Ctrl+Shift+Y is a no-op), the rail's ✕
+  mislabelled "Archive session" with no undo, the Memory empty state contradicting its
+  own +New, Logs panel-only while accelerators are desktop-only, and the landing page's
+  `--dsw-alias-*` rename.
+  Gates: panel 521 (was 516) + build; release audit CLEAN; CI + release.yml green.
+
+Previous round: 2026-09-11 round 62 (acting on the round-61 audit backlog: a
 destructive action that toasted the OPPOSITE of what it did, and four strings that
 rendered the wrong language — plus the guard that could not see them).
 Commit: 8c8c8e24. Worker deployed; both verified by effect.
