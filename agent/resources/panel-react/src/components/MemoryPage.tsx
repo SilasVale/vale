@@ -106,16 +106,19 @@ export function MemoryPage() {
     }
   }, [query, namespace, tag, load]);
 
-  const del = useCallback(async (id: string) => {
-    try {
-      await callTool("memory_delete", { id });
-      toastMsg("deleted");
-      setConfirmId(null);
-      load();
-    } catch (e: any) {
-      setError(e?.message || String(e));
-    }
-  }, [load, toastMsg]);
+  const del = useCallback(
+    async (id: string) => {
+      try {
+        await callTool("memory_delete", { id });
+        toastMsg("deleted");
+        setConfirmId(null);
+        load();
+      } catch (e: any) {
+        setError(e?.message || String(e));
+      }
+    },
+    [load, toastMsg],
+  );
 
   // stage-n: inline edit — fill the form from the entry, save via memory_update.
   const startEdit = useCallback((e: MemEntry) => {
@@ -130,14 +133,21 @@ export function MemoryPage() {
     if (!editId) return;
     setEditBusy(true);
     try {
-      const tags = editTags.split(",").map((t) => t.trim()).filter(Boolean);
+      const tags = editTags
+        .split(",")
+        .map((t) => t.trim())
+        .filter(Boolean);
       if (editId === NEW_ID) {
         // stage-n: create from the UI — memory_save was AI-only until now.
         if (!editTitle.trim() || !editContent.trim()) {
           setError("title and content are required");
           return;
         }
-        await callTool("memory_save", { title: editTitle.trim(), content: editContent, tags });
+        await callTool("memory_save", {
+          title: editTitle.trim(),
+          content: editContent,
+          tags,
+        });
         toastMsg("entry created");
       } else {
         await callTool("memory_update", {
@@ -184,7 +194,9 @@ export function MemoryPage() {
     try {
       await navigator.clipboard.writeText(exportText);
       toastMsg("export copied");
-    } catch { toastMsg("clipboard unavailable"); }
+    } catch {
+      toastMsg("clipboard unavailable");
+    }
   }, [exportText, toastMsg]);
 
   const fmt = (ts: number) => new Date(ts * 1000).toLocaleString();
@@ -197,28 +209,62 @@ export function MemoryPage() {
           placeholder="Search title/content/tags… (Enter)"
           value={query}
           onChange={(e) => setQuery(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") search();
+          }}
         />
         <input
           className="mem-input mem-narrow"
           placeholder="namespace"
           value={namespace}
           onChange={(e) => setNamespace(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") search();
+          }}
         />
         <input
           className="mem-input mem-narrow"
           placeholder="tag"
           value={tag}
           onChange={(e) => setTag(e.target.value)}
-          onKeyDown={(e) => { if (e.key === "Enter") search(); }}
+          onKeyDown={(e) => {
+            if (e.key === "Enter") search();
+          }}
         />
-        <button className="btn btn-ghost btn-mini" onClick={search} disabled={busy}>Search</button>
-        <button className="btn btn-ghost btn-mini" onClick={load} disabled={busy}>List</button>
-        <button className="btn btn-ghost btn-mini" onClick={doExport} disabled={busy}>Export</button>
+        <button
+          className="btn btn-ghost btn-mini"
+          onClick={search}
+          disabled={busy}
+        >
+          Search
+        </button>
+        <button
+          className="btn btn-ghost btn-mini"
+          onClick={load}
+          disabled={busy}
+        >
+          List
+        </button>
+        <button
+          className="btn btn-ghost btn-mini"
+          onClick={doExport}
+          disabled={busy}
+        >
+          Export
+        </button>
         {/* stage-n: create entries from the UI (was AI-only via memory_save) */}
-        <button className="btn btn-mini" onClick={startNew} disabled={editId !== null}>+ New</button>
-        {busy && <span className="mem-busy" title="loading">◌</span>}
+        <button
+          className="btn btn-mini"
+          onClick={startNew}
+          disabled={editId !== null}
+        >
+          + New
+        </button>
+        {busy && (
+          <span className="mem-busy" title="loading">
+            ◌
+          </span>
+        )}
       </div>
       {error && <div className="error">{error}</div>}
       {toast && <div className="hint">{toast}</div>}
@@ -227,55 +273,156 @@ export function MemoryPage() {
           /* stage-n: new-entry card (same form as inline edit) */
           <div className="mem-card">
             <div className="mem-edit">
-              <input className="mem-edit-input" autoFocus value={editTitle} onChange={(ev) => setEditTitle(ev.target.value)} placeholder="Title (required)" />
-              <textarea className="mem-edit-content" value={editContent} onChange={(ev) => setEditContent(ev.target.value)} placeholder="Content (required)" rows={3} />
-              <input className="mem-edit-input" value={editTags} onChange={(ev) => setEditTags(ev.target.value)} placeholder="Tags (comma separated)" />
+              <input
+                className="mem-edit-input"
+                autoFocus
+                value={editTitle}
+                onChange={(ev) => setEditTitle(ev.target.value)}
+                placeholder="Title (required)"
+              />
+              <textarea
+                className="mem-edit-content"
+                value={editContent}
+                onChange={(ev) => setEditContent(ev.target.value)}
+                placeholder="Content (required)"
+                rows={3}
+              />
+              <input
+                className="mem-edit-input"
+                value={editTags}
+                onChange={(ev) => setEditTags(ev.target.value)}
+                placeholder="Tags (comma separated)"
+              />
               <div className="mem-edit-actions">
-                <button className="btn btn-mini" onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Create"}</button>
-                <button className="btn btn-ghost btn-mini" onClick={() => setEditId(null)}>Cancel</button>
+                <button
+                  className="btn btn-mini"
+                  onClick={saveEdit}
+                  disabled={editBusy}
+                >
+                  {editBusy ? "Saving…" : "Create"}
+                </button>
+                <button
+                  className="btn btn-ghost btn-mini"
+                  onClick={() => setEditId(null)}
+                >
+                  Cancel
+                </button>
               </div>
             </div>
           </div>
         )}
-        {entries.length === 0 && !busy && <p className="muted">No memory entries yet — AI clients save knowledge via memory_save.</p>}
-        {entries.length >= 50 && <p className="muted">Showing the first 50 entries — narrow the namespace filter or search to reach older knowledge.</p>}
+        {entries.length === 0 && !busy && (
+          /* This used to say saving was an AI-client thing, while "+ New" in the
+             toolbar above does exactly that from the UI — and `startNew` does not set
+             `busy`, so the sentence rendered DIRECTLY BENEATH the create form it
+             claimed was impossible. */
+          <p className="muted">
+            No memory entries yet — use + New, or let AI clients save knowledge
+            via memory_save.
+          </p>
+        )}
+        {entries.length >= 50 && (
+          <p className="muted">
+            Showing the first 50 entries — narrow the namespace filter or search
+            to reach older knowledge.
+          </p>
+        )}
         {entries.map((e) => (
-          <div className="mem-card" key={e.id} data-deleted={e.deleted || undefined}>
+          <div
+            className="mem-card"
+            key={e.id}
+            data-deleted={e.deleted || undefined}
+          >
             {editId === e.id ? (
               /* stage-n: inline edit form */
               <div className="mem-edit">
-                <input className="mem-edit-input" value={editTitle} onChange={(ev) => setEditTitle(ev.target.value)} placeholder="Title" />
-                <textarea className="mem-edit-content" value={editContent} onChange={(ev) => setEditContent(ev.target.value)} placeholder="Content" rows={3} />
-                <input className="mem-edit-input" value={editTags} onChange={(ev) => setEditTags(ev.target.value)} placeholder="Tags (comma separated)" />
+                <input
+                  className="mem-edit-input"
+                  value={editTitle}
+                  onChange={(ev) => setEditTitle(ev.target.value)}
+                  placeholder="Title"
+                />
+                <textarea
+                  className="mem-edit-content"
+                  value={editContent}
+                  onChange={(ev) => setEditContent(ev.target.value)}
+                  placeholder="Content"
+                  rows={3}
+                />
+                <input
+                  className="mem-edit-input"
+                  value={editTags}
+                  onChange={(ev) => setEditTags(ev.target.value)}
+                  placeholder="Tags (comma separated)"
+                />
                 <div className="mem-edit-actions">
-                  <button className="btn btn-mini" onClick={saveEdit} disabled={editBusy}>{editBusy ? "Saving…" : "Save"}</button>
-                  <button className="btn btn-ghost btn-mini" onClick={() => setEditId(null)}>Cancel</button>
+                  <button
+                    className="btn btn-mini"
+                    onClick={saveEdit}
+                    disabled={editBusy}
+                  >
+                    {editBusy ? "Saving…" : "Save"}
+                  </button>
+                  <button
+                    className="btn btn-ghost btn-mini"
+                    onClick={() => setEditId(null)}
+                  >
+                    Cancel
+                  </button>
                 </div>
               </div>
             ) : (
               <>
                 <div className="mem-card-head">
                   <span className="mem-title">{e.title}</span>
-                  <span className="mem-meta">{e.namespace} · {e.source} · {fmt(e.updated_at)}</span>
+                  <span className="mem-meta">
+                    {e.namespace} · {e.source} · {fmt(e.updated_at)}
+                  </span>
                   <span className="mem-actions">
-                    <button className="btn btn-ghost btn-mini" title="Edit entry" aria-label="Edit entry" onClick={() => startEdit(e)}>
+                    <button
+                      className="btn btn-ghost btn-mini"
+                      title="Edit entry"
+                      aria-label="Edit entry"
+                      onClick={() => startEdit(e)}
+                    >
                       <Icon name="edit" size={11} />
                     </button>
                     {confirmId === e.id ? (
                       <>
                         <span className="mem-confirm-hint">delete?</span>
-                        <button className="btn btn-danger btn-mini" onClick={() => del(e.id)}>Delete</button>
-                        <button className="btn btn-ghost btn-mini" onClick={() => setConfirmId(null)}>Cancel</button>
+                        <button
+                          className="btn btn-danger btn-mini"
+                          onClick={() => del(e.id)}
+                        >
+                          Delete
+                        </button>
+                        <button
+                          className="btn btn-ghost btn-mini"
+                          onClick={() => setConfirmId(null)}
+                        >
+                          Cancel
+                        </button>
                       </>
                     ) : (
-                      <button className="btn btn-danger btn-mini" title="Delete entry" aria-label="Delete entry" onClick={() => setConfirmId(e.id)}>
+                      <button
+                        className="btn btn-danger btn-mini"
+                        title="Delete entry"
+                        aria-label="Delete entry"
+                        onClick={() => setConfirmId(e.id)}
+                      >
                         <Icon name="close" size={11} />
                       </button>
                     )}
                   </span>
                 </div>
                 {e.tags.length > 0 && (
-                  <div className="mem-tags">{e.tags.map((t) => <span className="mem-tag" key={t}>{t}</span>)}</div>
+                  <div className="mem-tags">
+                    {e.tags.map((t) => (
+                      <span className="mem-tag" key={t}>
+                        {t}
+                      </span>
+                    ))}
+                  </div>
                 )}
                 <pre className="mem-content">{e.content}</pre>
               </>
@@ -288,8 +435,15 @@ export function MemoryPage() {
           <div className="mem-export-head">
             <span>Export ({exportText.split("\n").length} lines)</span>
             <span className="mem-export-actions">
-              <button className="btn btn-ghost btn-mini" onClick={copyExport}>Copy</button>
-              <button className="btn btn-ghost btn-mini" onClick={() => setExportText("")}>Close</button>
+              <button className="btn btn-ghost btn-mini" onClick={copyExport}>
+                Copy
+              </button>
+              <button
+                className="btn btn-ghost btn-mini"
+                onClick={() => setExportText("")}
+              >
+                Close
+              </button>
             </span>
           </div>
           <pre>{exportText}</pre>

@@ -23,7 +23,13 @@
               background var(--ds-transition-duration) var(--ds-ease-in-out);
 }
 .btn:hover { color: var(--ink); border-color: var(--faint); }
-.btn.primary { background: var(--accent); border-color: var(--accent); color: #fff; }
+.btn.primary {
+  background: var(--accent);
+  border-color: var(--accent);
+  /* `--accent-fg`, not `#fff` — white on this accent measures 4.30, just under
+     AA. The token makes the foreground stated rather than assumed. */
+  color: var(--accent-fg);
+}
 .btn.primary:hover { background: var(--accent-ink); }
 .btn-ghost { background: transparent; border-color: transparent; color: var(--muted); }
 .btn-ghost:hover { color: var(--accent-on-soft); background: var(--accent-soft); }

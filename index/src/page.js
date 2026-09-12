@@ -2,18 +2,23 @@
 // index.js so the routing module isn't 45% HTML/CSS). Pure data + pure
 // helpers, no worker bindings — same pattern as ./claim.js.
 
-export const FAVICON = "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3C%21--%20glass%20sheen%20--%3E%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
+export const FAVICON =
+  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3C%21--%20glass%20sheen%20--%3E%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
 
 export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
-// P2-8: both URLs flow into HTML (href attributes + inline <code> text).
-// They derive from the CONSOLE_URL env var / request origin, so treat them
-// as untrusted: https-only whitelist (http allowed solely for loopback dev)
-// + HTML-escape at the interpolation points. A crafted CONSOLE_URL must
-// never break out of the attribute/element (stored-XSS via env var).
-const safeConsole = escHtml(safePageUrl(consoleUrl, "/"));
-const safeInstaller = escHtml(safePageUrl(installerUrl, "/vale-agent/vale-agent-latest.tgz"));
-const safeSetup = escHtml(safePageUrl(setupUrl, "/vale-agent/ValeAgent-Setup.exe"));
-return `<!doctype html>
+  // P2-8: both URLs flow into HTML (href attributes + inline <code> text).
+  // They derive from the CONSOLE_URL env var / request origin, so treat them
+  // as untrusted: https-only whitelist (http allowed solely for loopback dev)
+  // + HTML-escape at the interpolation points. A crafted CONSOLE_URL must
+  // never break out of the attribute/element (stored-XSS via env var).
+  const safeConsole = escHtml(safePageUrl(consoleUrl, "/"));
+  const safeInstaller = escHtml(
+    safePageUrl(installerUrl, "/vale-agent/vale-agent-latest.tgz"),
+  );
+  const safeSetup = escHtml(
+    safePageUrl(setupUrl, "/vale-agent/ValeAgent-Setup.exe"),
+  );
+  return `<!doctype html>
 <html lang="en">
 <head>
 <meta charset="utf-8">
@@ -316,7 +321,7 @@ return `<!doctype html>
         </div>
         <div class="step">
           <div class="step-num">3</div>
-          <div class="step-body">Updates are the same channel: <code>npm i -g ${safeInstaller} && vale update</code>.</div>
+          <div class="step-body">Updates are the same channel — but <b>pass <code>--prefix</code></b>: a plain <code>npm i -g</code> writes npm's default global prefix, while <code>vale</code> lives elsewhere when the agent runs as a service, so <code>vale update</code> then runs the OLD CLI and stages the OLD build. npm reports success and nothing happens. <code>npm i -g --prefix (Split-Path (Get-Command vale).Source) ${safeInstaller}</code> then <code>vale update</code>, and confirm with <code>vale status</code> — not with npm's exit code.</div>
         </div>
       </div>
     </div>
@@ -358,7 +363,11 @@ export function safePageUrl(u, fallback) {
     // a valid URL host (browsers/node require brackets), so the WHATWG
     // parser never yields it; only "[::1]" can occur. Dead branch removed
     // rather than pinned.
-    if (parsed.protocol === "http:" && (host === "localhost" || host === "127.0.0.1" || host === "[::1]")) return s;
+    if (
+      parsed.protocol === "http:" &&
+      (host === "localhost" || host === "127.0.0.1" || host === "[::1]")
+    )
+      return s;
     return fallback;
   } catch {
     return fallback;

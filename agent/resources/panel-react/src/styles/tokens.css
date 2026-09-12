@@ -7,6 +7,7 @@
 :root {
   /* ---- brand (Vale sunrise amber) ---- */
   --accent: #d9480f;
+  --accent-fg: #ffffff; /* the foreground ON --accent */
   --accent-ink: #d9480f;
   --accent-soft: #ffefe5;
   --focus-ring: rgba(11, 122, 110, 0.65);
@@ -83,8 +84,8 @@
   --warn: #b45309;
   --warn-ink: #92400e;
   --warn-soft: rgba(217, 119, 6, 0.12);
-  --lane-ds: #4f6bed;   /* SSH tab dot */
-  --lane-or: #d97706;   /* serial tab dot */
+  --lane-ds: #4f6bed; /* SSH tab dot */
+  --lane-or: #d97706; /* serial tab dot */
 
   /* ---- discrete state palette (P1) ----
      FIVE states, each with its OWN colour AND its own SILHOUETTE. Both
@@ -116,9 +117,9 @@
   --state-muted-soft: rgba(127, 127, 127, 0.12);
 
   /* ---- round-161 semantic additions (previously hardcoded in css) ---- */
-  --tag-ink: #0a6f64;        /* memory tag chips (teal ink, light theme) */
-  --terminal-bg: #131418;    /* xterm + browser viewport (always dark) */
-  --rail-ink: #9a9aa0;       /* desktop rail idle label (rail is always dark) */
+  --tag-ink: #0a6f64; /* memory tag chips (teal ink, light theme) */
+  --terminal-bg: #131418; /* xterm + browser viewport (always dark) */
+  --rail-ink: #9a9aa0; /* desktop rail idle label (rail is always dark) */
   --rail-ink-strong: #ffffff;
 
   /* ---- round-162 frame chrome — LIGHT by default (user preference) ----
@@ -141,9 +142,9 @@
      tab, 3.65 on the active view switch). This is the text-weight counterpart. */
   --chrome-active-text: var(--accent-on-soft);
   --chrome-glass: rgba(255, 255, 255, 0.96);
-  --amber-bright: #ffa94d;          /* accent readable on DARK chrome */
-  --term-canvas-bg: #ffffff;        /* xterm container (theme-following) */
-  --browser-stage-bg: #131418;      /* browser viewport / evidence (always dark) */
+  --amber-bright: #ffa94d; /* accent readable on DARK chrome */
+  --term-canvas-bg: #ffffff; /* xterm container (theme-following) */
+  --browser-stage-bg: #131418; /* browser viewport / evidence (always dark) */
   --rail-ink: var(--chrome-ink-dim);
   --rail-ink-strong: var(--chrome-ink);
 
@@ -162,10 +163,12 @@
   --ds-transition-duration-slow: 0.3s;
 
   /* ---- typography ---- */
-  --font: -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
-          "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
-  --font-mono: "SF Mono", ui-monospace, "JetBrains Mono", Consolas,
-               "PingFang SC", "Microsoft YaHei", sans-serif;
+  --font:
+    -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
+    "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
+  --font-mono:
+    "SF Mono", ui-monospace, "JetBrains Mono", Consolas, "PingFang SC",
+    "Microsoft YaHei", sans-serif;
 }
 
 /* ============================================================

@@ -38,7 +38,7 @@ describe("MemoryPage", () => {
   it("search passes query+tag; empty query falls back to list", async () => {
     vi.mocked(callTool).mockResolvedValue({ results: [] });
     render(<MemoryPage />);
-    await screen.findByText("No memory entries yet — AI clients save knowledge via memory_save.");
+    await screen.findByText("No memory entries yet — use + New, or let AI clients save knowledge via memory_save.");
     fireEvent.change(screen.getByPlaceholderText("Search title/content/tags… (Enter)"), { target: { value: "deploy" } });
     fireEvent.change(screen.getByPlaceholderText("tag"), { target: { value: "ops" } });
     fireEvent.click(screen.getByText("Search"));
