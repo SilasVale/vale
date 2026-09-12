@@ -14,7 +14,7 @@
 // (round 54's lesson).
 import test from "node:test";
 import assert from "node:assert/strict";
-import { readFileSync } from "node:fs";
+import { readFileSync, readdirSync } from "node:fs";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
@@ -46,14 +46,87 @@ test("zh and en declare the SAME keys — no gaps, no strays", () => {
     `${missing.length} key(s) exist in zh and NOT in en. t() falls back to the Chinese ` +
       `dictionary, so an English user sees Chinese here: ${missing.slice(0, 10).join(", ")}`,
   );
-  assert.deepEqual(extra, [], `${extra.length} key(s) exist in en and NOT in zh: ${extra.slice(0, 10).join(", ")}`);
+  assert.deepEqual(
+    extra,
+    [],
+    `${extra.length} key(s) exist in en and NOT in zh: ${extra.slice(0, 10).join(", ")}`,
+  );
 });
 
 test("the Models surface specifically is covered in both languages", () => {
   // Pinned by name because it is the surface that shipped broken, so a future
   // refactor that drops these keys fails here with the page named.
-  for (const k of ["nav.models", "models.lede", "models.count", "models.unavailable", "models.notChecked", "models.noPrefix"]) {
+  for (const k of [
+    "nav.models",
+    "models.lede",
+    "models.count",
+    "models.unavailable",
+    "models.notChecked",
+    "models.noPrefix",
+  ]) {
     assert.ok(zh.has(k), `${k} missing from zh`);
     assert.ok(en.has(k), `${k} missing from en — the English Models page would render Chinese`);
   }
+});
+
+// ── A LITERAL IN A COMPONENT IS A TRANSLATION NOBODY CAN REACH ───────────────
+//
+// The parity check above compares the two DICTIONARIES, so a string written
+// directly into JSX is invisible to it — and that is exactly how the console ended
+// up showing Chinese in its English locale and English in its Chinese one:
+//
+//   Keys.tsx    { weekly: "周", monthly: "月" }   and   `余额: ${money(...)}`
+//   Users.tsx   "•••••• (set)" / "— (not set)"
+//   Auth.tsx    placeholder="admin key" / "New password (≥8 chars)"
+//
+// CJK is the half that can be detected mechanically, and it is the half that is
+// unambiguous: the console's source language is English, so Chinese in a component
+// is always a leak. `i18n.ts` is the one file allowed to contain it.
+//
+// The English-in-the-Chinese-console direction cannot be found this way (English IS
+// the source language); this check closes the direction that can be closed.
+const CJK = /[\u3400-\u9fff\u3040-\u30ff\uff00-\uffef]/;
+
+test("no CJK literals in console source outside the dictionary", () => {
+  const root = path.join(ROOT, "src");
+  const offenders = [];
+  const walk = (dir) => {
+    for (const entry of readdirSync(dir, { withFileTypes: true })) {
+      const full = path.join(dir, entry.name);
+      if (entry.isDirectory()) walk(full);
+      else if (/\.tsx?$/.test(entry.name) && entry.name !== "i18n.ts") {
+        const src = readFileSync(full, "utf8");
+        const lines = src.split("\n");
+        lines.forEach((line, i) => {
+          // An EXPLICIT, auditable opt-out. The language toggle legitimately renders
+          // the OTHER language's name in its own script ("中文" while in English),
+          // which is correct practice and not a leak — but rather than pattern-match
+          // an exception, the line must SAY why it is allowed.
+          //
+          // THE MARKER IS MATCHED OVER A WINDOW, NOT THE EXACT LINE. It was
+          // line-exact first, and prettier immediately moved the trailing
+          // `{/* i18n-allow-cjk: … */}` onto its own line — the marker was still in
+          // the file and no longer beside the literal, so the check reported the two
+          // LEGITIMATE toggles as leaks. An opt-out whose meaning depends on a line
+          // boundary is an opt-out a formatter can revoke.
+          const near = lines.slice(Math.max(0, i - 2), i + 3).join("\n");
+          if (near.includes("i18n-allow-cjk")) return;
+          // Comments may quote the Chinese they are explaining.
+          const code = line.replace(/\/\/.*$/, "").replace(/\/\*.*?\*\//g, "");
+          if (CJK.test(code))
+            offenders.push(`${path.relative(ROOT, full)}:${i + 1}  ${line.trim().slice(0, 70)}`);
+        });
+      }
+    }
+  };
+  walk(root);
+  assert.deepEqual(
+    offenders,
+    [],
+    `${offenders.length} line(s) put CJK directly in console source. Each one renders in the ` +
+      `WRONG locale — the English console shows Chinese — because it never passes through t():\n  ` +
+      offenders.join("\n  "),
+  );
+  // Guard against a walk that read nothing.
+  assert.ok(readdirSync(path.join(ROOT, "src")).length > 0, "the source walk found nothing");
 });

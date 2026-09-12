@@ -81,7 +81,7 @@ export default function Users() {
 
       <Card title={t("adminpw.title")} description={t("adminpw.desc")}>
         <div className="token-row">
-          <code className="token">{pwSet ? "•••••• (set)" : "— (not set)"}</code>
+          <code className="token">{pwSet ? t("adminpw.isSet") : t("adminpw.notSet")}</code>
         </div>
         <div className="input-row mt-12">
           <input
@@ -103,7 +103,11 @@ export default function Users() {
       <Card
         title={t("invite.title")}
         headerExtra={
-          <button className="btn btn-primary btn-sm" disabled={inviteLoading} onClick={handleGenerateInvite}>
+          <button
+            className="btn btn-primary btn-sm"
+            disabled={inviteLoading}
+            onClick={handleGenerateInvite}
+          >
             {t("invite.gen")}
           </button>
         }
@@ -133,7 +137,10 @@ export default function Users() {
                   {u.enabled ? t("user.enabled") : t("user.disabled")}
                 </Badge>
                 {u.role !== "admin" && (
-                  <button className="btn btn-ghost btn-mini" onClick={() => handleToggle(u.id, u.enabled)}>
+                  <button
+                    className="btn btn-ghost btn-mini"
+                    onClick={() => handleToggle(u.id, u.enabled)}
+                  >
                     {u.enabled ? t("btn.disable") : t("btn.enable")}
                   </button>
                 )}

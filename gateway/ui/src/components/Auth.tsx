@@ -66,7 +66,8 @@ export default function Auth() {
       <aside className="auth-aside">
         <div className="auth-lang">
           <button className="lang-btn" onClick={() => setLang(lang === "zh" ? "en" : "zh")}>
-            {lang === "zh" ? "EN" : "中文"}
+            {lang === "zh" ? "EN" : "中文"}{" "}
+            {/* i18n-allow-cjk: names the other language in its own script */}
           </button>
         </div>
         <div className="auth-brand">
@@ -102,113 +103,113 @@ export default function Auth() {
             </button>
           </div>
 
-        {tab === "login" && (
-          <form className="auth-form" onSubmit={handleLogin} autoComplete="off">
-            <label>
-              <span>{t("auth.username")}</span>
-              <input
-                name="username"
-                placeholder={t("auth.usernamePh")}
-                required
-                autoComplete="username"
-                value={loginUser}
-                onChange={(e) => setLoginUser(e.target.value)}
-              />
-            </label>
-            <label>
-              <span>{t("auth.password")}</span>
-              <input
-                name="password"
-                type="password"
-                placeholder={t("auth.passwordPh")}
-                required
-                autoComplete="current-password"
-                value={loginPass}
-                onChange={(e) => setLoginPass(e.target.value)}
-              />
-            </label>
-            {loginMsg && <p className="form-msg">{loginMsg}</p>}
-            <button type="submit" className="btn btn-accent btn-block">
-              {t("auth.loginBtn")}
-            </button>
-          </form>
-        )}
+          {tab === "login" && (
+            <form className="auth-form" onSubmit={handleLogin} autoComplete="off">
+              <label>
+                <span>{t("auth.username")}</span>
+                <input
+                  name="username"
+                  placeholder={t("auth.usernamePh")}
+                  required
+                  autoComplete="username"
+                  value={loginUser}
+                  onChange={(e) => setLoginUser(e.target.value)}
+                />
+              </label>
+              <label>
+                <span>{t("auth.password")}</span>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder={t("auth.passwordPh")}
+                  required
+                  autoComplete="current-password"
+                  value={loginPass}
+                  onChange={(e) => setLoginPass(e.target.value)}
+                />
+              </label>
+              {loginMsg && <p className="form-msg">{loginMsg}</p>}
+              <button type="submit" className="btn btn-accent btn-block">
+                {t("auth.loginBtn")}
+              </button>
+            </form>
+          )}
 
-        {tab === "register" && (
-          <form className="auth-form" onSubmit={handleRegister} autoComplete="off">
-            <label>
-              <span>{t("auth.username")}</span>
-              <input
-                name="username"
-                placeholder={t("auth.usernamePhReg")}
-                required
-                autoComplete="username"
-                value={regUser}
-                onChange={(e) => setRegUser(e.target.value)}
-              />
-            </label>
-            <label>
-              <span>{t("auth.password")}</span>
-              <input
-                name="password"
-                type="password"
-                placeholder={t("auth.passwordPhReg")}
-                required
-                autoComplete="new-password"
-                value={regPass}
-                onChange={(e) => setRegPass(e.target.value)}
-              />
-            </label>
-            <label>
-              <span>{t("auth.inviteCode")}</span>
-              <input
-                name="inviteCode"
-                placeholder={t("auth.invitePh")}
-                required
-                value={regInvite}
-                onChange={(e) => setRegInvite(e.target.value)}
-              />
-            </label>
-            {regMsg && <p className="form-msg">{regMsg}</p>}
-            <button type="submit" className="btn btn-accent btn-block">
-              {t("auth.registerBtn")}
-            </button>
-          </form>
-        )}
+          {tab === "register" && (
+            <form className="auth-form" onSubmit={handleRegister} autoComplete="off">
+              <label>
+                <span>{t("auth.username")}</span>
+                <input
+                  name="username"
+                  placeholder={t("auth.usernamePhReg")}
+                  required
+                  autoComplete="username"
+                  value={regUser}
+                  onChange={(e) => setRegUser(e.target.value)}
+                />
+              </label>
+              <label>
+                <span>{t("auth.password")}</span>
+                <input
+                  name="password"
+                  type="password"
+                  placeholder={t("auth.passwordPhReg")}
+                  required
+                  autoComplete="new-password"
+                  value={regPass}
+                  onChange={(e) => setRegPass(e.target.value)}
+                />
+              </label>
+              <label>
+                <span>{t("auth.inviteCode")}</span>
+                <input
+                  name="inviteCode"
+                  placeholder={t("auth.invitePh")}
+                  required
+                  value={regInvite}
+                  onChange={(e) => setRegInvite(e.target.value)}
+                />
+              </label>
+              {regMsg && <p className="form-msg">{regMsg}</p>}
+              <button type="submit" className="btn btn-accent btn-block">
+                {t("auth.registerBtn")}
+              </button>
+            </form>
+          )}
 
-        {tab === "reset" && (
-          <form className="auth-form" onSubmit={handleReset} autoComplete="off">
-            <p className="muted">{t("auth.resetHint")}</p>
-            <label>
-              <span>{t("auth.adminKey")}</span>
-              <input
-                name="adminKey"
-                type="password"
-                placeholder="admin key"
-                required
-                autoComplete="off"
-                value={resetKey}
-                onChange={(e) => setResetKey(e.target.value)}
-              />
-            </label>
-            <label>
-              <span>{t("auth.newPassword")}</span>
-              <input
-                name="newPassword"
-                type="password"
-                placeholder="New password (≥8 chars)"
-                required
-                autoComplete="new-password"
-                value={resetNewPass}
-                onChange={(e) => setResetNewPass(e.target.value)}
-              />
-            </label>
-            {resetMsg && <p className="form-msg">{resetMsg}</p>}
-            <button type="submit" className="btn btn-accent btn-block">
-              {t("auth.resetBtn")}
-            </button>
-          </form>
-        )}
+          {tab === "reset" && (
+            <form className="auth-form" onSubmit={handleReset} autoComplete="off">
+              <p className="muted">{t("auth.resetHint")}</p>
+              <label>
+                <span>{t("auth.adminKey")}</span>
+                <input
+                  name="adminKey"
+                  type="password"
+                  placeholder={t("auth.adminKeyPh")}
+                  required
+                  autoComplete="off"
+                  value={resetKey}
+                  onChange={(e) => setResetKey(e.target.value)}
+                />
+              </label>
+              <label>
+                <span>{t("auth.newPassword")}</span>
+                <input
+                  name="newPassword"
+                  type="password"
+                  placeholder={t("auth.newPasswordPh")}
+                  required
+                  autoComplete="new-password"
+                  value={resetNewPass}
+                  onChange={(e) => setResetNewPass(e.target.value)}
+                />
+              </label>
+              {resetMsg && <p className="form-msg">{resetMsg}</p>}
+              <button type="submit" className="btn btn-accent btn-block">
+                {t("auth.resetBtn")}
+              </button>
+            </form>
+          )}
         </div>
       </main>
     </div>

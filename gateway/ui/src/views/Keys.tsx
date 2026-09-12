@@ -43,7 +43,9 @@ export default function Keys() {
   const [keys, setKeys] = useState<Record<string, KeyInfo | undefined>>({});
   const [editingName, setEditingName] = useState<string | null>(null);
   const [editValue, setEditValue] = useState("");
-  const [resultBox, setResultBox] = useState<{ name: string; ok: boolean; msg: string } | null>(null);
+  const [resultBox, setResultBox] = useState<{ name: string; ok: boolean; msg: string } | null>(
+    null,
+  );
   const [testing, setTesting] = useState<string | null>(null);
   const [usageLoading, setUsageLoading] = useState<string | null>(null);
 
@@ -72,7 +74,11 @@ export default function Keys() {
       toast(`${t("key.saved")} ${name}`);
       await loadKeys();
     } catch (err) {
-      setResultBox({ name, ok: false, msg: err instanceof ApiError ? err.message : t("key.saveFail") });
+      setResultBox({
+        name,
+        ok: false,
+        msg: err instanceof ApiError ? err.message : t("key.saveFail"),
+      });
     }
   };
 
@@ -84,7 +90,8 @@ export default function Keys() {
         name,
         ok: data.ok,
         msg: data.ok
-          ? t("key.testOk", { status: String(data.status || 200) }) + (data.detail ? ` · ${data.detail}` : "")
+          ? t("key.testOk", { status: String(data.status || 200) }) +
+            (data.detail ? ` · ${data.detail}` : "")
           : t("key.testFail", { detail: data.detail || "…" }),
       });
     } catch (err) {
@@ -102,12 +109,20 @@ export default function Keys() {
         setResultBox({ name, ok: false, msg: data.detail || t("key.usageFail") });
       } else {
         const money = (v: number | undefined) =>
-          typeof v === "number" && Number.isFinite(v) ? `$${v.toFixed(4)}` : t("key.usageUnavailable");
+          typeof v === "number" && Number.isFinite(v)
+            ? `$${v.toFixed(4)}`
+            : t("key.usageUnavailable");
         const parts: string[] = [];
         if (data.label) parts.push(`${t("key.usageAccount")}: ${data.label}`);
         // OpenCode Go multi-window response
         if (data.windows && typeof data.windows === "object") {
-          const winLabels: Record<string, string> = { "5h": "5h", weekly: "周", monthly: "月" };
+          // The window labels come from i18n like everything else: they were CJK
+          // literals in the source, so the ENGLISH console showed 周 / 月.
+          const winLabels: Record<string, string> = {
+            "5h": "5h",
+            weekly: t("key.windowWeekly"),
+            monthly: t("key.windowMonthly"),
+          };
           for (const [wk, wv] of Object.entries(data.windows) as [string, any][]) {
             const label = winLabels[wk] || wk;
             const pct =
@@ -115,7 +130,9 @@ export default function Keys() {
                 ? ` ${Math.round((wv.used / wv.limit) * 100)}%`
                 : "";
             const remain =
-              typeof wv.remaining === "number" ? ` · ${t("key.usageRemaining")}: ${money(wv.remaining)}` : "";
+              typeof wv.remaining === "number"
+                ? ` · ${t("key.usageRemaining")}: ${money(wv.remaining)}`
+                : "";
             const reset = wv.resetAt ? ` · ${wv.resetAt}` : "";
             parts.push(
               `${label}: ${money(wv.used)} / ${wv.limit === null ? t("key.usageUnlimited") : money(wv.limit)}${pct}${remain}${reset}`,
@@ -128,8 +145,11 @@ export default function Keys() {
             `${t("key.usageLimit")}: ${data.limit === null ? t("key.usageUnlimited") : money(data.limit)}`,
           );
           if (typeof data.usage === "number" && typeof data.limit === "number")
-            parts.push(`${t("key.usageRemaining")}: ${money(Math.max(0, data.limit - data.usage))}`);
-          if (typeof data.balance === "number") parts.push(`余额: ${money(data.balance)}`);
+            parts.push(
+              `${t("key.usageRemaining")}: ${money(Math.max(0, data.limit - data.usage))}`,
+            );
+          if (typeof data.balance === "number")
+            parts.push(`${t("key.balanceLabel")}: ${money(data.balance)}`);
         }
         if (data.rateLimit?.limit != null)
           parts.push(
@@ -138,7 +158,11 @@ export default function Keys() {
         setResultBox({ name, ok: true, msg: parts.join(" · ") });
       }
     } catch (err) {
-      setResultBox({ name, ok: false, msg: err instanceof ApiError ? err.message : t("key.usageFail") });
+      setResultBox({
+        name,
+        ok: false,
+        msg: err instanceof ApiError ? err.message : t("key.usageFail"),
+      });
     }
     setUsageLoading(null);
   };
@@ -263,7 +287,9 @@ export default function Keys() {
                 </div>
               )}
 
-              {result && <div className={`test-result ${result.ok ? "ok" : "err"}`}>{result.msg}</div>}
+              {result && (
+                <div className={`test-result ${result.ok ? "ok" : "err"}`}>{result.msg}</div>
+              )}
             </div>
           );
         })}

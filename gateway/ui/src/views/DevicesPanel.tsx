@@ -181,9 +181,18 @@ export default function DevicesPanel() {
 
   const handleRevokeAll = async () => {
     if (!regKeys || regKeys.length === 0) return;
+    // ASK FIRST: this destroys every unused registration key at once, and the other
+    // destructive controls here all confirm (`Keys.tsx` -> confirm(), `Overview.tsx`
+    // -> confirm(), the device delete -> a modal).
+    if (!confirm(t("devices.revokeAllConfirm", { n: String(regKeys.length) }))) return;
     try {
+      const n = regKeys.length;
       await Promise.all(regKeys.map((k) => api.revokeRegKey(k.code)));
-      toast(t("devices.regKeysEmpty"));
+      // AND SAY WHAT HAPPENED. This toasted `devices.regKeysEmpty` — the EMPTY-STATE
+      // string ("No unused registration keys") — as if it were a success message, so
+      // the one feedback after a destructive action described the absence of the
+      // thing rather than the removal of it.
+      toast(t("devices.revokedAll", { n: String(n) }));
       await loadRegKeys();
     } catch (err) {
       toast(err instanceof ApiError ? err.message : t("devices.saveFail"), true);
