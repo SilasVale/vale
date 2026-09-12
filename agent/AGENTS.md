@@ -515,7 +515,68 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 40 (the desktop shell's control-API origin veto
+Last updated: 2026-09-11 round 41 (asked whether the gateway can add models and
+whether it updates itself: it can do neither by itself, and nothing was watching —
+so the watching is now a tool). Commit: de5b625c. NO RELEASE: `scripts/` is not in
+the npm package, so this change cannot reach a device.
+  (1) THE QUESTIONS, ANSWERED WITH EVIDENCE RATHER THAN OPINION.
+  * "Can the gateway add models?" Yes — but ONLY by editing
+    `gateway/src/channels.ts`'s MODEL_REGISTRY and redeploying. No runtime or
+    admin route exists (the worker's routes are `/api/health`, `/api/vale-*`,
+    `/mcp`, `/v1/*`). One record carries SIX facets and `model-registry.test.mjs`
+    keeps them bidirectional.
+  * "Is it self-updating?" NO, on both counts. NO WORKFLOW DEPLOYS THIS WORKER —
+    `ci.yml`'s only `wrangler deploy` calls are `--dry-run` and are for the
+    proxies; `release.yml` ships the agent's npm package. And the catalogue is
+    source, so adding or retiring a model requires a human and a deploy.
+  * "DSH discovers provider models by itself" — IT DOES NOT. Verified: zero
+    `fetchModels`/`listModels`/`/v1/models` in its `lib/*.js` OR its web bundle
+    (the only `models` match there is `"\\models"`, a regex), and
+    `~/.dsh/settings.yaml` HARDCODES 20 `- id:` entries. Its real advantage is
+    narrower and worth stating correctly: a model is added by editing a CONFIG
+    FILE, with no rebuild. Note its `baseURL` is `https://api.saisi.online` — the
+    vale gateway itself — so the chain is upstreams → gateway → DSH, and the
+    gateway is the only link that cannot update itself.
+  (2) SO THE WATCHING IS NOW A TOOL: `scripts/model-drift.mjs`. Reports what each
+  channel advertises against what its upstream offers. MEASURED LIVE: or 445,
+  nv 82, cm 69, og 37 answer unauthenticated `/models`; gmi/qw/amd/ds answer 401
+  and are reported as NOT CHECKED, never as empty.
+  (3) THE ROUND'S REAL LESSON IS A CHECKER THAT LIED, AND I CAUGHT IT BY NOT
+  TRUSTING IT. My first comparison diffed raw prefix-stripped names and produced
+  FALSE POSITIVES ON EVERY CHANNEL — `og/` looked 2-of-8 broken. It is not: zen's
+  list carries those entries past the window I had printed, and the router
+  normalises further than a prefix strip (`[1m]` markers, `og/` wire remaps).
+  `advertisedNotOffered` is therefore printed as CHECK, never as a verdict. Only
+  ONE finding survives scrutiny: `nv/minimaxai/minimax-m3` — NVIDIA's public list
+  contains NO minimax model at all, and `wireModelName` passes `nv/` through
+  UNCHANGED ("currently only og/ has aliases"), so that entry routes verbatim to
+  a name NVIDIA does not offer. The other two nv/ entries are present.
+  LABELLED LIMIT, because overclaiming here would be the same defect: a models
+  LIST is not proof of a 404. NVIDIA may serve what it does not enumerate, and I
+  could not make a call (no VALE_API_KEY on this box). The entry is recorded, NOT
+  removed on a string comparison.
+  (4) IT IS AN OPS TOOL, DELIBERATELY NOT A CI GATE — it needs four live
+  third-party endpoints, and a check whose inputs are unavailable where it runs
+  reports success for work it never did (round 26). What runs in CI is the PURE
+  half, `scripts/test/model-drift-check.mjs` (6 checks): bracket normalisation,
+  the prefix boundary (`o` must not match `og/`), both diff directions.
+  Mutation-proven both ways.
+  (5) NO RELEASE, DELIBERATELY. `vale-agent-npm`'s `files` list ships README/bin/
+  exe/desktop-electron only, so `scripts/`, the workflow and the docs cannot reach
+  a device; releasing would have minted a version for nothing. CI green on main
+  INCLUDING the new step.
+  (6) OPEN AND UNSTARTED: the request to REDESIGN BOTH FRONTENDS (the agent panel
+  at `agent/resources/panel-react/`, 506 tests, and the gateway console). Scope was
+  asked and not yet answered — visual refresh vs information architecture vs
+  rebuild — and the constraint is that both suites pin behaviour that must survive.
+  Also open from the same conversation: the model catalogue could move to an
+  upstream-fed overlay with a policy facet table, which is the "A+B" option whose
+  default policy for UNSEEN models is the thing that needs deciding.
+  Gates: model-drift 6 (new), release-audit 9, release-lib 20; agent 583 default /
+  634 feat-gated, gateway 766, CLI 35, shell 9, panel 506 — none touched by this
+  change.
+
+Previous round: 2026-09-11 round 40 (the desktop shell's control-API origin veto
 was BYPASSABLE — its twin's bug, documented as fixed — and the suite that would
 have caught it ran NOWHERE). Commit: 0a1e9640, plus 1.2.348.
   (1) A DELEGATED AUDIT OF THE RELEASE/ROLLOUT MACHINERY — `scripts/`, the
