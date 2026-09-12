@@ -740,6 +740,10 @@ export interface ReleaseMarkerCheck {
   ok: boolean;
   /** The version actually read, trimmed; null when absent or unreadable. */
   saw: string | null;
+  /** How long the poll actually waited before giving up. Only meaningful when
+   *  `ok` is false: a marker that never arrived is a TIMEOUT, which is weaker
+   *  evidence than a read that returned the wrong version. */
+  waitedMs: number;
 }
 
 /**
@@ -758,17 +762,19 @@ export async function awaitReleaseMarker(o: {
   sleep: (ms: number) => Promise<void>;
   now: () => number;
 }): Promise<ReleaseMarkerCheck> {
-  const deadline = o.now() + o.timeoutMs;
+  const start = o.now();
+  const deadline = start + o.timeoutMs;
   let saw: string | null = null;
   for (;;) {
     try {
       const v = String(o.read()).trim();
       saw = v || null;
-      if (saw === o.want) return { ok: true, saw };
+      if (saw === o.want) return { ok: true, saw, waitedMs: o.now() - start };
     } catch {
       saw = null; // absent / unreadable is NOT success and NOT a crash
     }
-    if (o.now() >= deadline) return { ok: false, saw };
+    if (o.now() >= deadline)
+      return { ok: false, saw, waitedMs: o.now() - start };
     await o.sleep(o.intervalMs);
   }
 }
@@ -798,10 +804,19 @@ export function releaseMarkerVerdict(
   return {
     writePin: false,
     exitCode: 1,
+    // WHAT WAS OBSERVED, NOT WHAT IT MEANS. `ok: false` is a TIMEOUT: either the swap
+    // failed, or it is still running (it kills and restarts the agent), or the marker
+    // could not be read at all — and `saw === null` is the weakest of the three. The old
+    // wording asserted "the swap did NOT take" for all of them.
     message:
-      `rollback: the swap did NOT take -- device is on ${c.saw ?? "an unknown version"}, ` +
-      `not ${c.want}. NOT pinned (the pin would claim a version this device is not running) ` +
-      `and no release marker written. Check the update log, then re-run 'vale rollback ${c.want}'.`,
+      `rollback: no release marker showing ${c.want} within ${
+        Number.isFinite(c.waitedMs)
+          ? Math.round(c.waitedMs / 1000) + "s"
+          : "the read-back window"
+      } ` +
+      `(last read: ${c.saw ?? "empty or unreadable"}). ` +
+      `NOT pinned (a pin would claim a version this device may not be running) and no release ` +
+      `marker written. Check the update log and \`vale status\`, then re-run 'vale rollback ${c.want}'.`,
   };
 }
 
