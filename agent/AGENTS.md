@@ -519,7 +519,47 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 89 (THE MULTI-AGENT ROUND the objective asks for: TWO
+Last updated: 2026-09-12 round 90 (second finding from the SSRF subagent audit: the
+device dial followed redirects carrying the device's token, and the guard only ever saw
+the first URL).
+Commit: e46ec7e5 (DEPLOYED, verified live). CI green.
+  (1) `fetchWithTimeout` DID `fetch(url, { ...init, signal })` — NO `redirect` option, so
+  the platform default `"follow"` applied. On the device dial that is TWO holes at once:
+    * THE GUARD RUNS ON THE INITIAL URL ONLY — a device answering `302 Location:
+      http://169.254.169.254/...` or `http://127.0.0.1:PORT/` is dialed to an address
+      `deviceHostError` never inspected.
+    * THE CREDENTIAL RIDES ALONG — Cloudflare documents that with `follow` "all headers
+      will be forwarded to the redirect destination, even if the destination is a
+      different hostname or domain ... this includes sensitive headers like Cookie,
+      Authorization" (cloudflare-docs#3378). This path sends `Bearer <device token>` AND
+      `x-vale-auth: <proxySecret>` — the same pair last round's fix closed on the registry
+      side.
+  `deviceFetch` sends `redirect: "manual"` now: a redirecting device is not a device to
+  follow, and the 3xx is returned to the caller as-is (visible) instead of followed
+  (invisible).
+  (2) THE DEFAULT IS UNCHANGED, DELIBERATELY: `fetchWithTimeout` is a foundation module
+  whose other callers are upstream API calls where following a redirect is ordinary HTTP.
+  The contract is documented on the function instead — a caller that attaches a credential
+  to a request whose host it did not choose must set `"manual"`.
+  (3) THE UPLOAD DIAL GETS IT TOO, AS DEFENCE IN DEPTH AND EXPLICITLY NOT THE SAME
+  SEVERITY: `uploadUrl`'s host is `env.INDEX_WORKER_URL` (operator-set), so no caller
+  controls it — but it carries `Bearer ${UPLOAD_KEY}`, and `manual` turns a redirected
+  upload into a visible 3xx instead of an invisible key leak.
+  (4) VERIFIED LIVE via the deployed worker's own source mirror, and MUTATION-PROVEN
+  (removing the option fails the new test 12/1; restoring passes 13/0).
+  (5) STILL OPEN from the two audits: gateway F3 `deviceFetch` never applies the suffix
+  allowlist at dial time (`_env` unused) though its docstring lists it as part of the
+  stack; panel F1 the "loopback" branch trusts a client-supplied Host header, not the peer
+  socket (any local process gets the permanent token; needs a `ConnectInfo` check whose
+  feasibility on the hand-rolled Tower service is unconfirmed); panel F2 `?grant=` is not
+  single-use over eventually-consistent KV and leaves no device-side audit record; panel
+  F3 that route is unauthenticated, unrate-limited, and its shape check (16..=128 hex) is
+  LOOSER than the gateway's exact 32; panel F5 the host allowlist is a family match
+  (`devil.agent.saisi.online` passes).
+  Gates: gateway 792 + lint + typecheck + format + mirror, DEPLOYED; CI green;
+  d1 on 1.2.359.
+
+Previous round: 2026-09-12 round 89 (THE MULTI-AGENT ROUND the objective asks for: TWO
 subagent audits of surfaces nobody had looked at — the gateway's SSRF guard stack and the
 panel's auth surface — and the FIRST brought back a live credential-exfiltration hole).
 Commits: 3bf95999 (gateway, DEPLOYED and verified live), 9ff38858 (agent).
