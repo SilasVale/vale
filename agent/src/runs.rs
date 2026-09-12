@@ -145,7 +145,7 @@ pub(crate) fn end(dir: &Path, run_id: &str, outcome: Option<&str>) {
 /// Streams the file rather than going through [`recent`]: this scan wants
 /// short-circuiting and does not want to materialise an unbounded log.
 pub(crate) fn known(dir: &Path, run_id: &str) -> bool {
-    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+    let Some(contents) = crate::jsonl::read_lossy(&runs_path(dir)) else {
         return false;
     };
     contents.lines().any(|l| {
@@ -165,7 +165,7 @@ fn clip_id(s: &str) -> String {
 /// The most recent run boundaries, oldest first. Used by the operation timeline
 /// to bracket a run and by the panel to group by it.
 pub(crate) fn recent(dir: &Path, limit: usize) -> Vec<Value> {
-    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+    let Some(contents) = crate::jsonl::read_lossy(&runs_path(dir)) else {
         return Vec::new();
     };
     let mut out: Vec<Value> = contents
@@ -328,7 +328,7 @@ pub(crate) fn abandon_open_runs(dir: &Path, outcome: &str) -> usize {
     // the pass runs is either seen by the read (and closed, which is correct —
     // the process is restarting) or not seen (and stays legitimately open). The
     // next boot closes it if it was really abandoned.
-    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+    let Some(contents) = crate::jsonl::read_lossy(&runs_path(dir)) else {
         return 0; // no log: nothing was ever begun.
     };
     // Unreadable lines are skipped, never fatal — the same stance `trim` and
@@ -370,7 +370,7 @@ pub(crate) fn trim(dir: &Path, max_age_days: u64, now_ms: u64) -> Trimmed {
     let _guard = RUNS_LOCK.lock().unwrap_or_else(|p| p.into_inner());
     let days = max_age_days.max(MIN_RETENTION_DAYS);
     let cutoff_ms = now_ms.saturating_sub(days.saturating_mul(86_400_000));
-    let Ok(contents) = std::fs::read_to_string(runs_path(dir)) else {
+    let Some(contents) = crate::jsonl::read_lossy(&runs_path(dir)) else {
         return out;
     };
     let mut kept = String::with_capacity(contents.len());
@@ -410,6 +410,38 @@ mod tests {
         let d = std::env::temp_dir().join(format!("vale-runs-{tag}-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&d);
         d
+    }
+
+    /// ONE TORN MULTI-BYTE CHARACTER MUST NOT ERASE THE RUN LOG.
+    ///
+    /// `known`, `recent`, `trim` and the boot recovery arm all read this file
+    /// with `read_to_string`, which rejects the WHOLE file on invalid UTF-8 —
+    /// and a multi-byte character cut in half by a kill is exactly what a crash
+    /// leaves. One damaged byte made `known` answer false for a run that is
+    /// recorded, `recent` answer empty, and boot recovery close nothing.
+    ///
+    /// The four readers now share `jsonl::read_lossy` with the rest of the
+    /// family, so the damaged line becomes a line that does not PARSE — which
+    /// every one of them already skips — instead of a file that cannot be read.
+    #[test]
+    fn one_damaged_byte_does_not_erase_the_run_log() {
+        let d = dir("lossy");
+        std::fs::create_dir_all(&d).expect("mkdir");
+        let id = begin(&d, Some("did a thing"), None);
+        // A 2-byte character truncated to its first byte, then a real record.
+        let mut raw = std::fs::read(runs_path(&d)).expect("read");
+        raw.extend_from_slice(b"{\"run_id\":\"caf\xc3");
+        raw.extend_from_slice(b"\n");
+        std::fs::write(runs_path(&d), &raw).expect("write");
+
+        assert!(
+            known(&d, &id),
+            "the run IS recorded — one damaged byte must not deny it"
+        );
+        assert!(
+            !recent(&d, 10).is_empty(),
+            "and the log must not read as empty"
+        );
     }
 
     /// A run that died with the process gets a terminal record.

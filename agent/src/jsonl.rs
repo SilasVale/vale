@@ -1,9 +1,16 @@
 //! Append-only JSONL hygiene — the crash-safety rules every append-only,
 //! line-oriented file in this crate shares (SOLID R111).
 //!
-//! Two files are written this way: the per-session audit trail
-//! (`<sid>.jsonl`, `session_log.rs`) and the device memory store
-//! (`memory.jsonl`, `plugins/memory/store.rs`). Both are opened
+//! FOUR files are written this way: the per-session audit trail
+//! (`<sid>.jsonl`, `session_log.rs`), the device memory store
+//! (`memory.jsonl`, `plugins/memory/store.rs`), the AI-evidence feed
+//! (`actions.jsonl`, `evidence.rs`) and the run-identity log
+//! (`runs.jsonl`, `runs.rs`). This header used to name only the first two
+//! while claiming "every … file in this crate", which is the shape this repo
+//! keeps finding: a sentence that describes a rule the code has not finished
+//! applying. It is accurate now because the family is.
+//!
+//! Both are opened
 //! `create + append` and hold one JSON object per line. Both had grown their
 //! own copy of the same two rules, and both documented the same incident in
 //! prose:
@@ -41,6 +48,29 @@ pub(crate) fn has_torn_tail(path: &Path) -> std::io::Result<bool> {
     let mut b = [0u8; 1];
     f.read_exact(&mut b)?;
     Ok(b[0] != b'\n')
+}
+
+/// Read an append-only JSONL file as TEXT, tolerating damage.
+///
+/// THE RULE THIS PROJECT KEPT RE-LEARNING, now stated once. `read_to_string`
+/// requires the WHOLE file to be valid UTF-8, and the tear a crash actually
+/// leaves — a multi-byte character cut in half — is INVALID UTF-8. So a strict
+/// read does not degrade gracefully; it rejects every record in the file,
+/// including the ones that are perfectly intact.
+///
+/// That is not hypothetical here. It was found first in the memory store, fixed
+/// for the audit trail's list reader, then found AGAIN in the SAME audit file
+/// through a different function whose three callers silently lost the recovery
+/// arm, the detail route and the seq seed. Each fix was local; the family was
+/// never finished. This is the family's owner.
+///
+/// Callers get bytes decoded lossily, so a damaged line becomes a line that does
+/// not PARSE — which every reader in this family already skips — instead of a
+/// file that cannot be READ. `None` means the file is missing or unopenable,
+/// which is a different fact from "it held nothing usable".
+pub(crate) fn read_lossy(path: &Path) -> Option<String> {
+    let raw = std::fs::read(path).ok()?;
+    Some(String::from_utf8_lossy(&raw).into_owned())
 }
 
 /// Ready an append-only JSONL file for its next record.

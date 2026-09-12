@@ -108,11 +108,28 @@ pub(crate) fn append_action_line(dir: &Path, ts_ms: u64, action: &Value) {
     // `prune` to REPLACE the file by rename: without the lock the record could
     // land in the orphaned inode. See FEED_LOCK.
     let _guard = FEED_LOCK.lock().unwrap_or_else(|p| p.into_inner());
+    let path = actions_path(dir);
     if let Ok(mut f) = std::fs::OpenOptions::new()
         .create(true)
         .append(true)
-        .open(actions_path(dir))
+        .open(&path)
     {
+        // TERMINATE A TORN TAIL BEFORE APPENDING. Without this the new record
+        // FUSES onto the fragment a crash left behind, and two records become
+        // one unparseable line — both lost. `runs.rs` had exactly this defect
+        // (round 20) and the memory store and audit trail have guarded against
+        // it since round 111; the evidence feed never did, which made this
+        // module's own claim about a shared family untrue.
+        //
+        // NON-EMPTY ONLY, because `prepare_append` also writes a version header
+        // on a fresh file and this feed has none: the audit trail's header is
+        // skipped by key, but `recent_actions` returns every PARSEABLE line, so
+        // a header would surface as a phantom action in the operator's feed. The
+        // repair is the only half this caller wants, and a fresh file has no
+        // tail to repair.
+        if f.metadata().map(|m| m.len() > 0).unwrap_or(false) {
+            let _ = crate::jsonl::prepare_append(&mut f, &path, &serde_json::Value::Null);
+        }
         let _ = writeln!(f, "{v}");
     }
 }
@@ -122,7 +139,10 @@ pub(crate) fn append_action_line(dir: &Path, ts_ms: u64, action: &Value) {
 /// failing the whole feed.
 pub(crate) fn recent_actions(dir: &Path, limit: usize) -> Vec<Value> {
     let mut actions: Vec<Value> = Vec::new();
-    if let Ok(contents) = std::fs::read_to_string(actions_path(dir)) {
+    // `read_lossy`, not `read_to_string`: one torn multi-byte character made this
+    // return an EMPTY feed, which is indistinguishable from "nothing has
+    // happened" — the exact confusion the comment above promises to avoid.
+    if let Some(contents) = crate::jsonl::read_lossy(&actions_path(dir)) {
         for line in contents.lines().rev().take(limit) {
             if let Ok(v) = serde_json::from_str::<Value>(line) {
                 actions.push(v);
@@ -286,7 +306,7 @@ pub(crate) fn prune(dir: &Path, max_age_days: u64, now_ms: u64) -> Pruned {
 /// The rewrite is atomic and the caller holds [`FEED_LOCK`], which is exactly
 /// the precondition [`crate::jsonl::rewrite_atomically`] documents.
 fn trim_actions(path: &Path, cutoff_ms: u64) -> usize {
-    let Ok(content) = std::fs::read_to_string(path) else {
+    let Some(content) = crate::jsonl::read_lossy(path) else {
         return 0;
     };
     let mut kept = String::with_capacity(content.len());
@@ -402,6 +422,95 @@ mod tests {
         let capped = recent_actions(&dir, 1);
         assert_eq!(capped.len(), 1);
         assert_eq!(capped[0]["b"], 2);
+    }
+
+    /// A TORN MULTI-BYTE CHARACTER MUST NOT EMPTY THE WHOLE FEED.
+    ///
+    /// The test above plants ASCII junk, which `read_to_string` handles happily —
+    /// those lines are valid UTF-8 and merely unparseable, so the function's
+    /// documented behaviour ("a torn final line ... is SKIPPED rather than
+    /// failing the whole feed") appears to hold. It does not hold for the tear a
+    /// CRASH actually leaves: a multi-byte character cut in half is INVALID
+    /// UTF-8, `read_to_string` rejects the entire file, and every intact record
+    /// goes with it. The comment promised skipping three lines above the call
+    /// that cannot skip.
+    ///
+    /// Same lesson as the audit trail's: the covered behaviour was not the
+    /// production one, and only a damaged byte can tell the two apart.
+    #[test]
+    fn a_torn_multibyte_character_does_not_empty_the_feed() {
+        let dir = tmp_dir("lossy");
+        let mut bytes = Vec::new();
+        bytes.extend_from_slice(b"{\"a\":1}\n");
+        bytes.extend_from_slice(b"{\"note\":\"ok\"}\n");
+        // A 3-byte sequence with its LAST byte missing — what a kill mid-write
+        // leaves behind.
+        bytes.extend_from_slice(b"{\"note\":\"caf\xc3\xa9\"}\n");
+        let truncated = bytes.len() - 3; // drop the final `"}\n`, leaving the tail open
+        let mut damaged = bytes.clone();
+        damaged.truncate(truncated);
+        damaged.extend_from_slice(b"\xc3"); // half of a 2-byte sequence
+        std::fs::write(actions_path(&dir), &damaged).expect("seed");
+
+        let got = recent_actions(&dir, 10);
+        assert!(
+            got.len() >= 2,
+            "the intact records must survive one damaged byte — the whole feed \
+             was lost instead: {got:?}"
+        );
+        assert_eq!(
+            got[0]["note"],
+            serde_json::json!("ok"),
+            "newest intact record"
+        );
+        assert_eq!(got[1]["a"], serde_json::json!(1), "and the one before it");
+    }
+
+    /// A CRASHED WRITE MUST NOT SWALLOW THE NEXT RECORD.
+    ///
+    /// Without tail repair the new record FUSES onto the fragment, and the pair
+    /// becomes one unparseable line — so the feed loses the record that was
+    /// already there AND the one just written. Round 20 found exactly this in
+    /// `runs.rs`; the evidence feed never had the guard.
+    #[test]
+    fn appending_after_a_torn_write_keeps_both_records() {
+        let dir = tmp_dir("fuse");
+        std::fs::write(
+            actions_path(&dir),
+            b"{\"kind\":\"earlier\",\"ts\":1}\n{\"kind\":\"torn\"",
+        )
+        .expect("seed a fragment with NO trailing newline");
+        append_action_line(&dir, 2, &serde_json::json!({"kind": "later"}));
+        let got = recent_actions(&dir, 10);
+        let kinds: Vec<&str> = got.iter().filter_map(|v| v["kind"].as_str()).collect();
+        assert!(
+            kinds.contains(&"earlier") && kinds.contains(&"later"),
+            "both records must survive — the fragment must be terminated, not \
+             fused onto: {kinds:?}"
+        );
+        // The fragment itself is unparseable and is skipped, as documented.
+        assert!(
+            !kinds.contains(&"torn"),
+            "the fragment is not a record: {kinds:?}"
+        );
+    }
+
+    /// An EMPTY file gets no header.
+    ///
+    /// `prepare_append` writes one when the file is empty, and this feed has
+    /// none — `recent_actions` returns every parseable line, so a header line
+    /// would appear as a phantom action in the operator's timeline.
+    #[test]
+    fn the_first_record_does_not_come_with_a_header() {
+        let dir = tmp_dir("noheader");
+        append_action_line(&dir, 7, &serde_json::json!({"kind": "first"}));
+        let raw = std::fs::read_to_string(actions_path(&dir)).expect("read");
+        assert_eq!(
+            raw.lines().count(),
+            1,
+            "exactly one line, no header: {raw:?}"
+        );
+        assert_eq!(recent_actions(&dir, 10).len(), 1);
     }
 
     #[test]
