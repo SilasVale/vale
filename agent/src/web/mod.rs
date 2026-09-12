@@ -388,6 +388,8 @@ async fn handle_panel_home(
     query: Option<&str>,
     host: Option<String>,
     auth_header: Option<String>,
+    // From the CONNECTION, not the header — see route_pre_dispatch's note.
+    peer_is_loopback: bool,
 ) -> Response {
     // Write-through (audit A4): one snapshot of the LIVE config for the
     // whole injection decision (proxy_secret + device_token below).
@@ -440,11 +442,23 @@ async fn handle_panel_home(
             .unwrap_or(false);
         // round-102: token injection only via the gateway proxy OR
         // loopback — a public direct request must NOT receive the token.
+        //
+        // "LOOPBACK" IS THE PEER, NOT THE HEADER. This used to be decided entirely by the
+        // client-supplied `Host`, so ANY local process — including a non-admin one — got
+        // the permanent device token from one unauthenticated `curl
+        // http://127.0.0.1:<port>/panel/`, which re-opened exactly what the config ACL
+        // hardening closed (`paths.rs` grants read only to SYSTEM + Administrators). A
+        // `Host: 127.0.0.1` costs an attacker nothing; a loopback SOCKET does not lie.
+        //
+        // FAIL CLOSED: no `ConnectInfo` extension means we cannot tell where the
+        // connection came from, and "cannot tell" is not "loopback". The other two
+        // admissions are unaffected — the proxy-secret branch is a real credential and the
+        // grant branch is a single-use code, neither of which depends on this.
         let loopback = host
             .as_deref()
             .map(|host| host == "127.0.0.1" || host == "localhost")
             .unwrap_or(false);
-        if host_ok && (via_proxy || loopback) {
+        if host_ok && (via_proxy || (loopback && peer_is_loopback)) {
             return panel_token_response(token);
         }
         // One-time panel grant (gateway-issued; the fix the console's
@@ -551,6 +565,10 @@ async fn route_pre_dispatch(
     query: Option<&str>,
     headers: &axum::http::HeaderMap,
     state: &Arc<AppState>,
+    // Whether the SOCKET is loopback — decided at the connection boundary, because a
+    // `Host: 127.0.0.1` header costs an attacker nothing and this used to be the only
+    // thing standing behind the loopback token handout.
+    peer_is_loopback: bool,
 ) -> Option<Response> {
     // SSE event stream — streaming, handled before body parsing.
     if *method == Method::GET && path == "/api/events" {
@@ -604,7 +622,9 @@ async fn route_pre_dispatch(
             .get("x-vale-auth")
             .and_then(|v| v.to_str().ok())
             .map(|v| v.to_string());
-        return Some(handle_panel_home(state, path, query, host, auth_header).await);
+        return Some(
+            handle_panel_home(state, path, query, host, auth_header, peer_is_loopback).await,
+        );
     }
     if *method == Method::GET && (path.starts_with("/panel/") || path.starts_with("/desktop/")) {
         // Strip any ?v=… cache-buster before whitelist matching.
@@ -643,8 +663,23 @@ pub(super) async fn handle_request(req: Request<Body>, state: Arc<AppState>) -> 
     let method = req.method().clone();
     let path = req.uri().path().to_string();
     let query_str = req.uri().query().map(|q| q.to_string());
-    if let Some(resp) =
-        route_pre_dispatch(&method, &path, query_str.as_deref(), req.headers(), &state).await
+    // Read BEFORE any await and before `req` is consumed. Absent extension => `false` =>
+    // the loopback handout is DENIED: "we cannot tell where this connection came from" is
+    // not "it came from loopback".
+    let peer_is_loopback = req
+        .extensions()
+        .get::<axum::extract::ConnectInfo<std::net::SocketAddr>>()
+        .map(|ci| ci.0.ip().is_loopback())
+        .unwrap_or(false);
+    if let Some(resp) = route_pre_dispatch(
+        &method,
+        &path,
+        query_str.as_deref(),
+        req.headers(),
+        &state,
+        peer_is_loopback,
+    )
+    .await
     {
         return resp;
     }
@@ -1810,6 +1845,20 @@ mod tests {
         }
         b.body(Body::empty()).unwrap()
     }
+
+    /// A request WITH a declared peer address, which is what the loopback token handout
+    /// now depends on. `None` models "no ConnectInfo was injected" — the case that must
+    /// FAIL CLOSED.
+    fn req_with_peer(path: &str, host: &str, peer: Option<std::net::IpAddr>) -> Request<Body> {
+        let mut r = req_with_host(path, host);
+        if let Some(ip) = peer {
+            r.extensions_mut()
+                .insert(axum::extract::ConnectInfo(std::net::SocketAddr::new(
+                    ip, 54321,
+                )));
+        }
+        r
+    }
     fn req_with_host_secret(path: &str, host: &str) -> Request<Body> {
         Request::builder()
             .method("GET")
@@ -1899,14 +1948,57 @@ mod tests {
             String::from_utf8_lossy(&ba).contains("window.__PANEL_TOKEN__"),
             "apex with secret must inject"
         );
+        // Loopback injects — and the peer MUST be loopback, not just the header.
         for h in ["127.0.0.1:18080", "localhost"] {
-            let r = handle_request(req_with_host("/panel/", h), st.clone()).await;
+            let r = handle_request(
+                req_with_peer(
+                    "/panel/",
+                    h,
+                    Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+                ),
+                st.clone(),
+            )
+            .await;
             let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
             assert!(
                 String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"),
-                "{h} must inject"
+                "{h} from a LOOPBACK PEER must inject"
             );
         }
+
+        // THE DEFECT THIS CHECK EXISTS FOR. `Host` is client-supplied and costs an
+        // attacker nothing; before this check the header ALONE was the whole gate, so any
+        // local process got the permanent device token from an unauthenticated
+        // `curl http://127.0.0.1:18080/panel/` — re-opening exactly what the config-file
+        // ACL hardening closed (`paths.rs` grants read only to SYSTEM + Administrators).
+        for peer in [
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(10, 0, 0, 7)),
+            std::net::IpAddr::V4(std::net::Ipv4Addr::new(192, 168, 1, 50)),
+        ] {
+            let r = handle_request(
+                req_with_peer("/panel/", "127.0.0.1:18080", Some(peer)),
+                st.clone(),
+            )
+            .await;
+            let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+            assert!(
+                !String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"),
+                "Host: 127.0.0.1 from a NON-loopback peer ({peer}) must NOT inject"
+            );
+        }
+
+        // And NO peer information at all must also fail closed: "we cannot tell where
+        // this connection came from" is not "it came from loopback".
+        let r = handle_request(
+            req_with_peer("/panel/", "127.0.0.1:18080", None),
+            st.clone(),
+        )
+        .await;
+        let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
+        assert!(
+            !String::from_utf8_lossy(&b).contains("window.__PANEL_TOKEN__"),
+            "a missing ConnectInfo extension must DENY the loopback handout, not allow it"
+        );
 
         // Multi-level attacker subdomain + suffix-spoof MUST NOT inject.
         for h in [
@@ -1930,7 +2022,15 @@ mod tests {
         let mut cfg = Config::default();
         cfg.server.device_token = Some("abc</script><script>alert(1)</script>xyz".into());
         let st = Arc::new(AppState::new(cfg));
-        let r = handle_request(req_with_host("/panel/", "127.0.0.1:18080"), st).await;
+        let r = handle_request(
+            req_with_peer(
+                "/panel/",
+                "127.0.0.1:18080",
+                Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            ),
+            st,
+        )
+        .await;
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         let html = String::from_utf8_lossy(&b);
         assert!(
@@ -1946,7 +2046,15 @@ mod tests {
         let mut cfg = Config::default();
         cfg.server.device_token = Some("test-token-123".into());
         let st = Arc::new(AppState::new(cfg));
-        let r = handle_request(req_with_host("/desktop/", "127.0.0.1:18080"), st.clone()).await;
+        let r = handle_request(
+            req_with_peer(
+                "/desktop/",
+                "127.0.0.1:18080",
+                Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            ),
+            st.clone(),
+        )
+        .await;
         assert_eq!(
             r.status(),
             StatusCode::OK,
@@ -2024,7 +2132,15 @@ mod tests {
             "plain panel stamps css: {html}"
         );
         // Token-injected panel (loopback) — same cache key shape + token.
-        let r = handle_request(req_with_host("/panel/", "127.0.0.1:18080"), st).await;
+        let r = handle_request(
+            req_with_peer(
+                "/panel/",
+                "127.0.0.1:18080",
+                Some(std::net::IpAddr::V4(std::net::Ipv4Addr::LOCALHOST)),
+            ),
+            st,
+        )
+        .await;
         let b = axum::body::to_bytes(r.into_body(), 1 << 20).await.unwrap();
         let html = String::from_utf8_lossy(&b);
         assert!(html.contains("__PANEL_TOKEN__"));
@@ -2704,7 +2820,7 @@ mod tests {
             ("POST", "/mcp"),
         ] {
             assert!(
-                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st)
+                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st, false)
                     .await
                     .is_none(),
                 "{m} {p} is answered BEFORE the auth gate — it would bypass it"
@@ -2723,7 +2839,7 @@ mod tests {
             ("GET", "/some-unknown-page"),
         ] {
             assert!(
-                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st)
+                route_pre_dispatch(&method_of(m), p, None, &headers_of(m, p), &st, false)
                     .await
                     .is_some(),
                 "{m} {p} must be answered before the gate (documented public surface)"
@@ -2733,9 +2849,16 @@ mod tests {
         // The evidence endpoints run their OWN auth and are pre-dispatch: they
         // must reject an anonymous caller here, not fall through.
         for p in ["/api/browser/pwshots", "/api/browser/actions"] {
-            let resp = route_pre_dispatch(&method_of("GET"), p, None, &headers_of("GET", p), &st)
-                .await
-                .expect("evidence endpoints are answered pre-dispatch");
+            let resp = route_pre_dispatch(
+                &method_of("GET"),
+                p,
+                None,
+                &headers_of("GET", p),
+                &st,
+                false,
+            )
+            .await
+            .expect("evidence endpoints are answered pre-dispatch");
             assert_eq!(
                 resp.status(),
                 StatusCode::UNAUTHORIZED,
@@ -5431,9 +5554,16 @@ mod tests {
                 .body(Body::empty())
                 .unwrap();
             let (parts, _) = r.into_parts();
-            route_pre_dispatch(&parts.method, "/api/events", None, &parts.headers, &st)
-                .await
-                .expect("GET /api/events must be handled by the pre-dispatch layer")
+            route_pre_dispatch(
+                &parts.method,
+                "/api/events",
+                None,
+                &parts.headers,
+                &st,
+                false,
+            )
+            .await
+            .expect("GET /api/events must be handled by the pre-dispatch layer")
         };
 
         // Fill the pool, keeping every accepted response alive.

@@ -232,7 +232,19 @@ pub async fn bind(
     tracing::info!("Server:  http://{actual}/  (MCP: /mcp)");
 
     let mcp_ct = ct.clone();
-    let mcp_srv = axum::serve(mcp_listener, mcp_app).with_graceful_shutdown(async move {
+    // CONNECT INFO, wired here so the panel can tell "the client SAID 127.0.0.1" from
+    // "the connection CAME FROM loopback". Without it the loopback token-injection branch
+    // is a client-supplied header check: any local process (not just a browser, and not
+    // necessarily privileged) gets the permanent device token with one unauthenticated
+    // `curl http://127.0.0.1:<port>/panel/` — which re-opens exactly what the config-file
+    // ACL hardening closed (paths.rs grants read only to SYSTEM + Administrators).
+    // `into_make_service_with_connect_info` injects `ConnectInfo<SocketAddr>` as a request
+    // EXTENSION, which the Tower panel service reads in `handle_request`.
+    let mcp_srv = axum::serve(
+        mcp_listener,
+        mcp_app.into_make_service_with_connect_info::<std::net::SocketAddr>(),
+    )
+    .with_graceful_shutdown(async move {
         mcp_ct.cancelled().await;
     });
 
