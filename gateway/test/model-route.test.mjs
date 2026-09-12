@@ -72,11 +72,11 @@ test("shared-key channels: user key, env key, or neither", async () => {
 
 test("pure BYOK (nv/gmi): env key never substitutes", async () => {
   assert.equal(
-    await isModelUsable(envFor({ ukeys: { NVAPI_KEY: "sk-u" }, uid: "mr-nv-u" }), "nv/minimaxai/minimax-m3", "mr-nv-u"),
+    await isModelUsable(envFor({ ukeys: { NVAPI_KEY: "sk-u" }, uid: "mr-nv-u" }), "nv/moonshotai/kimi-k3", "mr-nv-u"),
     true,
   );
   assert.equal(
-    await isModelUsable(envFor({ uid: "mr-nv-e", extra: { NVAPI_KEY: "sk-e" } }), "nv/minimaxai/minimax-m3", "mr-nv-e"),
+    await isModelUsable(envFor({ uid: "mr-nv-e", extra: { NVAPI_KEY: "sk-e" } }), "nv/moonshotai/kimi-k3", "mr-nv-e"),
     false,
     "nv ignores env keys",
   );

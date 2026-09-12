@@ -79,7 +79,6 @@ test("the advertised ORDER is pinned (it is the /v1/models response)", () => {
     "or/z-ai/glm-5.2:free",
     "or/nvidia/nemotron-3-ultra-550b-a55b:free",
     "nv/nvidia/nemotron-3-ultra-550b-a55b",
-    "nv/minimaxai/minimax-m3",
     "nv/moonshotai/kimi-k3",
     "gmi/MiniMaxAI/MiniMax-M3",
     "gmi/MiniMaxAI/MiniMax-M2.7",
@@ -99,9 +98,10 @@ test("the advertised ORDER is pinned (it is the /v1/models response)", () => {
 });
 
 test("every registered model has a health probe OR an explicit reason it does not", () => {
-  // THE CORE GATE. Five models (og/minimax-m3, og/muse-spark-1.2-contributor,
+  // THE CORE GATE. Models (og/minimax-m3, og/muse-spark-1.2-contributor,
   // og/openai/gpt-5.6-luna:floor[1m], nv/minimaxai/minimax-m3,
   // nv/moonshotai/kimi-k3) had silently gone unprobed because nothing asked.
+  // (nv/minimaxai/minimax-m3 was retired: NVIDIA never offered it.)
   // Now a model either carries `probe: true` or states WHY not — a new model
   // cannot default into the gap.
   const probed = new Set(HEALTH_CHANNELS.map((c) => c.model));

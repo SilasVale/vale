@@ -280,10 +280,14 @@ unauthenticated `/models` (or 445, nv 82, cm 69, og 37); gmi/qw/amd/ds answer 40
 and are reported as NOT CHECKED rather than as empty. `advertisedNotOffered` is
 printed as CHECK — never as a verdict — because the router normalises further
 (`[1m]` markers, `og/` wire remaps) and raw name diffing reports false drift; see
-the first live run, which flagged one genuine absence (`nv/minimaxai/minimax-m3`
-is not in NVIDIA's list, and `wireModelName` passes `nv/` through UNCHANGED, so
-that entry routes a name NVIDIA does not offer) among several aliases that are
-fine. It is an OPS TOOL, deliberately NOT a CI gate: it needs four live
+the first live run, which flagged one genuine absence among several aliases that are
+fine. THAT ONE WAS ACTED ON (round 57): `nv/minimaxai/minimax-m3` was advertised and
+NVIDIA offers no MiniMax at all — not prefixed, not bare — so the entry was retired
+and the live `/v1/models` went 22 -> 21. The check held up under the obvious
+objection (that the wire name might differ from the advertised one) precisely
+because the BARE name is absent too; `nv/moonshotai/kimi-k3` and
+`nv/nvidia/nemotron-3-ultra-550b-a55b` resolve exactly, so the list is current.
+`og/minimax-m3` is a different channel and is untouched. It is an OPS TOOL, deliberately NOT a CI gate: it needs four live
 third-party endpoints.
 
 ## Architecture
