@@ -487,6 +487,10 @@ export interface StatusFacts {
   releaseVersion: string | null;
   /** mtime of the update-busy marker, or null when there is no marker. */
   updateMarkerMs: number | null;
+  /** The marker EXISTS but could not be read (EACCES/EBUSY). `updateMarkerMs === null`
+   *  then means "could not look", NOT "nothing in flight" — the same rule the fields
+   *  around it follow, and the reason `rollback --clear` had to be fixed too. */
+  updateMarkerUnreadable: boolean;
   /** This CLI's own version — what `vale update` would install. */
   packageVersion: string;
   /** The newest release the CDN advertises, or null when it could not be read.
@@ -543,7 +547,11 @@ export function statusReport(f: StatusFacts): string[] {
   out.push("this CLI: " + f.packageVersion);
 
   if (f.updateMarkerMs === null) {
-    out.push("update: none in flight");
+    out.push(
+      f.updateMarkerUnreadable
+        ? "update: state UNKNOWN -- the busy marker exists but could not be read (permissions or a lock); do not assume no update is running"
+        : "update: none in flight",
+    );
   } else if (busyIsFresh(f.updateMarkerMs, f.nowMs)) {
     const secs = Math.max(0, Math.round((f.nowMs - f.updateMarkerMs) / 1000));
     out.push(
@@ -1485,10 +1493,15 @@ const commands = {
       /* absent => unknown, never fabricated */
     }
     let updateMarkerMs: number | null = null;
+    // Only ENOENT means "no marker". Any OTHER stat error (EACCES/EBUSY) used to land
+    // here too and was reported as "update: none in flight" — a claim about an update
+    // that may be running right now. This is the sibling of the `rollback --clear` fix:
+    // the same catch treated a failure to READ as evidence of ABSENCE.
+    let updateMarkerUnreadable = false;
     try {
       updateMarkerMs = fs.statSync(updateBusyPath()).mtimeMs;
-    } catch {
-      /* no marker => nothing in flight */
+    } catch (e: any) {
+      if (e && e.code !== "ENOENT") updateMarkerUnreadable = true;
     }
     let packageVersion = "";
     try {
@@ -1511,6 +1524,7 @@ const commands = {
       port: agentPort(ETC_DIR),
       releaseVersion,
       updateMarkerMs,
+      updateMarkerUnreadable,
       packageVersion,
       latestVersion,
       nowMs: Date.now(),
@@ -2057,8 +2071,16 @@ const commands = {
     if (val === "status") {
       try {
         console.log("rollback: pinned to", fs.readFileSync(PIN, "utf8").trim());
-      } catch {
-        console.log("rollback: not pinned (tracks the release channel)");
+      } catch (e: any) {
+        // "not pinned" is a claim about ABSENCE; a read error is not evidence of it.
+        if (e && e.code !== "ENOENT") {
+          console.error(
+            `rollback: could not read ${PIN} (${e.code || e.message}) -- pin state UNKNOWN`,
+          );
+          process.exitCode = 1;
+        } else {
+          console.log("rollback: not pinned (tracks the release channel)");
+        }
       }
       return;
     }
@@ -2303,7 +2325,7 @@ const commands = {
 
   // C2: cloudflared is a boxed, Vale-supervised component — operators never
   // touch the binary directly. This CLI is the only handle.
-  tunnel(args) {
+  async tunnel(args) {
     const sub = args[0] || "status";
     const cf = path.join(COMPONENTS_DIR, "cloudflared.exe");
     const cfg = path.join(ETC_DIR, "tunnel.yml");
@@ -2350,11 +2372,53 @@ const commands = {
         // npm audit #12: detached/unref are NO-OPS on spawnSync —
         // `vale tunnel start` blocked the CLI until the tunnel died.
         // intent to background the tunnel); kept for parity.
+        // OBSERVE THE SPAWN. stdio was ignored, there was no 'error'/'exit' listener and
+        // the CLI exited 0 immediately — so the success line printed for a cloudflared
+        // that died on a bad config, a missing credentials file, a gone route, or an
+        // already-running instance. Worse, when the SPAWN ITSELF failed there was no
+        // 'error' listener either, so node printed the success line and THEN died with an
+        // unhandled 'error' stack trace.
+        let spawnErr: Error | null = null;
+        let exitedEarly: number | null = null;
         const ch = spawn(cf, ["tunnel", "--config", cfg, "run"], {
           stdio: "ignore",
           detached: true,
         });
+        ch.on("error", (e: Error) => {
+          spawnErr = e;
+        });
+        ch.on("exit", (code: number | null) => {
+          exitedEarly = code === null ? -1 : code;
+        });
         ch.unref();
+        // Give it long enough to fail visibly, then ASK the same question `tunnel
+        // status` asks rather than assuming. `await` here is why this method is async.
+        await new Promise((r) => setTimeout(r, 1500));
+        if (spawnErr) {
+          console.error(
+            `tunnel: FAILED to start cloudflared (${(spawnErr as Error).message})`,
+          );
+          process.exit(1);
+        }
+        if (exitedEarly !== null) {
+          console.error(
+            `tunnel: cloudflared exited immediately (code ${exitedEarly}) -- check the config and credentials`,
+          );
+          process.exit(1);
+        }
+        const running = (
+          spawnSync("tasklist", ["/FI", "IMAGENAME eq cloudflared.exe"], {
+            encoding: "utf8",
+          }).stdout || ""
+        )
+          .toLowerCase()
+          .includes("cloudflared");
+        if (!running) {
+          console.error(
+            "tunnel: cloudflared did not come up -- see the tunnel log; the agent still auto-spawns it on boot",
+          );
+          process.exit(1);
+        }
         console.log(
           "tunnel: started in background (agent also auto-spawns it on boot)",
         );
