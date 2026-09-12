@@ -43,8 +43,12 @@
   /* TEXT on --accent-light. The panel has had `--accent-on-soft` all along; the
      console did not, and three rules here referenced it anyway — a `var()` that
      resolves to nothing makes the DECLARATION invalid, so the property is dropped
-     silently and the element inherits. Measured: #a63308 on #ffefe5 = 6.04. */
-  --accent-on-soft: #a63308;
+     silently and the element inherits.
+     THE VALUE IS THE PANEL'S, not one I picked: `--accent-on-soft` is a name BOTH
+     surfaces declare, so the token contract requires them to agree, and the panel is
+     the primary operator surface (round 42's rule). Its #9c3a0a also measures better
+     here than the #a63308 I first wrote — 6.20 on #ffefe5 against 6.04. */
+  --accent-on-soft: #9c3a0a;
   --accent-ring: rgba(232, 89, 12, 0.18);
   --accent-shadow: rgba(217, 72, 15, 0.3);
 
