@@ -42,8 +42,18 @@
 // true, and the second one is what the operator came back for.
 import { trailReadNotice } from "../lib/trailRead";
 import { useMemo, useState } from "react";
-import { derivePath, attentionSteps, type PathStep, type PathSummary } from "../lib/path";
-import { buildRecipe, recipeWarnings, suggestedTitle, RECIPE_TAG } from "../lib/recipe";
+import {
+  derivePath,
+  attentionSteps,
+  type PathStep,
+  type PathSummary,
+} from "../lib/path";
+import {
+  buildRecipe,
+  recipeWarnings,
+  suggestedTitle,
+  RECIPE_TAG,
+} from "../lib/recipe";
 import { callTool } from "../lib/api";
 import { useTrajectory } from "../hooks/useTrajectory";
 import { fmtDuration } from "./CommandCard";
@@ -58,7 +68,15 @@ export function summaryDuration(s: PathSummary): string {
   return s.untimed > 0 ? `at least ${base}` : base;
 }
 
-export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal, plan, readState = "ok" }: {
+export function PathView({
+  events,
+  onJumpToStep,
+  sessionKind,
+  sessionLabel,
+  goal,
+  plan,
+  readState = "ok",
+}: {
   events: CommandEvent[];
   /** Whether the read behind `events` succeeded — see lib/trailRead.ts. Defaults
    *  to `"ok"` for direct mounts (tests, and callers holding real events), where
@@ -90,13 +108,16 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   const [recipeOpen, setRecipeOpen] = useState(false);
   const [recipeName, setRecipeName] = useState("");
   const [recipeBusy, setRecipeBusy] = useState(false);
-  const [recipeMsg, setRecipeMsg] = useState<{ kind: "ok" | "err"; text: string } | null>(null);
+  const [recipeMsg, setRecipeMsg] = useState<{
+    kind: "ok" | "err";
+    text: string;
+  } | null>(null);
 
   if (path.steps.length === 0) {
-  // Null when our own empty state is TRUE — the read succeeded.
-  const notice = trailReadNotice(readState);
+    // Null when our own empty state is TRUE — the read succeeded.
+    const notice = trailReadNotice(readState);
 
-  return (
+    return (
       <div className="path-view">
         <RunStrip />
         <div className="path-empty">
@@ -107,7 +128,13 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
               with the trajectory view and the archive (lib/trailRead.ts). */}
           {notice ? (
             <>
-              <p className={notice.failed ? "path-empty-title path-empty-title-fail" : "path-empty-title"}>
+              <p
+                className={
+                  notice.failed
+                    ? "path-empty-title path-empty-title-fail"
+                    : "path-empty-title"
+                }
+              >
                 {notice.failed ? "Trail unavailable" : "Reading…"}
               </p>
               <p className="path-empty-body">{notice.text}</p>
@@ -116,8 +143,9 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
             <>
               <p className="path-empty-title">No path yet</p>
               <p className="path-empty-body">
-                This session has not run a command. Once it does, each command becomes
-                a step here — with its outcome, how long it took and what came back.
+                This session has not run a command. Once it does, each command
+                becomes a step here — with its outcome, how long it took and
+                what came back.
               </p>
             </>
           )}
@@ -146,16 +174,27 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
     setRecipeBusy(true);
     setRecipeMsg(null);
     try {
-      const draft = buildRecipe(path, { name: recipeName, sessionKind, sessionLabel, goal });
+      const draft = buildRecipe(path, {
+        name: recipeName,
+        sessionKind,
+        sessionLabel,
+        goal,
+      });
       await callTool("memory_save", {
         title: draft.title,
         content: draft.content,
         tags: draft.tags,
       });
       setRecipeOpen(false);
-      setRecipeMsg({ kind: "ok", text: `Saved as "${draft.title}" — AI clients can find it with the "${RECIPE_TAG}" tag.` });
+      setRecipeMsg({
+        kind: "ok",
+        text: `Saved as "${draft.title}" — AI clients can find it with the "${RECIPE_TAG}" tag.`,
+      });
     } catch (e) {
-      setRecipeMsg({ kind: "err", text: `Could not save: ${(e as Error)?.message ?? String(e)}` });
+      setRecipeMsg({
+        kind: "err",
+        text: `Could not save: ${(e as Error)?.message ?? String(e)}`,
+      });
     } finally {
       setRecipeBusy(false);
     }
@@ -167,7 +206,9 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
   const offPlan =
     plan && plan.length > 0
       ? path.steps.filter(
-          (st) => st.planStep != null && (st.planStep < 1 || st.planStep > plan.length),
+          (st) =>
+            st.planStep != null &&
+            (st.planStep < 1 || st.planStep > plan.length),
         )
       : [];
 
@@ -175,7 +216,10 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
     <div className="path-view">
       <RunStrip />
       {goal && (
-        <div className="path-goal" title="What this session was asked to achieve">
+        <div
+          className="path-goal"
+          title="What this session was asked to achieve"
+        >
           <span className="path-goal-label">Goal</span>
           <span className="path-goal-text">{goal}</span>
         </div>
@@ -216,7 +260,10 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                   {/* The claim count is the honest half. ZERO is shown as
                       prominently as any number: an unclaimed step is the signal
                       that the run departed from the plan. */}
-                  <span className="path-plan-count" data-zero={done === 0 ? "yes" : "no"}>
+                  <span
+                    className="path-plan-count"
+                    data-zero={done === 0 ? "yes" : "no"}
+                  >
                     {done}
                   </span>
                 </li>
@@ -230,9 +277,11 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
             // lose the signal.
             <p className="path-plan-offplan" data-count={offPlan.length}>
               <span className="path-plan-n">—</span>
-              {offPlan.length} command{offPlan.length === 1 ? "" : "s"} claimed a step
-              this plan does not have (
-              {[...new Set(offPlan.map((st) => st.planStep))].sort((a, b) => (a ?? 0) - (b ?? 0)).join(", ")}
+              {offPlan.length} command{offPlan.length === 1 ? "" : "s"} claimed
+              a step this plan does not have (
+              {[...new Set(offPlan.map((st) => st.planStep))]
+                .sort((a, b) => (a ?? 0) - (b ?? 0))
+                .join(", ")}
               ) — it was revised after they were attributed.
             </p>
           )}
@@ -259,14 +308,21 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
               `bad` block: a session whose only unusual steps are backgrounded is a
               HEALTHY session, and colouring it red would say otherwise. */}
           {summary.counts.bg > 0 && (
-            <span className="path-summary-bg">{summary.counts.bg} backgrounded</span>
+            <span className="path-summary-bg">
+              {summary.counts.bg} backgrounded
+            </span>
           )}
           {bad === 0 && summary.counts.ok > 0 && (
             <span className="path-summary-good">all succeeded</span>
           )}
-          {summary.live && <span className="path-summary-live">running now</span>}
+          {summary.live && (
+            <span className="path-summary-live">running now</span>
+          )}
           {summary.humanSteps > 0 && (
-            <span className="path-summary-human" title="Steps started while a person held the keyboard">
+            <span
+              className="path-summary-human"
+              title="Steps started while a person held the keyboard"
+            >
               {summary.humanSteps} by you
             </span>
           )}
@@ -280,7 +336,11 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
           )}
           {/* Harvest — save this walked path so it can be walked again. */}
           {!recipeOpen && (
-            <button type="button" className="path-recipe-open" onClick={openRecipe}>
+            <button
+              type="button"
+              className="path-recipe-open"
+              onClick={openRecipe}
+            >
               Save as recipe
             </button>
           )}
@@ -300,28 +360,40 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
             />
             {warnings.length > 0 && (
               <p className="path-recipe-warn">
-                This run did not finish cleanly ({warnings.join(", ")}). The recipe
-                will say so — reuse it with that in mind.
+                This run did not finish cleanly ({warnings.join(", ")}). The
+                recipe will say so — reuse it with that in mind.
               </p>
             )}
             <div className="path-recipe-actions">
-              <button type="button" className="primary" onClick={saveRecipe} disabled={recipeBusy}>
+              <button
+                type="button"
+                className="primary"
+                onClick={saveRecipe}
+                disabled={recipeBusy}
+              >
                 {recipeBusy ? "Saving…" : "Save to device memory"}
               </button>
-              <button type="button" onClick={() => setRecipeOpen(false)} disabled={recipeBusy}>
+              <button
+                type="button"
+                onClick={() => setRecipeOpen(false)}
+                disabled={recipeBusy}
+              >
                 Cancel
               </button>
             </div>
             <p className="path-recipe-hint">
-              Saved to this device's shared memory, so any AI client here can find it
-              with the <code>{RECIPE_TAG}</code> tag and walk it again. It records the
-              commands and how the run went — it does not run by itself.
+              Saved to this device's shared memory, so any AI client here can
+              find it with the <code>{RECIPE_TAG}</code> tag and walk it again.
+              It records the commands and how the run went — it does not run by
+              itself.
             </p>
           </div>
         )}
 
         {recipeMsg && (
-          <p className={`path-recipe-msg ${recipeMsg.kind}`}>{recipeMsg.text}</p>
+          <p className={`path-recipe-msg ${recipeMsg.kind}`}>
+            {recipeMsg.text}
+          </p>
         )}
       </header>
 
@@ -335,11 +407,13 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                   type="button"
                   className="path-attention-row"
                   onClick={() => onJumpToStep?.(s)}
-                  title="Show this step in the timeline"
+                  title="Open the timeline"
                 >
                   <span className="cmd-dot" data-state={s.state} />
                   <span className="path-attention-cmd">{s.command}</span>
-                  <span className={`path-attention-tag s-${s.state}`}>{s.stateLabel}</span>
+                  <span className={`path-attention-tag s-${s.state}`}>
+                    {s.stateLabel}
+                  </span>
                 </button>
               </li>
             ))}
@@ -357,28 +431,37 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                 alternatives become flex items BESIDE the command instead of
                 under it — which is what happened, and what the render showed. */}
             <div className="path-step-main">
-            <button
-              type="button"
-              className="path-step-body"
-              onClick={() => onJumpToStep?.(s)}
-              title="Show this step in the timeline"
-            >
-              <span className="path-step-index">{s.index}</span>
-              <span className="path-step-cmd">{s.command}</span>
-              <span className="path-step-meta">
-                {s.owner === "human" && (
-                  <span className="path-step-owner" title="A person ran this step">you</span>
-                )}
-                <span className={`path-step-tag s-${s.state}`}>{s.stateLabel}</span>
-                {s.durationMs != null && (
-                  <span className="path-step-dur">{fmtDuration(s.durationMs)}</span>
-                )}
-                {s.outputChars > 0 && (
-                  <span className="path-step-out">{s.outputChars} chars</span>
-                )}
-              </span>
-            </button>
-            {/* THE INTENT LAYER, rendered. The reason sits UNDER the command it
+              <button
+                type="button"
+                className="path-step-body"
+                onClick={() => onJumpToStep?.(s)}
+                title="Open the timeline"
+              >
+                <span className="path-step-index">{s.index}</span>
+                <span className="path-step-cmd">{s.command}</span>
+                <span className="path-step-meta">
+                  {s.owner === "human" && (
+                    <span
+                      className="path-step-owner"
+                      title="A person ran this step"
+                    >
+                      you
+                    </span>
+                  )}
+                  <span className={`path-step-tag s-${s.state}`}>
+                    {s.stateLabel}
+                  </span>
+                  {s.durationMs != null && (
+                    <span className="path-step-dur">
+                      {fmtDuration(s.durationMs)}
+                    </span>
+                  )}
+                  {s.outputChars > 0 && (
+                    <span className="path-step-out">{s.outputChars} chars</span>
+                  )}
+                </span>
+              </button>
+              {/* THE INTENT LAYER, rendered. The reason sits UNDER the command it
                 explains, and the branches not taken sit under that — a step that
                 made a real choice reads as a choice rather than as an
                 inevitability, which is the whole difference between a command
@@ -388,51 +471,62 @@ export function PathView({ events, onJumpToStep, sessionKind, sessionLabel, goal
                 will have no stated reason (no client sends one yet, and not
                 every step needs one), and filling that space with "no reason
                 given" would bury the steps that DO have one. */}
-            {s.intent && (
-              <p className="path-step-why">
-                <span className="path-step-why-mark" aria-hidden="true">→</span>
-                {s.intent}
-              </p>
-            )}
-            {s.runId && (
-              // WHICH EXECUTION THIS BELONGED TO, as the AI claimed it. Rendered
-              // as a claim — "the agent says" in the title — because `run_id` is
-              // recorded VERBATIM and the device never verifies it. It is a
-              // LABEL, NEVER A CREDENTIAL (`runs.rs` pins that twice), so it
-              // groups nothing here: real grouping lives in `lib/runs.ts` on the
-              // device-level timeline, and a second implementation would be two
-              // reads of one fact.
-              //
-              // It is worth showing at all because this trail is the 30-day
-              // record while `/api/operation` keeps a DAY: "which execution was
-              // this?" is answerable only from here once the run strip's window
-              // has passed.
-              <p className="path-step-run" title="The run the agent says this command belonged to">
-                <span className="path-step-run-label">run</span>
-                <code className="path-step-run-id">{s.runId}</code>
-              </p>
-            )}
-            {s.considered.length > 0 && (
-              <p className="path-step-alt" title="Alternatives the agent says it passed over">
-                <span className="path-step-alt-label">instead of</span>
-                {s.considered.map((c) => (
-                  <span key={c} className="path-step-alt-item">{c}</span>
-                ))}
-              </p>
-            )}
+              {s.intent && (
+                <p className="path-step-why">
+                  <span className="path-step-why-mark" aria-hidden="true">
+                    →
+                  </span>
+                  {s.intent}
+                </p>
+              )}
+              {s.runId && (
+                // WHICH EXECUTION THIS BELONGED TO, as the AI claimed it. Rendered
+                // as a claim — "the agent says" in the title — because `run_id` is
+                // recorded VERBATIM and the device never verifies it. It is a
+                // LABEL, NEVER A CREDENTIAL (`runs.rs` pins that twice), so it
+                // groups nothing here: real grouping lives in `lib/runs.ts` on the
+                // device-level timeline, and a second implementation would be two
+                // reads of one fact.
+                //
+                // It is worth showing at all because this trail is the 30-day
+                // record while `/api/operation` keeps a DAY: "which execution was
+                // this?" is answerable only from here once the run strip's window
+                // has passed.
+                <p
+                  className="path-step-run"
+                  title="The run the agent says this command belonged to"
+                >
+                  <span className="path-step-run-label">run</span>
+                  <code className="path-step-run-id">{s.runId}</code>
+                </p>
+              )}
+              {s.considered.length > 0 && (
+                <p
+                  className="path-step-alt"
+                  title="Alternatives the agent says it passed over"
+                >
+                  <span className="path-step-alt-label">instead of</span>
+                  {s.considered.map((c) => (
+                    <span key={c} className="path-step-alt-item">
+                      {c}
+                    </span>
+                  ))}
+                </p>
+              )}
             </div>
           </li>
         ))}
       </ol>
 
       <p className="path-note">
-        A step records what ran and how it ended, and <b>who was driving</b> when it
-        started — a handoff is marked, so a step with no marker is the agent's. Where
-        the agent said why, the reason and the alternatives it passed over are shown
-        under the command; where it said nothing, none are invented. Typing done
-        while a person held the keyboard is not reconstructed into commands: keystrokes
-        are bytes, not command boundaries, so this view marks the window rather than
-        inventing steps in it.
+        A step records what ran and how it ended, and <b>who was driving</b>{" "}
+        when it started — a handoff is marked, so a step with no marker is the
+        agent's. Where the agent said why, the reason and the alternatives it
+        passed over are shown under the command; where it said nothing, none are
+        invented. Typing done while a person held the keyboard is not
+        reconstructed into commands: keystrokes are bytes, not command
+        boundaries, so this view marks the window rather than inventing steps in
+        it.
       </p>
     </div>
   );

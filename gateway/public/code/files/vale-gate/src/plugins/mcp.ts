@@ -148,9 +148,18 @@ export default {
       match: (m, p) => m === "GET" && p === `${PLUGIN_BASE}/status`,
       handler: async (request: Request, env: any) => {
         const user = await requireSession(request, env);
-        if (!user || user.role !== "admin") {
-          return jsonError(401, "Not logged in", "authentication_error");
-        }
+        // TWO CASES, TWO STATUSES — they were collapsed into one 401, and that
+        // logged people OUT. The console's client treats ANY 401 as a dead session
+        // (`api/client.ts` -> notifyUnauthorized -> setUser(null) -> the login page),
+        // so a logged-in NON-ADMIN who merely opened the Overview was ejected: the
+        // landing page probes this endpoint for every role, measured live as
+        // `/api/me -> 200` followed by `/api/plugins/status -> 401` and the auth card
+        // rendering. The session cookie was valid the whole time.
+        //
+        // 401 means "you are not authenticated"; this user IS. `auth.ts` already
+        // returns 403 "Admin only" for the same situation; this is that.
+        if (!user) return jsonError(401, "Not logged in", "authentication_error");
+        if (user.role !== "admin") return jsonError(403, "Admin only", "forbidden");
         return pluginStatus(request, env);
       },
     });

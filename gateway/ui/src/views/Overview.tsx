@@ -57,14 +57,17 @@ export default function Overview() {
   const loadDashboard = useCallback(async () => {
     api.getDevices().then((d) => setDevices(d.devices || [])).catch(() => {});
     api.getHealth().then((h) => setChannels(h.channels || [])).catch(() => {});
+    // EVERY admin-only read lives behind ONE guard. The plugin probe used to sit
+    // outside it, so a non-admin's landing page called an admin endpoint on load and
+    // every 60 s — and a 401 from it signed them out (see the worker's mcp.ts).
     if (user?.role === "admin") {
       api.getUsers().then((u) => setUsers(u.users?.length ?? null)).catch(() => {});
-    }
-    try {
-      const s = await api.getPluginStatus(true);
-      setStatus(s.devices || {});
-    } catch {
-      /* probe is best-effort — tiles keep their last value */
+      try {
+        const s = await api.getPluginStatus(true);
+        setStatus(s.devices || {});
+      } catch {
+        /* probe is best-effort — tiles keep their last value */
+      }
     }
   }, [user?.role]);
 

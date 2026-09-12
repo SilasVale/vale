@@ -18,7 +18,17 @@ import type { CommandEvent, SessionReadState } from "../hooks/useCommandEvents";
 
 /** The command-events slice TerminalWorkspace consumes from App. */
 export interface CommandEvents {
-  cards: { id: string; command: string; output: string; startedAt: number; ended: boolean; exitCode: number | null; reason: string | null; durationMs: number | null; seq: number }[];
+  cards: {
+    id: string;
+    command: string;
+    output: string;
+    startedAt: number;
+    ended: boolean;
+    exitCode: number | null;
+    reason: string | null;
+    durationMs: number | null;
+    seq: number;
+  }[];
   events: CommandEvent[];
   /** Where the device's copy of this trail BEGINS (the route's `first_seq`).
    *  This slice existed at runtime since round 23 and the TYPE did not declare
@@ -50,12 +60,21 @@ interface Props {
   /** Arm/disarm the approval gate for a session. */
   onSetApproval: (sid: string, required: boolean) => Promise<unknown>;
   /** Answer a pending approval request. */
-  onDecideApproval: (sid: string, id: string, approve: boolean, grant?: boolean) => Promise<unknown>;
+  onDecideApproval: (
+    sid: string,
+    id: string,
+    approve: boolean,
+    grant?: boolean,
+  ) => Promise<unknown>;
   /** Revoke one approval grant, or every one when omitted. */
   onRevokeGrants: (sid: string, grant?: string) => Promise<unknown>;
   /** State the session's goal, or clear it with an empty string. */
   onSetGoal: (sid: string, goal: string) => Promise<unknown>;
-  registerWrite: (sid: string, fn: (bytes: Uint8Array) => void, getRendered: () => number) => (() => void) & { unregister?: (sid: string) => void };
+  registerWrite: (
+    sid: string,
+    fn: (bytes: Uint8Array) => void,
+    getRendered: () => number,
+  ) => (() => void) & { unregister?: (sid: string) => void };
   cmdEvents: CommandEvents;
   token: string;
   density: "panel" | "desktop";
@@ -67,17 +86,34 @@ interface Props {
 }
 
 export function TerminalWorkspace({
-  sessions, activeSid, onActivate, onClose, onExport, onViewChange, onSetControl,
-  onSetApproval, onDecideApproval, onRevokeGrants, onSetGoal,
-  registerWrite, cmdEvents, token, density, sseState,
-  controlledView, onControlledViewChange,
+  sessions,
+  activeSid,
+  onActivate,
+  onClose,
+  onExport,
+  onViewChange,
+  onSetControl,
+  onSetApproval,
+  onDecideApproval,
+  onRevokeGrants,
+  onSetGoal,
+  registerWrite,
+  cmdEvents,
+  token,
+  density,
+  sseState,
+  controlledView,
+  onControlledViewChange,
 }: Props) {
   const [selectedCmdId, setSelectedCmdId] = useState<string | null>(null);
   const [detailsOpen, setDetailsOpen] = useState(false);
-  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>({});
-  const sessionView: SessionView = density === "desktop"
-    ? (controlledView ?? "terminal")
-    : ((activeSid && sessionViews[activeSid]) || "terminal");
+  const [sessionViews, setSessionViews] = useState<Record<string, SessionView>>(
+    {},
+  );
+  const sessionView: SessionView =
+    density === "desktop"
+      ? (controlledView ?? "terminal")
+      : (activeSid && sessionViews[activeSid]) || "terminal";
   const trajOpen = !!activeSid && sessionView === "trajectory";
   const pathOpen = !!activeSid && sessionView === "path";
   // The active session record — used to stamp a saved recipe with what the
@@ -87,29 +123,32 @@ export function TerminalWorkspace({
   // Control handoff — rendered in BOTH densities from this one place, because
   // both render this workspace and a per-density copy is how the two drifted
   // before (R131). Hidden until a session is active: there is nothing to hold.
-  const control = activeSession && !activeSession.closed ? (
-    <>
-      <SessionControl
-        held={!!activeSession.heldByHuman}
-        onSet={(human) => onSetControl(activeSession.sid, human)}
-      />
-      <GoalBar
-        goal={activeSession.goal}
-        onSet={(g) => onSetGoal(activeSession.sid, g)}
-      />
-      <ApprovalGate
-        armed={!!activeSession.approvalRequired}
-        pending={activeSession.pendingApproval}
-        grants={activeSession.approvalGrants}
-        onArm={(required) => onSetApproval(activeSession.sid, required)}
-        onDecide={(id, approve, grant) =>
-          onDecideApproval(activeSession.sid, id, approve, grant)
-        }
-        onRevoke={(grant) => onRevokeGrants(activeSession.sid, grant)}
-      />
-    </>
-  ) : null;
-  const selectedCard = selectedCmdId ? cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null : null;
+  const control =
+    activeSession && !activeSession.closed ? (
+      <>
+        <SessionControl
+          held={!!activeSession.heldByHuman}
+          onSet={(human) => onSetControl(activeSession.sid, human)}
+        />
+        <GoalBar
+          goal={activeSession.goal}
+          onSet={(g) => onSetGoal(activeSession.sid, g)}
+        />
+        <ApprovalGate
+          armed={!!activeSession.approvalRequired}
+          pending={activeSession.pendingApproval}
+          grants={activeSession.approvalGrants}
+          onArm={(required) => onSetApproval(activeSession.sid, required)}
+          onDecide={(id, approve, grant) =>
+            onDecideApproval(activeSession.sid, id, approve, grant)
+          }
+          onRevoke={(grant) => onRevokeGrants(activeSession.sid, grant)}
+        />
+      </>
+    ) : null;
+  const selectedCard = selectedCmdId
+    ? (cmdEvents.cards.find((c) => c.id === selectedCmdId) ?? null)
+    : null;
 
   // stage-n: refit terminals after the drawer finishes its enter/exit
   // transition — opening the Logs drawer changes the container size but the
@@ -145,9 +184,10 @@ export function TerminalWorkspace({
 
   // Browserless-style connection banner: the SSE stream dropped — say so in
   // place instead of leaving the user typing into a frozen terminal.
-  const reconnectBanner = sseState === "down" ? (
-    <div className="term-reconnect">Connection lost — reconnecting…</div>
-  ) : null;
+  const reconnectBanner =
+    sseState === "down" ? (
+      <div className="term-reconnect">Connection lost — reconnecting…</div>
+    ) : null;
 
   return (
     <>
@@ -159,7 +199,10 @@ export function TerminalWorkspace({
               (DesktopShell) — this workspace renders ONLY the terminal area.
               The trajectory/terminal view switch is a header button. */}
           <div className="desktop-term-bar">{control}</div>
-          <div id="desktop-term-container" className={trajOpen || pathOpen ? "hidden" : undefined}>
+          <div
+            id="desktop-term-container"
+            className={trajOpen || pathOpen ? "hidden" : undefined}
+          >
             {pathOpen && activeSid ? (
               <PathView
                 key={activeSid}
@@ -169,16 +212,37 @@ export function TerminalWorkspace({
                 sessionLabel={activeSession?.label}
                 goal={activeSession?.goal}
                 plan={activeSession?.plan}
+                // WIRED — it used to be omitted at BOTH mounts, so every step was a
+                // focusable button whose tooltip promised an action and did nothing.
+                // The component test passed because it injects the handler: the
+                // component worked and the wiring did not, which no test could see.
+                onJumpToStep={() => onViewChange(activeSid, "trajectory")}
               />
             ) : trajOpen && activeSid ? (
-              <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} readState={cmdEvents.readState} />
+              <TrajectoryView
+                key={activeSid}
+                events={cmdEvents.events}
+                firstSeq={cmdEvents.firstSeq}
+                readState={cmdEvents.readState}
+              />
             ) : (
               <>
-                {sessions.filter((s) => !s.closed).map((s) => (
-                  <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
-                ))}
+                {sessions
+                  .filter((s) => !s.closed)
+                  .map((s) => (
+                    <TerminalPane
+                      key={s.sid}
+                      session={s}
+                      registerWrite={registerWrite}
+                    />
+                  ))}
                 {sessions.length === 0 && (
-                  <div id="empty-state"><div className="empty-card"><span className="empty-mark">V</span><p>No sessions yet</p></div></div>
+                  <div id="empty-state">
+                    <div className="empty-card">
+                      <span className="empty-mark">V</span>
+                      <p>No sessions yet</p>
+                    </div>
+                  </div>
                 )}
               </>
             )}
@@ -202,10 +266,14 @@ export function TerminalWorkspace({
               className={detailsOpen ? "active" : ""}
               title="Command log"
               onClick={() => {
-                if (detailsOpen) { setDetailsOpen(false); setSelectedCmdId(null); }
-                else setDetailsOpen(true);
+                if (detailsOpen) {
+                  setDetailsOpen(false);
+                  setSelectedCmdId(null);
+                } else setDetailsOpen(true);
               }}
-            >Logs</button>
+            >
+              Logs
+            </button>
           </div>
           {pathOpen && activeSid ? (
             <PathView
@@ -215,20 +283,35 @@ export function TerminalWorkspace({
               sessionKind={activeSession?.kind}
               sessionLabel={activeSession?.label}
               goal={activeSession?.goal}
-                plan={activeSession?.plan}
+              plan={activeSession?.plan}
+              onJumpToStep={() => onViewChange(activeSid, "trajectory")}
             />
           ) : trajOpen && activeSid ? (
-            <TrajectoryView key={activeSid} events={cmdEvents.events} firstSeq={cmdEvents.firstSeq} readState={cmdEvents.readState} />
+            <TrajectoryView
+              key={activeSid}
+              events={cmdEvents.events}
+              firstSeq={cmdEvents.firstSeq}
+              readState={cmdEvents.readState}
+            />
           ) : (
             <div id="term-container">
               {sessions.length === 0 ? (
                 <div id="empty-state">
-                  <div className="empty-card"><span className="empty-mark">V</span><p>No sessions yet</p></div>
+                  <div className="empty-card">
+                    <span className="empty-mark">V</span>
+                    <p>No sessions yet</p>
+                  </div>
                 </div>
               ) : (
-                sessions.filter((s) => !s.closed).map((s) => (
-                  <TerminalPane key={s.sid} session={s} registerWrite={registerWrite} />
-                ))
+                sessions
+                  .filter((s) => !s.closed)
+                  .map((s) => (
+                    <TerminalPane
+                      key={s.sid}
+                      session={s}
+                      registerWrite={registerWrite}
+                    />
+                  ))
               )}
             </div>
           )}
@@ -237,15 +320,29 @@ export function TerminalWorkspace({
               <div id="drawer-inner">
                 <div id="drawer-head">
                   <span>Commands</span>
-                  <button title="Close" onClick={() => { setDetailsOpen(false); setSelectedCmdId(null); }}><Icon name="close" size={13} /></button>
+                  <button
+                    title="Close"
+                    onClick={() => {
+                      setDetailsOpen(false);
+                      setSelectedCmdId(null);
+                    }}
+                  >
+                    <Icon name="close" size={13} />
+                  </button>
                 </div>
-                <DetailsPanel card={selectedCard} onClose={() => setSelectedCmdId(null)} />
+                <DetailsPanel
+                  card={selectedCard}
+                  onClose={() => setSelectedCmdId(null)}
+                />
                 <CommandStream
                   cards={cmdEvents.cards}
                   selectedId={selectedCmdId}
                   onSelect={(id) => {
-                    if (id === selectedCmdId) { setSelectedCmdId(null); }
-                    else { setSelectedCmdId(id); }
+                    if (id === selectedCmdId) {
+                      setSelectedCmdId(null);
+                    } else {
+                      setSelectedCmdId(id);
+                    }
                   }}
                 />
               </div>
