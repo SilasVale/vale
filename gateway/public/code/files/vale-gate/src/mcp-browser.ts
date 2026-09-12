@@ -94,6 +94,14 @@ export async function callMcpClientBridge(
   // (target = a snapshot reference "eN" or a unique selector); the gateway's old declaration took element_ref integers.
   // We translate to target here, so callers' habits don't change; type's text passes through as-is.
   const pmArgs: any = { ...args };
+  // ONE RENAME, because the console and the shipped server disagree on the
+  // spelling: the console says `text_gone`, playwright-mcp 0.0.79 says
+  // `textGone`. Everything else is forwarded verbatim — which is why every
+  // advertised name must exist in the server (pinned by browser-contract.test.mjs).
+  if (name === "browser_wait" && pmArgs.text_gone != null) {
+    pmArgs.textGone = pmArgs.text_gone;
+    delete pmArgs.text_gone;
+  }
   // Extension audit M2: timeout_secs was forwarded UNCLAMPED and the fetch
   // below had NO signal — a hung playwright-mcp (modal CDP block) pinned the
   // worker request AND an isolate for the platform ceiling. Clamp + bound.

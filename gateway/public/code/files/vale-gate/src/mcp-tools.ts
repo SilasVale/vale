@@ -567,7 +567,11 @@ const BROWSER_TOOLS: McpTool[] = [
       properties: {
         ...DEVICE_PARAM,
         ...RUN_PARAM,
-        full_page: { type: "boolean" },
+        // `fullPage`, not `full_page`: arguments are forwarded VERBATIM, and the
+        // shipped server declares `fullPage`. The snake_case spelling was
+        // silently dropped, so a full-page request returned a viewport shot and
+        // nothing said so.
+        fullPage: { type: "boolean" },
       },
       required: [],
     },
@@ -605,16 +609,30 @@ const BROWSER_TOOLS: McpTool[] = [
   },
   {
     name: "browser_wait",
-    description: "Wait for a condition (selector/text) in the controlled tab. Returns a snapshot.",
+    // SPEAKS THE SHIPPED SERVER'S LANGUAGE. This advertised `condition` as
+    // REQUIRED plus a `timeout_s` — and the playwright-mcp the agent installs
+    // (`@playwright/mcp` 0.0.79, read out of vale-playwright.zip) has NEITHER:
+    // `browser_wait_for` takes `time`, `text` and `textGone`, all optional.
+    // Arguments are forwarded verbatim, so the console was advertising a call
+    // whose ONLY required argument the server does not have, and a
+    // schema-validating client could not have made a working one.
+    //
+    // The description now says what the server does — wait for text to appear or
+    // disappear, or for a time to pass — instead of promising a selector wait
+    // that does not exist.
+    description:
+      "Wait in the controlled tab: for `text` to appear, for `text_gone` to disappear, or for `time` seconds to pass. The server requires at least one; none is marked required here so its rule is the one that applies. Returns a snapshot.",
     inputSchema: {
       type: "object",
       properties: {
         ...DEVICE_PARAM,
         ...RUN_PARAM,
-        condition: { type: "string" },
-        timeout_s: { type: "integer" },
+        text: { type: "string", description: "Wait for this text to appear." },
+        text_gone: { type: "string", description: "Wait for this text to disappear." },
+        time: { type: "number", description: "Seconds to wait." },
       },
-      required: ["condition"],
+      // NOTHING IS REQUIRED: the server accepts any one of the three, so marking
+      // one required would forbid the other two valid calls.
     },
   },
   {
