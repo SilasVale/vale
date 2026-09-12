@@ -6,7 +6,7 @@
  * `ctx.api.translate.resolveAutoModel`, and health.test.mjs's direct import.
  */
 
-import { MODELS } from "../channels.ts";
+import { isAdvertised } from "../store/models.ts";
 import { getUserKeys, getUserRoute } from "../store.ts";
 import { isChannelDegraded } from "../reliability.ts";
 
@@ -43,7 +43,9 @@ export function registerChannelKey(prefix: string, rule: ChannelKeyRule): void {
 }
 
 export async function isModelUsable(env: any, model: string, uid: string): Promise<boolean> {
-  if (!MODELS.some((m) => m.id === model)) return false;
+  // Disabling a model must take effect for a route ALREADY POINTING AT IT, not only
+  // for new choices — otherwise "retired" would mean "retired for new users".
+  if (!(await isAdvertised(env, model))) return false;
   const userKeys: any = await getUserKeys(env, uid).catch(() => ({}));
   const key = model.split("/")[0] || "";
   const rule = Object.prototype.hasOwnProperty.call(CHANNEL_KEY_RULES, key)

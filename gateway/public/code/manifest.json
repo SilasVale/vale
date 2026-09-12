@@ -176,6 +176,11 @@
       "group": "vale-gate"
     },
     {
+      "name": "src/store/models.ts",
+      "path": "files/vale-gate/src/store/models.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/store/plugins.ts",
       "path": "files/vale-gate/src/store/plugins.ts",
       "group": "vale-gate"

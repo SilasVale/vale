@@ -10,6 +10,7 @@
  * derived here the same way handleConsole did: url.protocol === "https:".
  */
 
+import { isAdvertised } from "../store/models.ts";
 import {
   createUser,
   getUser,
@@ -46,7 +47,7 @@ import {
 } from "../auth.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { createIpRateLimiter } from "../lib/ratelimit.ts";
-import { MODELS, OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
+import { OG_ZEN_CHAT, usProxyBase } from "../channels.ts";
 import { opencodeSessionHeader } from "../upstream.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import type { PluginContext } from "./registry.ts";
@@ -300,7 +301,9 @@ async function mePutRoute(request: Request, env: any): Promise<Response> {
   if (!user) return jsonError(401, "Not logged in or session expired", "authentication_error");
   const body = await readJson(request);
   const model = body?.model ?? null;
-  if (model !== null && !MODELS.some((m) => m.id === model)) {
+  // ADVERTISED, not merely compiled: a model disabled from the console must not be
+  // settable, or a user could pin a route the gateway will not serve.
+  if (model !== null && !(await isAdvertised(env, model))) {
     return jsonError(400, `Unknown model: ${model}`, "invalid_request");
   }
   await setUserRoute(env, user.id, model);

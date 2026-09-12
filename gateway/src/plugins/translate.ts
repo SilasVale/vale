@@ -21,6 +21,7 @@
  * just the entry points.
  */
 
+import { advertisedIds, customModels } from "../store/models.ts";
 import { findUserByToken, getUserKeys, getGlobalSetting, globalSettingEnabled } from "../store.ts";
 import {
   toOpenAIRequest,
@@ -686,9 +687,16 @@ async function handleGatewayImpl(
 
   // GET /v1/models — public, no auth required (DSH/OpenAI clients list models first)
   if (method === "GET" && path.endsWith("/models")) {
+    // THE ADVERTISED SET, not the compiled constant: models disabled or added from
+    // the console must appear here immediately, because this is what clients read
+    // before they choose anything.
+    const live = await advertisedIds(env);
+    const off = new Set(MODELS.map((m) => m.id).filter((id) => !live.includes(id)));
+    const extra = (await customModels(env)).map((m) => ({ id: m.id, owned_by: m.ownedBy }));
+    const entries = [...MODELS.filter((m) => !off.has(m.id)), ...extra];
     return jsonOk({
       object: "list",
-      data: MODELS.map((m, i) => ({
+      data: entries.map((m, i) => ({
         id: m.id,
         object: "model",
         created: 1785000000 + i,

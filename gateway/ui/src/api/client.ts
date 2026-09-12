@@ -142,6 +142,28 @@ export const api = {
 
   // Route
   getRoute: () => request<{ model?: string; effective?: string }>("/api/me/route"),
+  // ── Model catalogue (admin) — the catalogue is DATA now, not compiled code ──
+  getModelState: () => request<{ custom: string[]; disabled: string[] }>("/api/admin/models"),
+  addModel: (spec: {
+    id: string;
+    ownedBy?: string;
+    wire?: string;
+    usEgress?: boolean;
+    search?: boolean;
+    responsesOnly?: boolean;
+  }) =>
+    request<{ ok: boolean }>("/api/admin/models", { method: "POST", body: JSON.stringify(spec) }),
+  /** Built-ins are DISABLED, not deleted — their six facets cannot be re-derived. */
+  deleteModel: (id: string) =>
+    request<{ ok: boolean; removed?: string; disabled?: string }>(
+      `/api/admin/models/${encodeURIComponent(id)}`,
+      { method: "DELETE" },
+    ),
+  enableModel: (id: string) =>
+    request<{ ok: boolean }>(`/api/admin/models/${encodeURIComponent(id)}/enabled`, {
+      method: "PUT",
+    }),
+
   setRoute: (model: string | null) =>
     request<unknown>("/api/me/route", {
       method: "PUT",
@@ -185,7 +207,10 @@ export const api = {
       usage?: number;
       limit?: number | null;
       balance?: number;
-      windows?: Record<string, { used?: number; limit?: number | null; remaining?: number; resetAt?: string }>;
+      windows?: Record<
+        string,
+        { used?: number; limit?: number | null; remaining?: number; resetAt?: string }
+      >;
       rateLimit?: { limit?: number; interval?: string };
       detail?: string;
     }>("/api/me/keys/usage", {
@@ -200,8 +225,7 @@ export const api = {
   getHealth: () => request<HealthResponse>("/api/health"),
 
   // Token regen
-  regenerateToken: () =>
-    request<{ token: string }>("/api/me/token/regenerate", { method: "POST" }),
+  regenerateToken: () => request<{ token: string }>("/api/me/token/regenerate", { method: "POST" }),
 
   // Admin: password
   getAdminPassword: () => request<{ set: boolean }>("/api/admin/password"),
@@ -223,7 +247,8 @@ export const api = {
     }),
 
   // Admin: Cloudflare token
-  getCfToken: () => request<{ configured: boolean; masked?: string }>("/api/admin/cloudflare-token"),
+  getCfToken: () =>
+    request<{ configured: boolean; masked?: string }>("/api/admin/cloudflare-token"),
   setCfToken: (token: string) =>
     request<unknown>("/api/admin/cloudflare-token", {
       method: "PUT",
@@ -251,15 +276,13 @@ export const api = {
   // agent redeems with its own token, so the PERMANENT device token never
   // rides in a panel URL (history/address bar/logs/referer).
   openDevicePanel: (name: string) =>
-    request<{ ok: boolean; url: string }>(
-      `/api/devices/${encodeURIComponent(name)}/panel-grant`,
-      { method: "POST" },
-    ),
+    request<{ ok: boolean; url: string }>(`/api/devices/${encodeURIComponent(name)}/panel-grant`, {
+      method: "POST",
+    }),
 
   // Devices: registration key
   generateRegKey: () => request<{ key: string }>("/api/devices/register-key", { method: "POST" }),
-  listRegKeys: () =>
-    request<{ keys: RegKeyInfo[] }>("/api/devices/register-keys"),
+  listRegKeys: () => request<{ keys: RegKeyInfo[] }>("/api/devices/register-keys"),
   revokeRegKey: (code: string) =>
     request<unknown>(`/api/devices/register-keys/${encodeURIComponent(code)}`, {
       method: "DELETE",

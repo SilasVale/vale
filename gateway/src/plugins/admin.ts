@@ -1,3 +1,12 @@
+import {
+  catalogue,
+  customModels,
+  deleteCustomModel,
+  disabledModels,
+  isBuiltIn,
+  putCustomModel,
+  setModelDisabled,
+} from "../store/models.ts";
 import { safeEq } from "../auth.ts";
 /**
  * Vale gateway plugin: admin — /api/admin/* (console admin APIs).
@@ -29,7 +38,7 @@ import {
   userKeysStatus,
   ADMIN_ID,
 } from "../store.ts";
-import { MODELS, ROUTE_INFO } from "../channels.ts";
+import { ROUTE_INFO, type ModelSpec } from "../channels.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import { requireAdmin } from "../session.ts";
 import type { PluginContext } from "./registry.ts";
@@ -45,10 +54,112 @@ interface Env {
 /* ---- Public: route info (no session) ---- */
 
 async function adminPublic(_request: Request, env: Env): Promise<Response> {
+  // The MERGED catalogue (built-ins minus disabled, plus custom), so the console's
+  // Models page shows exactly what clients are advertised.
+  const cat = await catalogue(env);
   return jsonOk({
-    routes: ROUTE_INFO,
-    models: MODELS.map((m) => m.id),
+    routes: cat.routes,
+    models: cat.models,
     apiHost: env.API_HOST || "",
+  });
+}
+
+/* ---- Model catalogue: add / delete / disable ----
+ *
+ * THE CATALOGUE IS DATA. Adding a model used to mean editing `channels.ts`,
+ * rebuilding and redeploying; the whole point of `store/models.ts` is that it now
+ * means a POST. Admin-only, like every other mutation here.
+ *
+ * A CUSTOM model names its channel by prefix and inherits everything else. A
+ * BUILT-IN one can only be DISABLED: its six facets cannot be re-derived by a form,
+ * and a record deleted from KV could not be restored.
+ */
+
+/** The channel prefixes a custom model may claim — the real routes, not `"none"`. */
+const KNOWN_PREFIXES: string[] = ROUTE_INFO.map((r) => r.prefix).filter((p) => p && p !== "none");
+
+/**
+ * The model id out of `/api/admin/models/<id>[/enabled]`.
+ *
+ * The dispatcher matches with startsWith/endsWith, so the path is read here rather
+ * than threaded through. A model id contains slashes (`og/mimo-v2.5`), so this
+ * strips the KNOWN prefix and suffix instead of splitting on "/" — splitting would
+ * silently truncate every namespaced id to its first segment.
+ */
+function request_admin_model_id(req: Request): string {
+  let p = new URL(req.url).pathname;
+  p = p.slice(`${ADMIN_BASE}/models/`.length);
+  if (p.endsWith("/enabled")) p = p.slice(0, -"/enabled".length);
+  return p;
+}
+
+/** Guard the shape without over-validating: the facets have defaults, the ID does not. */
+function parseModelSpec(body: any): { spec?: ModelSpec; error?: string } {
+  const id = String(body?.id ?? "").trim();
+  if (!id) return { error: "id is required" };
+  if (!/^[a-z0-9]+\/[A-Za-z0-9._:/\-\[\]]+$/.test(id))
+    return { error: `id must look like "prefix/name" — got ${JSON.stringify(id)}` };
+  const prefix = id.slice(0, id.indexOf("/") + 1);
+  if (!KNOWN_PREFIXES.includes(prefix))
+    return {
+      error: `unknown channel prefix ${JSON.stringify(prefix)}; known: ${KNOWN_PREFIXES.join(", ")}`,
+    };
+  const ownedBy = String(body?.ownedBy ?? "").trim() || prefix.replace("/", "");
+  const spec: ModelSpec = { id, ownedBy };
+  // `wire` is PINNED to og/ by wireModelName — a wire on any other prefix is
+  // silently ignored, so accepting one would be a lie in the record.
+  const wire = String(body?.wire ?? "").trim();
+  if (wire && prefix === "og/") spec.wire = wire;
+  if (body?.usEgress === true) spec.usEgress = true;
+  if (body?.search === true) spec.search = true;
+  if (body?.responsesOnly === true) spec.responsesOnly = true;
+  return { spec };
+}
+
+async function adminAddModel(request: Request, env: Env): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  const { spec, error } = parseModelSpec(await readJson(request));
+  if (error || !spec) return jsonError(400, error || "invalid model", "invalid_request");
+  if (isBuiltIn(spec.id))
+    return jsonError(409, `${spec.id} is a built-in model — disable it instead`, "invalid_request");
+  const next = await putCustomModel(env, spec);
+  return jsonOk({ ok: true, model: spec, custom: next.map((m) => m.id) });
+}
+
+async function adminDeleteModel(request: Request, env: Env, id: string): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  const decoded = decodeURIComponent(id);
+  if (!isBuiltIn(decoded)) {
+    const removed = await deleteCustomModel(env, decoded);
+    if (removed) return jsonOk({ ok: true, removed: decoded });
+    return jsonError(404, `No custom model ${decoded}`, "not_found_error");
+  }
+  // A BUILT-IN is disabled, not deleted — see store/models.ts.
+  const next = await setModelDisabled(env, decoded, true);
+  return jsonOk({ ok: true, disabled: decoded, disabledModels: next });
+}
+
+async function adminEnableModel(request: Request, env: Env, id: string): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  const decoded = decodeURIComponent(id);
+  const next = await setModelDisabled(env, decoded, false);
+  return jsonOk({ ok: true, enabled: decoded, disabledModels: next });
+}
+
+/** What the console needs to render the right control per model. */
+async function adminModelState(request: Request, env: Env): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  return jsonOk({
+    custom: (await customModels(env)).map((m) => m.id),
+    disabled: [...(await disabledModels(env))],
   });
 }
 
@@ -205,6 +316,19 @@ export default {
       match: (m, p) =>
         m === "PUT" && p.startsWith(`${ADMIN_BASE}/users/`) && p.endsWith("/enabled"),
       handler: adminSetUserEnabled,
+    });
+    add("GET", `${ADMIN_BASE}/models`, adminModelState);
+    add("POST", `${ADMIN_BASE}/models`, adminAddModel);
+    // Dynamic: DELETE /api/admin/models/{id} (delete custom, disable built-in)
+    // and PUT .../{id}/enabled (re-enable).
+    ctx.routes.push({
+      match: (m, p) => m === "DELETE" && p.startsWith(`${ADMIN_BASE}/models/`),
+      handler: (req: Request, env: Env) => adminDeleteModel(req, env, request_admin_model_id(req)),
+    });
+    ctx.routes.push({
+      match: (m, p) =>
+        m === "PUT" && p.startsWith(`${ADMIN_BASE}/models/`) && p.endsWith("/enabled"),
+      handler: (req: Request, env: Env) => adminEnableModel(req, env, request_admin_model_id(req)),
     });
     add("GET", `${ADMIN_BASE}/password`, adminGetPassword);
     add("PUT", `${ADMIN_BASE}/password`, adminPutPassword);
