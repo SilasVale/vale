@@ -519,7 +519,37 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-11 round 68 (the user asked whether models can be added/deleted in
+Last updated: 2026-09-11 round 69 (the model catalogue feature is now verified END TO
+END — through the real dispatcher, because `wrangler dev` cannot run on this box).
+Commit: 82094063. CI green.
+  (1) WHAT THE 7 UNIT TESTS COULD NOT COVER: the loop an operator actually performs —
+  add through the admin API, see it in `/v1/models`, set it as a route, delete it, watch
+  it go. That runs through the route table, the session check and the three serve sites,
+  and none of it was exercised together.
+  (2) `wrangler dev` CANNOT RUN HERE: `workerd` needs GLIBC 2.32/2.33/2.34 and this box
+  is Ubuntu 20.04. So the verification drives the REAL dispatcher
+  (`createPluginContext` + `registerPlugins` + `dispatch`) with a seeded admin session —
+  everything except Cloudflare's edge. Recorded because it is a standing limitation, not
+  a one-off.
+  (3) FIVE CHECKS: ADD (reaches `/v1/models` AND the console catalogue AND appears under
+  its channel as the BARE name the console groups by, then can be set as a route);
+  DELETE; DISABLE (a built-in leaves the catalogue, CANNOT be set as a route, is named by
+  the state endpoint, and comes back); VALIDATION (unknown prefix refused, a built-in
+  cannot be re-added as custom — that would shadow a six-facet record with a thinner one
+  — and a bare name with no prefix refused); and SECURITY.
+  (4) THE SECURITY REGRESSION IS NOW PINNED, MUTATION-PROVEN: deleting `requireAdmin`
+  from `adminModelState` — exactly the line I originally omitted — fails with
+  "GET /api/admin/models answered 200 with NO session". The hole that shipped for a few
+  minutes is a test that names it.
+  (5) MY OWN TEST HAD A BUG, and it is the same lesson as last round's: I passed a body
+  on GET, and `new Request` rejects that outright.
+  (6) STILL OPEN: the panel's five audit items (Ctrl+Shift+Y no-op, the rail's
+  mislabelled ✕, the Memory empty state contradicting its own +New, Logs/accelerators
+  split, the `--dsw-alias-*` rename) — all need a release to reach the device.
+  Gates: gateway 788 (was 783) + lint + typecheck + format; CI green on main;
+  d1 on 1.2.355.
+
+Previous round: 2026-09-11 round 68 (the user asked whether models can be added/deleted in
 the page "like DSH" — and that reframing was right: the catalogue is now DATA, so models
 are added, deleted and disabled from the console with no rebuild).
 Commits: ba31d985, 5b626a82. Worker deployed; auth verified live.
