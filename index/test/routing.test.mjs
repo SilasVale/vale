@@ -6,6 +6,7 @@
 import test from "node:test";
 import assert from "node:assert/strict";
 import worker from "../src/index.js";
+import { readFile } from "node:fs/promises";
 
 // ASSETS stub: answer version.json with JSON, everything else with an
 // octet-stream "binary" so tgz routing is observable (status + pass-through).
@@ -20,7 +21,8 @@ function makeEnv(versionJson) {
           assetsFetches.push(String(req.url));
           const path = new URL(req.url).pathname;
           if (path === "/vale-agent/version.json") {
-            if (versionJson === null) return new Response("no such key", { status: 404 });
+            if (versionJson === null)
+              return new Response("no such key", { status: 404 });
             return new Response(JSON.stringify(versionJson), {
               headers: { "content-type": "application/json" },
             });
@@ -96,12 +98,18 @@ test("/api/version serves the release manifest derived from version.json", async
     sha256: "a".repeat(64),
     tarball: "vale-agent-latest.tgz",
   });
-  const resp = await worker.fetch(new Request("https://dl.local/api/version"), env);
+  const resp = await worker.fetch(
+    new Request("https://dl.local/api/version"),
+    env,
+  );
   assert.equal(resp.status, 200);
   const body = await resp.json();
   assert.equal(body.version, "1.2.297");
   assert.equal(body.sha256, "a".repeat(64));
-  assert.equal(body.download, "https://dl.local/vale-agent/vale-agent-latest.tgz");
+  assert.equal(
+    body.download,
+    "https://dl.local/vale-agent/vale-agent-latest.tgz",
+  );
 });
 
 test("/api/version fails honest 503 on missing/unverifiable manifest", async () => {
@@ -115,13 +123,20 @@ test("/api/version fails honest 503 on missing/unverifiable manifest", async () 
   // the worker must not serve one either).
   const badSha = await worker.fetch(
     new Request("https://dl.local/api/version"),
-    makeEnv({ version: "1.2.297", sha256: "abc", tarball: "vale-agent-latest.tgz" }).env,
+    makeEnv({
+      version: "1.2.297",
+      sha256: "abc",
+      tarball: "vale-agent-latest.tgz",
+    }).env,
   );
   assert.equal(badSha.status, 503);
 });
 
 test("unknown paths 404 (never the landing page as 200 HTML) and / renders it", async () => {
-  const notFound = await worker.fetch(new Request("https://dl.local/nope"), makeEnv(null).env);
+  const notFound = await worker.fetch(
+    new Request("https://dl.local/nope"),
+    makeEnv(null).env,
+  );
   assert.equal(notFound.status, 404);
   assert.notEqual(notFound.headers.get("content-type") || "", "text/html");
 
@@ -158,4 +173,53 @@ test("cloudflared.exe proxies GitHub: pass-through on success, 502 on failure", 
   } finally {
     globalThis.fetch = real;
   }
+});
+
+/* ---------------- the cloudflared proxy is PINNED, not `latest` ----------------
+ * An audit found this route proxied `.../releases/latest/...`, so the bytes of a binary the
+ * service SPAWNS were chosen by whatever GitHub marked latest — while the agent's own
+ * CLOUDFLARED_SHA256 pin only holds "while latest stays" the pinned version (that file says
+ * so itself). Upstream moving a release therefore made the proxy serve bytes the pin
+ * rejects: the on-demand path failed closed, and the INSTALLER staged the new bytes
+ * unverified, because nothing in that chain hashes them.
+ */
+test("cloudflared proxy uses the IMMUTABLE versioned asset, never `releases/latest`", async () => {
+  const src = await readFile(
+    new URL("../src/index.js", import.meta.url),
+    "utf8",
+  );
+  assert.ok(
+    !src.includes("cloudflared/releases/latest"),
+    "the proxy must not follow `latest`: those bytes are chosen by a third party and nothing downstream hashes them",
+  );
+  assert.match(
+    src,
+    /cloudflared\/releases\/download\/\$\{CLOUDFLARED_VERSION\}/,
+    "and it must use the versioned path, which GitHub guarantees is immutable",
+  );
+});
+
+/// The worker's pinned version and the agent's pinned version are ONE contract: the agent's
+/// CLOUDFLARED_SHA256 is the hash of THIS asset. Drift is the bug, so the test reads the
+/// Rust source rather than trusting a comment.
+test("cloudflared_pin_matches_the_agent", async () => {
+  const here = await readFile(
+    new URL("../src/index.js", import.meta.url),
+    "utf8",
+  );
+  const worker = here.match(/const CLOUDFLARED_VERSION = "([^"]+)"/)?.[1];
+  assert.ok(worker, "the worker must declare CLOUDFLARED_VERSION");
+
+  const rust = await readFile(
+    new URL("../../agent/src/tunnel.rs", import.meta.url),
+    "utf8",
+  );
+  const agent = rust.match(/const CLOUDFLARED_VERSION: &str = "([^"]+)"/)?.[1];
+  assert.ok(agent, "the agent must declare CLOUDFLARED_VERSION");
+
+  assert.equal(
+    worker,
+    agent,
+    `the proxied cloudflared must be the version the agent pins (worker ${worker}, agent ${agent}) — a drift means the installer stages bytes nothing verifies`,
+  );
 });

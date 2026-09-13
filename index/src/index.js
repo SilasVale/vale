@@ -42,7 +42,9 @@ function tooLargeResponse(maxBytes) {
 // (RFC 5987) with an ASCII fallback.
 // Exported for direct pins (SOLID Round-30; additive — call sites untouched).
 export function buildContentDisposition(rawName) {
-  const cleaned = String(rawName || "").replace(/["\\\u0000-\u001f\u007f]/g, "").trim();
+  const cleaned = String(rawName || "")
+    .replace(/["\\\u0000-\u001f\u007f]/g, "")
+    .trim();
   if (!cleaned) return null;
   const ascii = cleaned.replace(/[^\x20-\x7e]/g, "").trim() || "download.bin";
   if (ascii === cleaned) return `attachment; filename="${ascii}"`;
@@ -75,7 +77,8 @@ async function rawUpload(request, env, url) {
   if (declared > MAX_BYTES) {
     return tooLargeResponse(MAX_BYTES);
   }
-  const rawName = url.searchParams.get("name") || request.headers.get("x-filename") || "file";
+  const rawName =
+    url.searchParams.get("name") || request.headers.get("x-filename") || "file";
   const base = String(rawName).split(/[/\\]/).pop() || "file";
   const disposition = buildContentDisposition(base);
   if (!disposition) {
@@ -91,7 +94,8 @@ async function rawUpload(request, env, url) {
   try {
     stored = await env.TEMP_FILES.put(key, request.body, {
       httpMetadata: {
-        contentType: request.headers.get("x-content-type") || "application/octet-stream",
+        contentType:
+          request.headers.get("x-content-type") || "application/octet-stream",
         contentDisposition: disposition,
       },
       customMetadata: { expiresAt: String(expiresAt) },
@@ -99,10 +103,13 @@ async function rawUpload(request, env, url) {
   } catch (err) {
     // A mid-stream abort or an R2 outage must answer as JSON, never as the
     // catch-all 500 with an un-`String(err)`-formatted envelope.
-    return new Response(JSON.stringify({ error: `r2 put failed: ${String(err)}` }), {
-      status: 502,
-      headers: { "content-type": "application/json" },
-    });
+    return new Response(
+      JSON.stringify({ error: `r2 put failed: ${String(err)}` }),
+      {
+        status: 502,
+        headers: { "content-type": "application/json" },
+      },
+    );
   }
   // R2 reports the stored object's authoritative size; fall back to the
   // declared length only if the put result lacks it.
@@ -133,7 +140,8 @@ export const SHA256_RE = /^[0-9a-f]{64}$/i;
 // There is NO token store — the R2 key + 24h customMetadata deadline IS the
 // state (the pre-DO in-memory/KV sketch never shipped). Tokens are 22
 // chars URL-safe.
-const TOKEN_CHARS = "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
+const TOKEN_CHARS =
+  "ABCDEFGHIJKLMNOPQRSTUVWXYZabcdefghijklmnopqrstuvwxyz0123456789";
 
 // Exported for direct pins (SOLID Round-30; additive — call sites untouched).
 export function genToken(len = 22) {
@@ -170,6 +178,13 @@ async function safeEq(a, b) {
   return diff === 0;
 }
 
+// The cloudflared release this worker proxies. MUST equal
+// `agent/src/tunnel.rs`'s `CLOUDFLARED_VERSION`, whose `CLOUDFLARED_SHA256` pins the bytes
+// of THIS asset — `cloudflared_pin_matches_the_agent` reads that file and fails if the two
+// drift, because a drift is exactly the "installer stages unverified bytes" bug this
+// constant exists to prevent.
+const CLOUDFLARED_VERSION = "2026.8.3";
+
 export default {
   async fetch(request, env) {
     const url = new URL(request.url);
@@ -183,7 +198,8 @@ export default {
     //         stream)  ->  { token, url, size, filename, expiresAt }
     // Download: GET /files/<token>  ->  file bytes (one-time, then deleted)
     const isUpload =
-      url.pathname === "/api/upload" && (request.method === "POST" || request.method === "PUT");
+      url.pathname === "/api/upload" &&
+      (request.method === "POST" || request.method === "PUT");
     if (isUpload) {
       try {
         // Auth: require a bearer token matching the shared secret (set via
@@ -233,10 +249,13 @@ export default {
         const CL_MARGIN = 64 * 1024;
         const declaredRaw = request.headers.get("content-length");
         if (declaredRaw === null || declaredRaw === "") {
-          return new Response(JSON.stringify({ error: "content-length required" }), {
-            status: 411,
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "content-length required" }),
+            {
+              status: 411,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         const declared = Number(declaredRaw);
         if (declared > MAX_BYTES + CL_MARGIN) {
@@ -248,10 +267,13 @@ export default {
         try {
           form = await request.formData();
         } catch {
-          return new Response(JSON.stringify({ error: "invalid multipart body" }), {
-            status: 400,
-            headers: { "content-type": "application/json" },
-          });
+          return new Response(
+            JSON.stringify({ error: "invalid multipart body" }),
+            {
+              status: 400,
+              headers: { "content-type": "application/json" },
+            },
+          );
         }
         const file = form.get("file");
         if (!file || typeof file === "string") {
@@ -291,16 +313,19 @@ export default {
           customMetadata: { expiresAt: String(expiresAt) },
         });
         const downloadUrl = `${url.origin}/files/${token}`;
-        return new Response(JSON.stringify({
-          token,
-          url: downloadUrl,
-          size: file.size,
-          filename: file.name || "file",
-          expiresAt: new Date(expiresAt).toISOString(),
-          // Tokens auto-delete on first download; unclaimed files expire
-          // 24h after upload (enforced on access).
-          note: "one-time download: file is deleted after first access or 24h",
-        }), { headers: { "content-type": "application/json" } });
+        return new Response(
+          JSON.stringify({
+            token,
+            url: downloadUrl,
+            size: file.size,
+            filename: file.name || "file",
+            expiresAt: new Date(expiresAt).toISOString(),
+            // Tokens auto-delete on first download; unclaimed files expire
+            // 24h after upload (enforced on access).
+            note: "one-time download: file is deleted after first access or 24h",
+          }),
+          { headers: { "content-type": "application/json" } },
+        );
       } catch (err) {
         return new Response(JSON.stringify({ error: String(err) }), {
           status: 500,
@@ -333,7 +358,9 @@ export default {
         // client-supplied x-do-auth value — callers cannot forge it.
         const headers = new Headers(request.headers);
         if (env.DO_AUTH) headers.set("x-do-auth", env.DO_AUTH);
-        return await env.TEMP_CLAIM.get(id).fetch(new Request(request, { headers }));
+        return await env.TEMP_CLAIM.get(id).fetch(
+          new Request(request, { headers }),
+        );
       } catch (err) {
         return unavailableResponse();
       }
@@ -350,7 +377,7 @@ export default {
     if (new URL(request.url).pathname === "/api/version") {
       try {
         const vresp = await env.ASSETS.fetch(
-          new Request("https://worker.local/vale-agent/version.json")
+          new Request("https://worker.local/vale-agent/version.json"),
         );
         if (vresp.ok) {
           const vj = await vresp.json();
@@ -369,7 +396,8 @@ export default {
           // the consistent case (tarball field == download basename).
           const tbRaw = vj && vj.tarball;
           const tb =
-            typeof tbRaw === "string" && /^vale-agent-[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(tbRaw)
+            typeof tbRaw === "string" &&
+            /^vale-agent-[A-Za-z0-9][A-Za-z0-9._-]*\.tgz$/.test(tbRaw)
               ? tbRaw
               : `vale-agent-${ver}.tgz`;
           if (ver && typeof sha === "string" && SHA256_RE.test(sha)) {
@@ -386,7 +414,9 @@ export default {
                 ? instRaw
                 : null;
             const instSha =
-              typeof instShaRaw === "string" && SHA256_RE.test(instShaRaw) ? instShaRaw : null;
+              typeof instShaRaw === "string" && SHA256_RE.test(instShaRaw)
+                ? instShaRaw
+                : null;
             const body = {
               version: ver,
               download: `${base}/vale-agent/${tb}`,
@@ -397,7 +427,10 @@ export default {
               body.installer_sha256 = instSha;
             }
             return new Response(JSON.stringify(body), {
-              headers: { "content-type": "application/json", "cache-control": "no-store" },
+              headers: {
+                "content-type": "application/json",
+                "cache-control": "no-store",
+              },
             });
           }
         }
@@ -416,7 +449,10 @@ export default {
     // discipline like the tgz route below — a missing exe must 404 (never
     // the landing page as 200 HTML; devices once downloaded HTML as the
     // installer and the agent never started).
-    const setupMatch = /^\/vale-agent\/ValeAgent-Setup-[0-9]+\.[0-9]+\.[0-9]+\.exe$/.exec(pathname);
+    const setupMatch =
+      /^\/vale-agent\/ValeAgent-Setup-[0-9]+\.[0-9]+\.[0-9]+\.exe$/.exec(
+        pathname,
+      );
     if (setupMatch || pathname === "/vale-agent/ValeAgent-Setup.exe") {
       return env.ASSETS.fetch(request);
     }
@@ -425,7 +461,8 @@ export default {
     // The versionless latest alias (the landing page's install command)
     // is matched EXACTLY here — the versioned regex is intentionally NOT
     // loosened to cover it (exact-pattern discipline on download paths).
-    const tgzMatch = /^\/vale-agent\/vale-agent-[0-9]+\.[0-9]+\.[0-9]+\.tgz$/.exec(pathname);
+    const tgzMatch =
+      /^\/vale-agent\/vale-agent-[0-9]+\.[0-9]+\.[0-9]+\.tgz$/.exec(pathname);
     if (tgzMatch || pathname === "/vale-agent/vale-agent-latest.tgz") {
       // The tgz (~12MB) fits Workers Assets and is served fast from here.
       return env.ASSETS.fetch(request);
@@ -436,10 +473,25 @@ export default {
     // (GFW etc.), so proxy it through this worker — Cloudflare's network
     // reaches GitHub fast, and the device only talks to agent.saisi.online.
     if (pathname === "/vale-agent/cloudflared.exe") {
-      const upstream = "https://github.com/cloudflare/cloudflared/releases/latest/download/cloudflared-windows-amd64.exe";
+      // PINNED, NOT `latest`. This used to proxy
+      // `.../releases/latest/download/cloudflared-windows-amd64.exe`, which means the bytes
+      // of a binary the service SPAWNS were chosen by whatever GitHub marked latest at that
+      // moment — while the agent's own `CLOUDFLARED_SHA256` pin (agent/src/tunnel.rs) only
+      // holds `while latest stays` the pinned version, as that file's comment admits. So
+      // upstream moving a release silently made this proxy serve bytes the pin would reject:
+      // the ON-DEMAND path failed closed (good) and the INSTALLER staged the new bytes
+      // unverified (bad), because nothing in that chain hashes them.
+      //
+      // A VERSIONED GitHub asset path is immutable, which is exactly why the agent uses it
+      // for the direct download. This mirrors it, so the proxy and the pin agree BY
+      // CONSTRUCTION.
+      const upstream = `https://github.com/cloudflare/cloudflared/releases/download/${CLOUDFLARED_VERSION}/cloudflared-windows-amd64.exe`;
       const resp = await fetch(upstream, { redirect: "follow" });
       if (!resp.ok) {
-        return new Response("cloudflared upstream fetch failed: " + resp.status, { status: 502 });
+        return new Response(
+          "cloudflared upstream fetch failed: " + resp.status,
+          { status: 502 },
+        );
       }
       // Stream the body through (no buffering — 54MB fits the response path).
       return new Response(resp.body, {
@@ -459,16 +511,20 @@ export default {
     // THIS worker (same origin it already reaches for the tgz + cloudflared).
     // Pinned to the version the installer's $ElectronVersion expects.
     if (pathname === "/vale-agent/electron-win32-x64.zip") {
-      const upstream = "https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip";
+      const upstream =
+        "https://github.com/electron/electron/releases/download/v33.4.11/electron-v33.4.11-win32-x64.zip";
       const resp = await fetch(upstream, { redirect: "follow" });
       if (!resp.ok) {
-        return new Response("electron upstream fetch failed: " + resp.status, { status: 502 });
+        return new Response("electron upstream fetch failed: " + resp.status, {
+          status: 502,
+        });
       }
       return new Response(resp.body, {
         status: 200,
         headers: {
           "content-type": "application/zip",
-          "content-disposition": 'attachment; filename="electron-win32-x64.zip"',
+          "content-disposition":
+            'attachment; filename="electron-win32-x64.zip"',
           "cache-control": "public, max-age=86400",
         },
       });
