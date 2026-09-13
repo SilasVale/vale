@@ -519,7 +519,47 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 99 (`memory_export` skipped the sanitizer entirely — so
+Last updated: 2026-09-13 round 100 (the UI round: the aurora direction retired, the mark
+reverted to the sunrise, and BOTH frontends rebuilt on one material and one type scale).
+Commits: 74a22576 (ui), e450d1ae (deploy gates). CI green. NOT released.
+  (1) AURORA WAS AN INTERPRETATION, NOT A REQUEST. Commit d29e3138's own words are "Asked
+  for a 炫彩 art direction"; the session that implemented it chose northern lights. The
+  user has since said plainly they do not want aurora and preferred the previous amber
+  mark. Mark, wash, --aura-* family (both frontends + the landing page) and the contract
+  check's REQUIRED floor are all reverted; what replaces them is MATERIAL, which is what
+  was being asked for.
+  (2) THE MARK IS ONE MARK AGAIN, and Windows already had it: none of the four aurora
+  commits touched brand/icon.ico, agent/deploy/vale-agent.ico, the Electron or npm copies,
+  so the exe, the 16px tray and the taskbar never changed. Side-by-side at 16/22/26px the
+  aurora variant's ribbons collapsed and its sun vanished; the sunrise still read. The
+  canonical file is brand/logo.svg (renamed — a sunrise should not be called aurora).
+  (3) ITS CONTRACT TEST WAS PASSING FOR THE WRONG REASON ONCE RENAMED. The id pattern was
+  `[A-Za-z0-9]+`, which cannot match `id="vale-sky"`: every extraction returned an EMPTY
+  list on both sides, empty equalled empty, and the copies could have diverged while the
+  test stayed green. Fixed and mutation-proven.
+  (4) THE LOGO HAD BEEN DRAWING A FRAME AROUND ITSELF. `.rail-brand` painted a
+  `var(--accent)` chip with `color:#fff; font-size:15px; font-weight:700` — written to hold
+  a LETTER — and the mark inside it later became a tile of its own. Every screenshot showed
+  the mark inside a dark red box. Found by the user LOOKING AT AN IMAGE; nothing asserts
+  what the mark looks like, only that the element exists.
+  (5) TYPE: the panel had EIGHTEEN font sizes (twelve inside 9-14px, half a pixel apart),
+  the console fourteen. Both are now seven steps referenced as tokens, with tabular-nums on
+  body and real weights only (650/550 are not real weights in Segoe UI or the CJK fallbacks).
+  (6) A TRAP THE GATES CANNOT SEE: the console got the glass tokens in :root and not in the
+  dark block, and rendered white panes with light text. The token contract compares names
+  found on BOTH sides, so a name simply absent from the dark block is not compared at all.
+  Caught by looking at a screenshot — the same trap the panel documents at --surface-recessed.
+  (7) THE HARNESS WAS THE ACTUAL BLOCKER. The panel's screenshot script shot five of seven
+  pages and imported an undeclared playwright-core (broken); the console had no way to be
+  seen at all (wrangler dev cannot start here — workerd needs a newer glibc — and there is
+  no mock API). Both now render: the panel against scripts/mock-agent.mjs (now bound to
+  127.0.0.1 — it published to 0.0.0.0 before), the console against a route-intercepted stub
+  that opens no listener.
+  (8) STILL OPEN from round 99: memory F5, index F2/F3. NOT DONE here: the layout work
+  (functional zones, the radial instrument) and the console's authenticated views were
+  screenshotted but not signed off by the user.
+
+Previous round: 2026-09-13 round 99 (`memory_export` skipped the sanitizer entirely — so
 round 98's fix did not cover bytes that predate it — and could build ~320 MB while holding the
 store lock; and MY OWN new code was O(n²), which the test's wall-clock caught).
 Commit: 7adda2b5. CI green. NOT released.
