@@ -519,7 +519,42 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 93 (RELEASED 1.2.360 — four agent fixes had accumulated
+Last updated: 2026-09-13 round 94 (a leaked panel grant could be redeemed TWICE — and the
+gateway cannot stop that, the device can — plus two things the tests taught, one of which
+was that my first test proved nothing).
+Commit: b7195329. CI green. NOT released.
+  (1) WHY THE GATEWAY CANNOT FIX IT: `store/grants.ts` is Cloudflare KV — `get` caches at
+  the edge (60 s) and a `delete` takes ~60 s to be visible everywhere, so check-then-delete
+  lets a second redemption through (`devices.ts` says so itself). A single-flight CLAIM KEY
+  DOES NOT CLOSE IT, which is the easy thing to get wrong: a replay usually arrives at a
+  DIFFERENT colo that has never read `grantclaim:<code>`, so it sees null and claims happily.
+  The existing comment's mitigation ("gated by a device-token Bearer the attacker doesn't
+  have") does not hold either — the realistic replay goes THROUGH THE DEVICE, which holds its
+  own token and redeems on the attacker's behalf.
+  (2) WHY THE DEVICE CAN: this process is SINGLE and STRONGLY CONSISTENT, and the replay must
+  come through it. `grant_already_redeemed` / `remember_redeemed_grant` in panel.rs, persisted
+  (a restart between the two redemptions would forget, and a restart is ~10 s against a 120 s
+  TTL), age-pruned past the TTL, and FAILING CLOSED on an unreadable store.
+  (3) MY FIRST TEST PROVED NOTHING, and only mutation testing found it: disabling the guard
+  entirely left the suite GREEN, because the redeem stub is explicitly "one-shot: accepts ONE
+  connection" — with the guard off the second redemption merely failed to connect and no token
+  was injected anyway. The test was measuring the STUB. A multi-shot stub that keeps saying yes
+  is what makes the guard the only thing that can refuse. (It was also missing the `http://`
+  scheme, so even the first redemption failed.)
+  (4) THE GUARD IS ONE PROCESS-GLOBAL, FILE-BACKED STORE — correct for a device, impossible to
+  parallelise in tests: a sibling's redemption refuses this one's, a sibling's reset deletes
+  the file this one asserts on, and a code spent by an earlier `cargo test` RUN is still spent
+  because the file outlives the binary (that one silently burned the shared `GRANT` constant).
+  Every grant test now holds an async test lock for its whole body and starts from a clean
+  guard. Clippy -D warnings then caught four more real things, including a std MutexGuard held
+  across an await.
+  (5) STILL OPEN: gateway F3 `deviceFetch` never applies the suffix allowlist at dial time
+  (`_env` unused) though its docstring lists it as part of the stack; panel F5 the host
+  allowlist is a family match (`devil.agent.saisi.online` passes).
+  Gates: agent web:: 80 (was 78) + mcp_client_integration 3 + clippy -D warnings + fmt +
+  xwin check; CI green; d1 on 1.2.360.
+
+Previous round: 2026-09-13 round 93 (RELEASED 1.2.360 — four agent fixes had accumulated
 unreleased, two of them SECURITY, and the panel ships inside the exe, so unshipped meant
 unfixed. Verified on the device, including the one thing the fix could have broken).
 Commit: e5b28f31, tag v1.2.360. release.yml + CI green. Audit CLEAN. keep-latest applied
