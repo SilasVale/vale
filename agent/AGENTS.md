@@ -519,7 +519,42 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 96 (RELEASED 1.2.361 with the grant replay guard, and TWO
+Last updated: 2026-09-13 round 97 (a save larger than the whole byte budget destroyed the
+entire memory store and reported SUCCESS — and writing its test uncovered two more defects
+underneath, including one the audit had only half seen).
+Commit: 65d8fafd. CI green. NOT released.
+  (1) THE AUDIT'S FINDING: `enforce_limits`' byte-cap loop evicts oldest-first and NOTHING
+  exempted the record just inserted, so `max_bytes: 1024` + a 2 KB save tombstoned the WHOLE
+  store including that record, while `memory_save` answered `{"ok":true,...}`.
+  (2) WHY IT TOOK THE NEW RECORD FIRST, which the audit only half saw and the TEST found:
+  `updated_at` has SECOND granularity, so records saved in the same second tie on the primary
+  key and the tie-break is "smallest id" — a record whose id sorts early was evicted BEFORE
+  the genuinely older records it should have outlived (in the test, `huge`, `keeper-a`,
+  `keeper-b` shared one second and `huge`, the record being saved, went first). A save must
+  never evict its own result: `evict_oldest_live` takes a `protect` id now.
+  (3) AND `truncate_utf8(s, max)` RETURNED max + 3 — the "…" marker is three UTF-8 bytes
+  appended ON TOP of the clip. Invisible at 32 KB, fatal at the byte cap. Result now fits.
+  (4) FIX SHAPE: content is clipped to `DEFAULT_MAX_CONTENT_BYTES.min(max_bytes)` rather than
+  refused, because truncation is ALREADY this store's contract for oversized content and it
+  keeps `ok:true` TRUE. I started down the refusal road, made a mess of the 23 call sites,
+  reverted, and took the consistent option.
+  (5) MY OWN TEST ASSERTED TOO MUCH FIRST — that the two prior keepers must survive. With a
+  1024-byte budget and a record filling it, evicting 3-byte records is CORRECT; the property
+  that was broken is that the record just saved no longer existed.
+  (6) MUTATION-PROVEN BOTH WAYS, SEPARATELY: removing the `protect` filter fails (46/1), and
+  restoring the max+3 truncation fails the same test (46/1).
+  (7) STILL OPEN from these two audits: memory F1 the sanitizer detects credential NAMES but
+  no credential SHAPES (40-hex, JWT, PEM blocks, URL-embedded passwords, AKIA, ghp_, unmarked
+  base64 all stored raw) and the JSON fast path RETURNS EARLY at `sanitize.rs:74`,
+  suppressing a detection the line pass would have made; memory F4 `memory_export` is
+  unsanitized and unbounded (up to ~320 MB while holding the store mutex); memory F5 a failed
+  append is reported as a successful save and an unreadable store reads as EMPTY. Index F2
+  `vale-playwright.zip` (an executed artifact) is served `public, max-age=86400` with no
+  validator; index F3 the three proxy routes lack the file's own failure envelope.
+  Gates: agent memory:: 47 (was 46) + agent-core 29 + clippy both crates + fmt; CI green;
+  d1 on 1.2.361.
+
+Previous round: 2026-09-13 round 96 (RELEASED 1.2.361 with the grant replay guard, and TWO
 FRESH subagent audits of surfaces nobody had touched — the memory plugin and the `index/`
 worker — which found a silent TOTAL DATA LOSS, an unpinned binary the installer stages, and
 turned up a foundation crate whose tests CI never ran).
