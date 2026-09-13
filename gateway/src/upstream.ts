@@ -25,12 +25,26 @@ import {
   AMD_CHAT,
   OG_WIRE_REMAP,
 } from "./channels.ts";
+import {
+  SUPPORTED_PROVIDER_APIS,
+  providerForPrefix,
+  type ProviderSpec,
+} from "./store/providers.ts";
 
 export interface RouteInfo {
+  /** How to talk to the upstream: "passthrough" (forward the body as-is),
+   *  "translate" (reshape Anthropic <-> OpenAI), or "error" (the route exists
+   *  but cannot be dialled — see `reason`). */
   type: string;
   kind: string;
   stripPrefix: boolean;
   upstream: string;
+  /** The custom provider this route came from (store/providers.ts). Carried on
+   *  the route so the request path can reach the record's key and its
+   *  per-model facets without a second registry read. */
+  provider?: ProviderSpec;
+  /** Why a `type: "error"` route must not be dialled. */
+  reason?: string;
 }
 
 // SOLID Round-1 (OCP): route builders are DATA — adding a channel registers
@@ -203,6 +217,84 @@ export const ROUTE_TABLE: Record<string, RouteBuilder> = {
 /** OCP extension point: new channels register here — no edit to pickRoute. */
 export function registerRoute(prefix: string, builder: RouteBuilder): void {
   ROUTE_TABLE[prefix] = builder;
+}
+
+/** Does the BUILT-IN route table own this prefix? (Bare form, no slash.) */
+export function isBuiltInPrefix(prefix: string): boolean {
+  return Object.prototype.hasOwnProperty.call(ROUTE_TABLE, prefix);
+}
+
+/**
+ * The route for a CUSTOM provider (store/providers.ts) — kind "custom",
+ * upstream built from the record.
+ *
+ * THE URL JOIN IS DSH'S, deliberately. `baseURL` is a PREFIX and the dialect's
+ * path is appended (`openai-completions` → `/chat/completions`), which is what
+ * the OpenAI SDK does with `baseURL` — the reason DSH's own settings.yaml can
+ * name the gateway itself (`https://api.saisi.online`, no `/v1`; the gateway
+ * aliases that path). Treating it as a URL to resolve against would throw away
+ * a deployment path like `https://host/openai/v1`.
+ *
+ * ALWAYS type "translate": /v1/chat/completions forwards the OpenAI body
+ * verbatim (that arm never looks at `type`), while /v1/messages must reshape
+ * Anthropic → chat/completions — with `toOpenAIRequest` +
+ * `openAIUpstreamToAnthropicResponse`, the og/cm path. No new translator.
+ *
+ * AN UNROUTABLE RECORD IS AN ERROR ROUTE, NEVER THE DEFAULT CHANNEL. A dialect
+ * this build does not serve, or a record with no baseURL (hand-edited KV), must
+ * not fall through to `defaultRoute`: that would dial a built-in upstream —
+ * Command Code — under a different provider's name, which is exactly the
+ * "advertised but silently somewhere else" failure a provider registry exists
+ * to remove.
+ */
+export function providerRoute(provider: ProviderSpec): RouteInfo {
+  const join = SUPPORTED_PROVIDER_APIS[provider?.api];
+  if (!provider?.baseURL || !join) {
+    return {
+      type: "error",
+      kind: "custom",
+      stripPrefix: true,
+      upstream: "",
+      provider,
+      reason: `custom provider ${provider?.prefix || "?"} cannot be routed: ${JSON.stringify(
+        provider?.api,
+      )} is not a protocol this gateway serves (see store/providers.ts)`,
+    };
+  }
+  return {
+    type: "translate",
+    kind: "custom",
+    stripPrefix: true,
+    upstream: provider.baseURL + join,
+    provider,
+  };
+}
+
+/**
+ * Resolve the route for a request prefix — the ONE entry point that knows about
+ * custom providers. `pickRoute` stays exactly as it was (a pure built-in table
+ * lookup), so the extension point is a layer rather than a rewrite:
+ *
+ *   1. ROUTE_TABLE[prefix]       — a built-in channel always wins, and costs no
+ *                                  registry read: the common case is untouched.
+ *   2. providers:custom[prefix]  — a custom provider (see providerRoute).
+ *   3. pickRoute → defaultRoute  — no prefix / genuinely unknown prefix.
+ *
+ * The built-in check comes FIRST on purpose (see store/providers.ts): a KV
+ * record that shadowed a built-in prefix — hand-edited, or written before a
+ * built-in channel existed — would re-point every existing route, and the key
+ * that rides it, at a third party.
+ */
+export async function resolveRoute(
+  env: any,
+  prefix: string,
+  usProxy: string | null = null,
+  requestPath: string = VERIFY_PATH,
+): Promise<RouteInfo> {
+  if (isBuiltInPrefix(prefix)) return pickRoute(prefix, env, usProxy, requestPath);
+  const provider = await providerForPrefix(env, prefix);
+  if (provider) return providerRoute(provider);
+  return pickRoute(prefix, env, usProxy, requestPath);
 }
 
 // Claude Code appends a [context-window] marker (e.g. [1m]) to model names and strips it

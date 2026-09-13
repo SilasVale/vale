@@ -29,6 +29,7 @@
  */
 import { cget, cset, cdel, type Env } from "./cache.ts";
 import { MODEL_REGISTRY, ROUTE_INFO, type ModelSpec } from "../channels.ts";
+import { advertisedProviderModels, barePrefix, customProviders } from "./providers.ts";
 
 const CUSTOM_KEY = "models:custom";
 const DISABLED_KEY = "models:disabled";
@@ -69,14 +70,50 @@ export async function customModels(env: Env): Promise<ModelSpec[]> {
   return readList<ModelSpec>(env, CUSTOM_KEY);
 }
 
-/** Every id the gateway currently advertises — built-ins minus disabled, plus custom. */
+/** Every id the gateway currently advertises — built-ins minus disabled, plus
+ *  console-added models, plus every CUSTOM PROVIDER's models (a provider's
+ *  models are advertised by its record; `isAdvertised` gates setting a route to
+ *  one exactly as it does for any other id). */
 export async function advertisedIds(env: Env): Promise<string[]> {
   const off = await disabledModels(env);
   const custom = await customModels(env);
+  const provided = await advertisedProviderModels(env);
   return [
     ...MODEL_REGISTRY.filter((m) => !off.has(m.id)).map((m) => m.id),
     ...custom.map((m) => m.id),
+    ...provided.map((m) => m.id),
   ];
+}
+
+/**
+ * The NON-BUILT-IN `/v1/models` entries — console-added models and custom
+ * provider models — with the facets a provider model may declare. ONE merge
+ * point, so the model list a client reads and the catalogue the console renders
+ * cannot drift apart (the failure mode ROUTE_INFO's own header records).
+ *
+ * `context_window`/`max_tokens` are emitted for provider models that declare
+ * them because a client can USE them: DSH's model discovery reads exactly those
+ * keys (`contextWindow`/`context_window`, `maxTokens`/`max_tokens`) off a
+ * `GET {baseURL}/models` listing. Built-in entries are unchanged.
+ */
+export async function extraModelEntries(env: Env): Promise<
+  {
+    id: string;
+    owned_by: string;
+    name?: string;
+    context_window?: number;
+    max_tokens?: number;
+  }[]
+> {
+  const custom = (await customModels(env)).map((m) => ({ id: m.id, owned_by: m.ownedBy }));
+  const provided = (await advertisedProviderModels(env)).map(({ id, provider, model }) => ({
+    id,
+    owned_by: provider.label || barePrefix(provider.prefix),
+    ...(model.name ? { name: model.name } : {}),
+    ...(model.contextWindow ? { context_window: model.contextWindow } : {}),
+    ...(model.maxTokens ? { max_tokens: model.maxTokens } : {}),
+  }));
+  return [...custom, ...provided];
 }
 
 /** Is this id advertised right now? The gate for BOTH setting a route and using one. */
@@ -95,6 +132,8 @@ export async function catalogue(env: Env): Promise<{
 }> {
   const custom = await customModels(env);
   const ids = await advertisedIds(env);
+  const providers = await customProviders(env);
+  const provided = await advertisedProviderModels(env);
 
   /**
    * THE BARE-vs-PREFIXED TRAP, again — and this time it is handled once, here.

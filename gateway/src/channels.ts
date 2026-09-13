@@ -455,6 +455,32 @@ export const ROUTE_INFO: { prefix: string; backend: string; desc: string; models
   },
 ];
 
+/**
+ * Every prefix the BUILT-IN router reserves — what a custom provider's prefix
+ * is validated against (store/providers.ts refuses to register one).
+ *
+ * The list is the union of two sources that live in two modules, so it is
+ * spelled out and PINNED instead of derived: ROUTE_INFO's prefixes are read
+ * from the registry above, while `ds` and `amd` are ROUTE_TABLE-only channels
+ * (live routes with no console card — ds is unpayable since 402s on every
+ * request, amd has no V4.1 to advertise), and `none` is the no-prefix sentinel
+ * rather than a prefix at all. `upstream.test.mjs` asserts this EQUALS
+ * Object.keys(ROUTE_TABLE) ∪ {"none"}: a channel added to the route table
+ * without a reservation here would become a shadowable prefix, and that fails
+ * the build instead of shipping.
+ *
+ * Why reserve at all, when resolveRoute consults ROUTE_TABLE first and a
+ * built-in therefore cannot be shadowed? Because the alternative is a provider
+ * that validates, is advertised in the console, and then never serves a
+ * request — a lie in the catalogue. The routing order is the security guard;
+ * this list is the correctness one.
+ */
+export const RESERVED_PREFIXES: string[] = [
+  ...ROUTE_INFO.map((r) => r.prefix.replace(/\/$/, "")),
+  "ds",
+  "amd",
+];
+
 // ---- Channel health (public /api/health) ----
 // 2026-09-10 (V4 retirement): the ds/ and amd/ cards left with their models —
 // ds/ is unpayable (402 on every request) and amd/ has no V4.1 to advertise.

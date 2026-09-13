@@ -356,6 +356,86 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
 </div>
 
 <script>
+/* Particle field — decorative, below every surface, and a NO-OP under
+   'prefers-reduced-motion' (the static wash stays; a decorative animation that ignores that
+   setting is an accessibility defect, and the honest fallback is no animation rather than a
+   slower one). Hues are read from the SAME --aura-* tokens the wash uses, so the field
+   cannot drift from the palette. Alpha is kept low enough that the worst case is a tint
+   behind existing surfaces, never a new contrast pair to measure.
+   This page has no bundler, so the field is inlined here rather than imported. */
+(function () {
+  if (window.matchMedia && window.matchMedia('(prefers-reduced-motion: reduce)').matches) return;
+  var canvas = document.createElement('canvas');
+  canvas.setAttribute('aria-hidden', 'true');
+  canvas.style.cssText = 'position:fixed;inset:0;z-index:0;pointer-events:none;display:block';
+  document.body.appendChild(canvas);
+  var ctx = canvas.getContext('2d');
+  if (!ctx) { canvas.remove(); return; }
+
+  var MAX_MOTES = 90, MAX_ALPHA = 0.5, motes = [], raf = 0;
+
+  function hueOf(name, fallback) {
+    var raw = getComputedStyle(document.body).getPropertyValue(name).trim();
+    var m = /^#([0-9a-f]{6})$/i.exec(raw);
+    if (!m) return fallback;
+    var n = parseInt(m[1], 16), r = (n >> 16) & 255, g = (n >> 8) & 255, b = n & 255;
+    var max = Math.max(r, g, b), min = Math.min(r, g, b);
+    if (max === min) return fallback;
+    var h = max === r ? ((g - b) / (max - min)) * 60
+          : max === g ? (2 + (b - r) / (max - min)) * 60
+          : (4 + (r - g) / (max - min)) * 60;
+    return (h + 360) % 360;
+  }
+  function palette() {
+    return [hueOf('--aura-1', 190), hueOf('--aura-3', 280), hueOf('--aura-4', 330)];
+  }
+
+  var hues = palette();
+  function resize() {
+    var dpr = Math.min(window.devicePixelRatio || 1, 2);
+    var w = window.innerWidth, h = window.innerHeight;
+    canvas.width = Math.floor(w * dpr); canvas.height = Math.floor(h * dpr);
+    canvas.style.width = w + 'px'; canvas.style.height = h + 'px';
+    ctx.setTransform(dpr, 0, 0, dpr, 0, 0);
+    hues = palette();
+    var want = Math.min(MAX_MOTES, Math.round((w * h / 100000) * 5.5));
+    while (motes.length > want) motes.pop();
+    while (motes.length < want) {
+      motes.push({ x: Math.random() * w, y: Math.random() * h,
+        r: 0.6 + Math.random() * 1.9, vx: (Math.random() - 0.5) * 0.16,
+        vy: -0.05 - Math.random() * 0.18,
+        hue: hues[Math.floor(Math.random() * hues.length)],
+        phase: Math.random() * Math.PI * 2 });
+    }
+  }
+  var last = 0;
+  function frame(t) {
+    raf = requestAnimationFrame(frame);
+    if (t - last < 33) return;   /* ~30fps: plenty for a drift this slow */
+    last = t;
+    var w = window.innerWidth, h = window.innerHeight;
+    ctx.clearRect(0, 0, w, h);
+    for (var i = 0; i < motes.length; i++) {
+      var m = motes[i];
+      m.x += m.vx; m.y += m.vy; m.phase += 0.012;
+      if (m.y < -8) m.y = h + 8; if (m.y > h + 8) m.y = -8;
+      if (m.x < -8) m.x = w + 8; if (m.x > w + 8) m.x = -8;
+      var tw = 0.55 + 0.45 * Math.sin(m.phase);
+      ctx.beginPath();
+      ctx.fillStyle = 'hsla(' + m.hue + ' 90% 62% / ' + (MAX_ALPHA * tw * 0.35).toFixed(3) + ')';
+      ctx.arc(m.x, m.y, m.r, 0, Math.PI * 2);
+      ctx.fill();
+    }
+  }
+  document.addEventListener('visibilitychange', function () {
+    if (document.hidden) { cancelAnimationFrame(raf); raf = 0; }
+    else if (!raf) { raf = requestAnimationFrame(frame); }
+  });
+  resize();
+  window.addEventListener('resize', resize);
+  raf = requestAnimationFrame(frame);
+})();
+
 document.getElementById('foot-time').textContent = new Date().toISOString().replace('T',' ').slice(0,19) + ' UTC';
 
 function toggleTheme() {

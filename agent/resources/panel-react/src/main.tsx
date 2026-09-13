@@ -3,6 +3,11 @@ import "./lib/theme"; // theme applies before any render (light default)
 import { createRoot } from "react-dom/client";
 import { App } from "./App";
 import { ErrorBoundary } from "./components/ErrorBoundary";
+import { startParticleField } from "./lib/particles";
+
+// Decorative, below every surface, and a no-op under `prefers-reduced-motion` — see the
+// module header. Started before render so the field is behind the first paint.
+startParticleField();
 
 // The panel mounts into #root (the agent's index.html hosts it). React 18
 // createRoot replaces the old DOM-manipulation bootstrap. The boundary
