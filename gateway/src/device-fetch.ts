@@ -8,13 +8,21 @@
  * dial (proxyDevice, MCP terminal tools, browser bridge) flows through
  * deviceFetch with the full SSRF guard stack: authority-prefix sanitization
  * (round-120/121) → parsed-hostname equality → private-IP blocklist
- * (deviceHostError) → the registration-time suffix allowlist
- * (DEVICE_HOST_SUFFIX, default .agent.saisi.online) → header hygiene →
- * bounded fetch. Known characteristic, accepted: fetch follows redirects, so
- * a device could 302 the gateway toward another PUBLIC host — unreachable
- * from a Worker's network position for internal targets (link-local/
- * metadata fail to route), and public targets are dialable by the device
- * anyway. DNS rebinding requires controlling the operator's own zone.
+ * (deviceHostError) → the suffix allowlist (DEVICE_HOST_SUFFIX, default
+ * .agent.saisi.online) → header hygiene → bounded fetch.
+ *
+ * THE SUFFIX ALLOWLIST IS APPLIED HERE NOW, and that sentence used to be a lie:
+ * `_env` was unused, so the check the paragraph above listed as part of the stack was
+ * only ever run at REGISTRATION time — by `/api/register` and self-register. Two admin
+ * write paths skipped it entirely (fixed), and any record predating those fixes would
+ * have been dialled. A dial-time check is the one that cannot be bypassed by a path
+ * someone forgot to guard.
+ *
+ * REDIRECTS ARE NOT FOLLOWED (round 90). This used to say "known characteristic,
+ * accepted: fetch follows redirects, so a device could 302 the gateway toward another
+ * PUBLIC host". That is no longer what happens — `redirect: "manual"` — and the old
+ * reasoning was wrong anyway: Cloudflare forwards Authorization to a cross-host
+ * Location, so the risk was the device's TOKEN, not merely the destination.
  */
 
 /**
@@ -44,7 +52,22 @@ export function build101Response(resp: any) {
  */
 import { fetchWithTimeout } from "./reliability.ts";
 
-export async function deviceFetch(_env: any, device: any, restPath: string, init: any = {}) {
+/// The device-hostname allowlist, overridable per-deployment via DEVICE_HOST_SUFFIX.
+///
+/// IT LIVES HERE, in the leaf module, because BOTH the registration paths (devices.ts) and
+/// the DIAL path (deviceFetch below) must apply it, and devices.ts already imports this
+/// file. Defining it in devices.ts and importing it back would be a cycle.
+// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
+export function hostAllowError(hostname: string, env: any): string | null {
+  const suffix = (env?.DEVICE_HOST_SUFFIX || ".agent.saisi.online").toLowerCase();
+  const h = hostname.toLowerCase();
+  if (!h.endsWith(suffix) || h.length <= suffix.length) {
+    return `hostname must be under ${suffix}`;
+  }
+  return null;
+}
+
+export async function deviceFetch(env: any, device: any, restPath: string, init: any = {}) {
   // round-120: SSRF via '@' userinfo — `new URL("https://${hostname}${restPath}")`
   // with restPath = "@evil.example/x" parsed device.hostname as USERINFO and
   // set host = evil.example, then fetched it with the device token + proxy
@@ -73,6 +96,16 @@ export async function deviceFetch(_env: any, device: any, restPath: string, init
   const hostErr = deviceHostError(upstream.hostname);
   if (hostErr) {
     return { status: 400, ok: false, resp: undefined, error: hostErr };
+  }
+  // THE SUFFIX ALLOWLIST, AT DIAL TIME. It used to run only at registration, so the
+  // "full SSRF guard stack" this module documents was really a stack with one plank
+  // missing — and the two write paths that skipped it (handleDevicesAdd, handleDeviceRename)
+  // meant a record could exist that the dialler would happily send a device token to. A
+  // dial-time check cannot be bypassed by a path someone forgot to guard, which is exactly
+  // how the registration-only version failed.
+  const suffixErr = hostAllowError(String(device.hostname), env);
+  if (suffixErr) {
+    return { status: 400, ok: false, resp: undefined, error: suffixErr };
   }
   const headers = new Headers(init.headers || {});
   headers.delete("host");

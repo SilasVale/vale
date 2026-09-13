@@ -11,7 +11,10 @@ import assert from "node:assert/strict";
 import { handleMcp, callTool } from "../src/mcp.ts";
 import { makeEnv as makeBaseEnv } from "./helpers.mjs";
 
-const DEVICE = { name: "d1", hostname: "d1.example.com", token: "devtok" };
+// A REALISTIC hostname: the dial path now applies the suffix allowlist (it used to be
+// registration-only, so this fixture got away with a placeholder), and no device can be
+// registered under `example.com`. The check is what a production dial actually faces.
+const DEVICE = { name: "d1", hostname: "d1.agent.saisi.online", token: "devtok" };
 
 // fetch stub: records every call, replies from a handler per URL.
 function makeFetch(handler) {
@@ -40,16 +43,11 @@ const okJson = (result) => ({
 
 test("browser tool routes to the device mcp_client_call API with mapped name + bearer", async () => {
   const { calls, impl } = makeFetch((url) => {
-    assert.equal(url, "https://d1.example.com/api/tools/mcp_client_call");
+    assert.equal(url, "https://d1.agent.saisi.online/api/tools/mcp_client_call");
     return okJson({ title: "Vale" });
   });
   await withFetch(impl, () =>
-    callTool(
-      { name: "browser_open" },
-      {},
-      DEVICE,
-      { device: "d1", url: "https://example.com" },
-    ),
+    callTool({ name: "browser_open" }, {}, DEVICE, { device: "d1", url: "https://example.com" }),
   );
   assert.equal(calls.length, 1);
   const body = JSON.parse(calls[0].init.body);
@@ -70,12 +68,11 @@ test("browser tool routes to the device mcp_client_call API with mapped name + b
 test("run_id is lifted OUT of the playwright arguments to the device call's top level", async () => {
   const { calls, impl } = makeFetch(() => okJson({ title: "Vale" }));
   await withFetch(impl, () =>
-    callTool(
-      { name: "browser_click" },
-      {},
-      DEVICE,
-      { device: "d1", element_ref: 6, run_id: "run-1700000000000-abc123" },
-    ),
+    callTool({ name: "browser_click" }, {}, DEVICE, {
+      device: "d1",
+      element_ref: 6,
+      run_id: "run-1700000000000-abc123",
+    }),
   );
   assert.equal(calls.length, 1);
   const body = JSON.parse(calls[0].init.body);
@@ -115,9 +112,10 @@ test("a browser call with no run_id sends no run_id key at all", async () => {
 test("device tools bypass the bridge: browser_run_script/pw_info hit the device API", async () => {
   for (const name of ["browser_run_script", "browser_pw_info"]) {
     const { calls, impl } = makeFetch((url) => {
-      assert.equal(url, `https://d1.example.com/api/tools/${name}`);
+      assert.equal(url, `https://d1.agent.saisi.online/api/tools/${name}`);
       return new Response(JSON.stringify({ ok: true, result: { ran: true } }), {
-        status: 200, headers: { "content-type": "application/json" },
+        status: 200,
+        headers: { "content-type": "application/json" },
       });
     });
     // deviceFetch injects the device Bearer internally (device-fetch.test.mjs
@@ -159,17 +157,12 @@ test("self-heal: not connected → playwright/start + mcp_client_connect → ret
   assert.deepEqual(result, { ok: true, result: { elements: [] } });
   // order: call → start → connect → retry(call)
   const urls = calls.map((c) => c.url.split("/").pop());
-  assert.deepEqual(urls, [
-    "mcp_client_call",
-    "start",
-    "mcp_client_connect",
-    "mcp_client_call",
-  ]);
+  assert.deepEqual(urls, ["mcp_client_call", "start", "mcp_client_connect", "mcp_client_call"]);
 });
 
 test("browser_click element_ref integer 7 → playwright target e7", async () => {
   const { calls, impl } = makeFetch((url) => {
-    assert.equal(url, "https://d1.example.com/api/tools/mcp_client_call");
+    assert.equal(url, "https://d1.agent.saisi.online/api/tools/mcp_client_call");
     return okJson({ ok: true });
   });
   const res = await withFetch(impl, () =>
@@ -227,9 +220,7 @@ test("persistent failure after heal → rejects with the device error", async ()
 });
 
 test("mcp: browser_screenshot data-URL → MCP image content block", async () => {
-  const { impl } = makeFetch(() =>
-    okJson("data:image/png;base64,aGVsbG8="),
-  );
+  const { impl } = makeFetch(() => okJson("data:image/png;base64,aGVsbG8="));
   const res = await withFetch(impl, () =>
     handleMcp(
       new Request("https://x/mcp", {
@@ -296,9 +287,7 @@ test("timeout_secs clamps to 1..300 before reaching the device (M2 audit)", asyn
 
 test("unknown browser tool name passes through verbatim (toolMap fallback)", async () => {
   const { calls, impl } = makeFetch(() => okJson({}));
-  await withFetch(impl, () =>
-    callTool({ name: "browser_future_tool" }, {}, DEVICE, { foo: 1 }),
-  );
+  await withFetch(impl, () => callTool({ name: "browser_future_tool" }, {}, DEVICE, { foo: 1 }));
   assert.equal(calls.length, 1);
   assert.equal(JSON.parse(calls[0].init.body).tool, "browser_future_tool");
 });
@@ -322,7 +311,11 @@ test("private device hostname → DEVICE_UNREACHABLE before any fetch", async ()
 // round-482 (coverage-driven): the URL round-trip mismatch arm (hostname
 // smuggling a port/userinfo/path past the IP guards) had ZERO pins.
 test("hostname with port/userinfo/path → DEVICE_UNREACHABLE before any fetch", async () => {
-  for (const hostname of ["d1.example.com:8443", "u@d1.example.com", "d1.example.com/evil"]) {
+  for (const hostname of [
+    "d1.agent.saisi.online:8443",
+    "u@d1.agent.saisi.online",
+    "d1.agent.saisi.online/evil",
+  ]) {
     const evil = { name: "evil", hostname, token: "tok" };
     let fetched = false;
     await withFetch(
@@ -354,8 +347,7 @@ test("5th concurrent browser call on one device → SESSION_BUSY (semaphore of 4
       headers: { "content-type": "application/json" },
     });
   const impl = () => gate.then(() => failJson());
-  const run = () =>
-    callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e);
+  const run = () => callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e);
   await withFetch(impl, async () => {
     const flying = [run(), run(), run(), run()];
     // Let the four calls park inside their slots (microtask drain, no sleep).
@@ -384,7 +376,11 @@ test("self-heal: 'session not found' (round-132 idle reclaim) heals like 'not co
       if (n === 1) {
         return {
           status: 200,
-          json: async () => ({ ok: false, error: "Session not found: abc (idle reclaim?)", code: "session_not_found" }),
+          json: async () => ({
+            ok: false,
+            error: "Session not found: abc (idle reclaim?)",
+            code: "session_not_found",
+          }),
         };
       }
       return okJson({ elements: [] });
@@ -416,7 +412,8 @@ test("slot released after a failed call: same device serves the next call", asyn
   let mode = "fail";
   const { impl } = makeFetch((url) => {
     if (String(url).endsWith("/api/tools/mcp_client_call")) {
-      if (mode === "fail") return { status: 200, json: async () => ({ ok: false, error: "permanent boom" }) };
+      if (mode === "fail")
+        return { status: 200, json: async () => ({ ok: false, error: "permanent boom" }) };
       return okJson({ done: true });
     }
     return okJson({ status: "started" });
@@ -424,7 +421,9 @@ test("slot released after a failed call: same device serves the next call", asyn
   await withFetch(impl, async () => {
     // 4 concurrent failures occupy then release all slots …
     const errs = await Promise.all(
-      [1, 2, 3, 4].map(() => callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e)),
+      [1, 2, 3, 4].map(() =>
+        callTool({ name: "browser_snapshot" }, {}, DEVICE, {}).catch((e) => e),
+      ),
     );
     assert.ok(errs.every((e) => String(e?.message || e).includes("permanent boom")));
     // … so the next call is NOT SESSION_BUSY and succeeds.
@@ -432,4 +431,46 @@ test("slot released after a failed call: same device serves the next call", asyn
     const result = await callTool({ name: "browser_snapshot" }, {}, DEVICE, {});
     assert.deepEqual(result, { ok: true, result: { done: true } });
   });
+});
+
+/* ---------------- the suffix allowlist, AT DIAL TIME ----------------
+ * It used to run only at REGISTRATION (`/api/register`, self-register), and two admin write
+ * paths skipped even that — so a record with a hostile hostname could exist. A dial-time
+ * check is the one that cannot be bypassed by a path someone forgot to guard, which is
+ * exactly how the registration-only version failed.
+ *
+ * This fixture is a LEGACY RECORD: it exists, and the dial must still refuse it.
+ */
+test("a device record outside the suffix allowlist is never dialled, token included", async () => {
+  const legacy = { name: "legacy", hostname: "attacker.example.com", token: "leaked-token-xyz" };
+  const calls = [];
+  const impl = async (url, init) => {
+    calls.push(String(url));
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  // The refusal REJECTS (DEVICE_UNREACHABLE), it does not silently no-op — so the caller
+  // learns why instead of seeing an empty result.
+  await assert.rejects(
+    withFetch(impl, () =>
+      callTool({ name: "browser_run_script" }, {}, legacy, { device: "legacy" }),
+    ),
+    /hostname must be under/,
+    "the dial must refuse with the allowlist reason",
+  );
+  assert.equal(
+    calls.length,
+    0,
+    "a record outside the allowlist must not be dialled at all -- and this is why the check belongs at DIAL time, not only at registration",
+  );
+});
+
+test("...and a record INSIDE the allowlist still dials (the guard is a filter, not a wall)", async () => {
+  const ok = { name: "ok1", hostname: "ok1.agent.saisi.online", token: "t" };
+  const calls = [];
+  const impl = async (url) => {
+    calls.push(String(url));
+    return new Response("{}", { status: 200, headers: { "content-type": "application/json" } });
+  };
+  await withFetch(impl, () => callTool({ name: "browser_run_script" }, {}, ok, { device: "ok1" }));
+  assert.equal(calls.length, 1, "a legitimate device must still be dialled");
 });

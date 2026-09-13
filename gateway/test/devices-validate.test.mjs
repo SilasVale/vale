@@ -6,12 +6,11 @@
 // names/hostnames, so the table is fixed exactly as implemented.
 import test from "node:test";
 import assert from "node:assert/strict";
-import {
-  hostAllowError,
-  validateDevice,
-  validatedDeviceOrError,
-  mcpConfig,
-} from "../src/plugins/devices.ts";
+import { validateDevice, validatedDeviceOrError, mcpConfig } from "../src/plugins/devices.ts";
+// `hostAllowError` MOVED to device-fetch.ts so the DIAL path can apply it without a cycle
+// (devices.ts imports device-fetch.ts, so defining it here and importing it back would be
+// one). Same function, one definition — this import follows it rather than duplicating it.
+import { hostAllowError } from "../src/device-fetch.ts";
 
 test("hostAllowError: default suffix, case-insensitive, bare suffix refused", () => {
   assert.equal(hostAllowError("d1.agent.saisi.online", {}), null);
@@ -46,7 +45,11 @@ test("validateDevice: name/hostname/token shapes rejected", () => {
   assert.doesNotThrow(() => validateDevice({ ...good, name: "a".repeat(32) }), "32 chars ok");
   assert.doesNotThrow(() => validateDevice({ ...good, name: "a_B-9" }), "word chars + dash ok");
   for (const hostname of ["", "not a host", "a_b.com", "localhost", "d1.", ".d1.x"]) {
-    assert.throws(() => validateDevice({ ...good, hostname }), /hostname/, JSON.stringify(hostname));
+    assert.throws(
+      () => validateDevice({ ...good, hostname }),
+      /hostname/,
+      JSON.stringify(hostname),
+    );
   }
   assert.throws(() => validateDevice({ ...good, token: "1234567" }), /Token/, "7 chars short");
   assert.throws(() => validateDevice({ ...good, token: "" }), /Token/);
@@ -55,7 +58,11 @@ test("validateDevice: name/hostname/token shapes rejected", () => {
 });
 
 test("validatedDeviceOrError: record or 400 envelope, never throws", () => {
-  const ok = validatedDeviceOrError({ name: "d1", hostname: "d1.agent.saisi.online", token: "01234567" });
+  const ok = validatedDeviceOrError({
+    name: "d1",
+    hostname: "d1.agent.saisi.online",
+    token: "01234567",
+  });
   assert.ok(!(ok instanceof Response));
   assert.equal(ok.name, "d1");
   const bad = validatedDeviceOrError({ name: "no good!", hostname: "x", token: "y" });
@@ -64,11 +71,12 @@ test("validatedDeviceOrError: record or 400 envelope, never throws", () => {
 });
 
 test("mcpConfig: snippet shape carries the Bearer token", () => {
-  const { url, json } = mcpConfig({ name: "d1", hostname: "d1.agent.saisi.online", token: "tok-1" });
+  const { url, json } = mcpConfig({
+    name: "d1",
+    hostname: "d1.agent.saisi.online",
+    token: "tok-1",
+  });
   assert.equal(url, "https://d1.agent.saisi.online/mcp");
   const snippet = JSON.parse(json);
-  assert.equal(
-    snippet.mcpServers["vale-agent"].headers.Authorization,
-    "Bearer tok-1",
-  );
+  assert.equal(snippet.mcpServers["vale-agent"].headers.Authorization, "Bearer tok-1");
 });

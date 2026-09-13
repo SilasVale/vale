@@ -65,7 +65,9 @@ import {
   type Device,
 } from "../store.ts";
 import { safeEq } from "../auth.ts";
-import { deviceFetch } from "../device-fetch.ts";
+// hostAllowError lives in device-fetch.ts (the LEAF module) rather than here, so the
+// dialler can apply it without importing this file and creating a cycle.
+import { deviceFetch, hostAllowError } from "../device-fetch.ts";
 import { fetchWithTimeout } from "../reliability.ts";
 import { jsonOk, jsonError, readJson } from "../http.ts";
 import { requireSession, requireAdmin } from "../session.ts";
@@ -704,16 +706,6 @@ async function handleRegisterKey(request: Request, env: any): Promise<Response> 
 /// unvalidated hostname turns the worker into an SSRF proxy (it injects
 /// Authorization + x-vale-auth into https://<hostname>…) AND re-serves that
 /// host's responses at the console origin. Enforce a suffix allowlist,
-/// overridable per-deployment via DEVICE_HOST_SUFFIX.
-// Exported for direct pins (SOLID Round-28; additive — handlers untouched).
-export function hostAllowError(hostname: string, env: any): string | null {
-  const suffix = (env?.DEVICE_HOST_SUFFIX || ".agent.saisi.online").toLowerCase();
-  const h = hostname.toLowerCase();
-  if (!h.endsWith(suffix) || h.length <= suffix.length) {
-    return `hostname must be under ${suffix}`;
-  }
-  return null;
-}
 
 // Exported for direct pins (SOLID Round-28; additive — handlers untouched).
 export function validateDevice(body: any): Device {
