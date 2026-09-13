@@ -262,6 +262,123 @@ impl Service<Request<Body>> for WebPanel {
 
 // ── Response helpers ───────────────────────────────────────
 
+// ── Replay guard for redeemed panel grants ───────────────────
+//
+// THE GATEWAY CANNOT MAKE A GRANT SINGLE-USE, AND THAT IS A KV PROPERTY, NOT A BUG TO
+// PATCH THERE. `store/grants.ts` is Cloudflare KV: `get` caches at the edge (60 s default)
+// and a `delete` takes up to ~60 s to become visible everywhere, so a check-then-delete
+// lets a SECOND redemption through — the code in `devices.ts` says so itself. A claim key
+// does not close it either: the replay usually arrives at a DIFFERENT colo, which has never
+// read `grantclaim:<code>` and therefore sees null and claims it happily.
+//
+// The DEVICE closes it, and it is the right place: this process is SINGLE and STRONGLY
+// CONSISTENT, and the realistic replay MUST come through it — an attacker holding a leaked
+// grant URL cannot call the gateway's redeem (that needs a device token) but can open
+// `/panel/?grant=<code>` at the device, which holds its own token and would redeem on their
+// behalf. So a code this device has already redeemed is refused here, where there is no
+// eventual consistency to exploit.
+//
+// Persisted, because an agent restart between the two redemptions would otherwise forget.
+// The file is age-pruned: an entry cannot matter after the grant's own TTL has expired.
+const REDEEMED_GRANTS_FILE: &str = "panel-grants-redeemed.txt";
+/// 120 s is the gateway's `expirationTtl`; keep memory of a code a little past that so a
+/// redemption cannot straddle the boundary.
+const REDEEMED_GRANT_TTL_SECS: u64 = 600;
+
+static REDEEMED_GRANTS: std::sync::OnceLock<std::sync::Mutex<std::collections::HashSet<String>>> =
+    std::sync::OnceLock::new();
+
+fn redeemed_grants() -> &'static std::sync::Mutex<std::collections::HashSet<String>> {
+    REDEEMED_GRANTS.get_or_init(|| std::sync::Mutex::new(load_redeemed_grants()))
+}
+
+fn redeemed_grants_path() -> std::path::PathBuf {
+    crate::paths::etc_dir().join(REDEEMED_GRANTS_FILE)
+}
+
+/// Read the persisted set, dropping entries past the TTL (which cannot matter).
+fn load_redeemed_grants() -> std::collections::HashSet<String> {
+    let mut set = std::collections::HashSet::new();
+    let Ok(raw) = std::fs::read_to_string(redeemed_grants_path()) else {
+        return set;
+    };
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    for line in raw.lines() {
+        // `<unix_secs> <code>` — an unparsable line is DROPPED, not trusted.
+        let Some((ts, code)) = line.split_once(' ') else {
+            continue;
+        };
+        let Ok(ts) = ts.parse::<u64>() else { continue };
+        if now.saturating_sub(ts) < REDEEMED_GRANT_TTL_SECS && !code.is_empty() {
+            set.insert(code.to_string());
+        }
+    }
+    set
+}
+
+/// Has this device already redeemed `code`? An unreadable/locked store answers `true` —
+/// FAIL CLOSED, because the question is "may I inject a permanent token", and "I cannot
+/// tell whether this code was already spent" must not authorise it.
+pub(crate) fn grant_already_redeemed(code: &str) -> bool {
+    match redeemed_grants().lock() {
+        Ok(set) => set.contains(code),
+        Err(p) => p.into_inner().contains(code),
+    }
+}
+
+/// Clear the guard: for TESTS ONLY.
+///
+/// The store is process-global AND file-backed, which is correct for the device (one
+/// process, one set of spent codes) and hostile to tests — one test's redemption is
+/// another test's refusal, and the file outlives the test BINARY, so a code redeemed by an
+/// earlier `cargo test` run is still spent on the next one. Every test that exercises the
+/// grant path must start from a clean guard.
+#[cfg(test)]
+pub(crate) fn reset_redeemed_grants_for_test() {
+    if let Ok(mut set) = redeemed_grants().lock() {
+        set.clear();
+    }
+    let _ = std::fs::remove_file(redeemed_grants_path());
+}
+
+/// Record a SUCCESSFUL redemption so a replay is refused. Best-effort persistence: if the
+/// file cannot be written the in-memory set still guards this process's lifetime.
+pub(crate) fn remember_redeemed_grant(code: &str) {
+    {
+        let mut set = match redeemed_grants().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        set.insert(code.to_string());
+    }
+    let now = std::time::SystemTime::now()
+        .duration_since(std::time::UNIX_EPOCH)
+        .map(|d| d.as_secs())
+        .unwrap_or(0);
+    let path = redeemed_grants_path();
+    if let Some(dir) = path.parent() {
+        let _ = std::fs::create_dir_all(dir);
+    }
+    // Rewrite rather than append: the file must stay small and self-pruning, and this runs
+    // at most once per successful grant.
+    let live: Vec<String> = {
+        let set = match redeemed_grants().lock() {
+            Ok(g) => g,
+            Err(p) => p.into_inner(),
+        };
+        set.iter().cloned().collect()
+    };
+    let body: String = live
+        .iter()
+        .map(|c| format!("{now} {c}\n"))
+        .collect::<Vec<_>>()
+        .join("");
+    let _ = std::fs::write(path, body);
+}
+
 #[cfg(test)]
 mod panel_tests {
     //! round-379: the static whitelist, bundle-hash stamping, token XSS

@@ -483,7 +483,22 @@ async fn handle_panel_home(
                 .map(str::trim)
                 .filter(|u| !u.is_empty())
             {
+                // REFUSE A REPLAY. The gateway is KV, so its delete takes up to ~60 s to
+                // be visible everywhere and a claim key does not help (a replay usually
+                // arrives at a colo that never read the claim). This process IS strongly
+                // consistent, and the replay must come through it — see the guard's own
+                // note in panel.rs.
+                if crate::web::panel::grant_already_redeemed(&grant) {
+                    tracing::warn!(
+                        grant_prefix = %&grant[..grant.len().min(8)],
+                        "panel grant REPLAY refused -- this device already redeemed it"
+                    );
+                    return resp;
+                }
                 if redeem_panel_grant(base, token, &grant).await {
+                    // Recorded only on SUCCESS, so a transient gateway failure does not
+                    // burn the operator's one legitimate redemption.
+                    crate::web::panel::remember_redeemed_grant(&grant);
                     return panel_token_response(token);
                 }
             }
@@ -2164,6 +2179,61 @@ mod tests {
 
     const GRANT: &str = "0123456789abcdef0123456789abcdef";
 
+    /// The redeemed-grant guard is ONE process-global, file-backed store — correct for a
+    /// device (one process, one set of spent codes) and impossible to parallelise in tests:
+    /// a sibling's redemption refuses this one's, and a sibling's RESET deletes the file
+    /// this one is asserting on. Both were observed. So every test that touches the guard
+    /// holds this for its whole body.
+    ///
+    /// ASYNC mutex on purpose: these tests await, and a `std::sync::MutexGuard` held across
+    /// an await is both a clippy error here and a real hazard.
+    static GRANT_TEST_LOCK: std::sync::OnceLock<tokio::sync::Mutex<()>> =
+        std::sync::OnceLock::new();
+
+    fn grant_test_lock() -> &'static tokio::sync::Mutex<()> {
+        // `tokio::sync::Mutex::new` is not const in this version, so the lock lives in a
+        // OnceLock rather than a bare static.
+        GRANT_TEST_LOCK.get_or_init(|| tokio::sync::Mutex::new(()))
+    }
+
+    /// MULTI-shot redeem stub: answers `n` connections with the SAME success body.
+    ///
+    /// The one-shot stub below cannot test a replay guard, and that is not obvious: with
+    /// the guard DISABLED the second redemption simply fails to connect, `redeem_panel_grant`
+    /// returns false, and "no token was injected" passes for entirely the wrong reason. It
+    /// did — mutation-proving the guard left the suite green. A stub that keeps saying yes
+    /// is what makes the guard the only thing that can refuse.
+    async fn spawn_redeem_stub_n(n: usize) -> String {
+        let listener = tokio::net::TcpListener::bind("127.0.0.1:0").await.unwrap();
+        let addr = listener.local_addr().unwrap().to_string();
+        tokio::spawn(async move {
+            use tokio::io::{AsyncReadExt, AsyncWriteExt};
+            for _ in 0..n {
+                let Ok((mut sock, _)) = listener.accept().await else {
+                    return;
+                };
+                let mut buf = [0u8; 4096];
+                // Read the request (headers + body) with a bounded wait, then answer.
+                let _ = tokio::time::timeout(
+                    std::time::Duration::from_millis(500),
+                    sock.read(&mut buf),
+                )
+                .await;
+                let body = "{\"ok\":true}";
+                let resp = format!(
+                    "HTTP/1.1 200 OK\r\ncontent-type: application/json\r\ncontent-length: {}\r\nconnection: close\r\n\r\n{}",
+                    body.len(),
+                    body
+                );
+                let _ = sock.write_all(resp.as_bytes()).await;
+                let _ = sock.flush().await;
+            }
+        });
+        // WITH the scheme: the redeem builds "{console_url}/api/..." and reqwest needs it.
+        // Returning the bare addr made the first redemption fail outright.
+        format!("http://{addr}")
+    }
+
     /// One-shot redeem stub: accepts ONE connection, captures the raw request
     /// bytes, answers `<status_line>` + `<body>` and returns the captured
     /// request via the JoinHandle. Aborting the handle (dropping it) closes
@@ -2224,8 +2294,84 @@ mod tests {
         (format!("http://{addr}"), handle)
     }
 
+    /// THE REPLAY THE GATEWAY CANNOT STOP. `store/grants.ts` is KV: `get` caches at the edge
+    /// and `delete` takes up to ~60 s to be visible everywhere, so a leaked grant URL can be
+    /// redeemed a second time. A claim key does not close it (the replay arrives at a colo
+    /// that never read the claim) — but the DEVICE does, because it is one strongly
+    /// consistent process and the replay must come through it.
+    ///
+    /// Same request, twice: the first injects, the second must not.
+    #[tokio::test]
+    async fn panel_grant_is_not_redeemable_twice_by_this_device() {
+        let mut cfg = Config::default();
+        cfg.server.device_token = Some(TEST_TOKEN.into());
+        // MULTI-shot: the gateway keeps saying yes, so the ONLY thing that can refuse the
+        // second redemption is the guard. With the one-shot stub this test passed even
+        // with the guard disabled — it was measuring the stub, not the guard.
+        let base = spawn_redeem_stub_n(4).await;
+        cfg.platform.console_url = Some(base);
+        let st = Arc::new(AppState::new(cfg));
+
+        // Serialised + clean: the guard is one global file-backed store, and a code spent
+        // by an earlier `cargo test` RUN is still spent (the file outlives the binary) —
+        // observed, when the first version of this test reused `GRANT` and failed its own
+        // "first redemption must inject" assertion.
+        let _serial = grant_test_lock().lock().await;
+        crate::web::panel::reset_redeemed_grants_for_test();
+        let code = "aaaaaaaaaaaaaaaaaaaaaaaaaaaaaaa1";
+        let path = format!("/panel/?grant={code}");
+
+        let first = handle_request(req_with_host(&path, "d1.example.com:18080"), st.clone()).await;
+        let b1 = axum::body::to_bytes(first.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(
+            String::from_utf8_lossy(&b1).contains("window.__PANEL_TOKEN__"),
+            "the FIRST redemption must inject -- the guard must not break the real flow"
+        );
+
+        let second = handle_request(req_with_host(&path, "d1.example.com:18080"), st.clone()).await;
+        let b2 = axum::body::to_bytes(second.into_body(), 1 << 20)
+            .await
+            .unwrap();
+        assert!(
+            !String::from_utf8_lossy(&b2).contains("window.__PANEL_TOKEN__"),
+            "a REPLAYED grant must not inject a second permanent token"
+        );
+    }
+
+    /// The guard must SURVIVE A RESTART: an agent restart between the two redemptions would
+    /// otherwise forget, and the gateway's TTL is 120 s while a restart is ~10 s.
+    #[tokio::test]
+    async fn redeemed_grant_guard_persists_and_prunes() {
+        let _serial = grant_test_lock().lock().await;
+        crate::web::panel::reset_redeemed_grants_for_test();
+        let code = "fedcba9876543210fedcba9876543210";
+        assert!(
+            !crate::web::panel::grant_already_redeemed(code),
+            "a code this device never redeemed must not be refused"
+        );
+        crate::web::panel::remember_redeemed_grant(code);
+        assert!(
+            crate::web::panel::grant_already_redeemed(code),
+            "a redeemed code must be refused from then on"
+        );
+        // Persisted, so a fresh process would also refuse it.
+        let on_disk =
+            std::fs::read_to_string(crate::paths::etc_dir().join("panel-grants-redeemed.txt"))
+                .unwrap_or_default();
+        assert!(
+            on_disk.contains(code),
+            "the redeemed code must be on disk, or an agent restart forgets it: {on_disk:?}"
+        );
+    }
+
     #[tokio::test]
     async fn panel_grant_redeem_success_injects_token() {
+        // Serialised + clean, or a sibling's redemption refuses this one's and the redeem
+        // stub is never contacted — which HANGS a test that awaits it (observed).
+        let _serial = grant_test_lock().lock().await;
+        crate::web::panel::reset_redeemed_grants_for_test();
         let mut cfg = Config::default();
         cfg.server.device_token = Some(TEST_TOKEN.into());
         let (base, handle) = spawn_redeem_stub("HTTP/1.1 200 OK", "{\"ok\":true}").await;
@@ -2268,6 +2414,10 @@ mod tests {
 
     #[tokio::test]
     async fn panel_grant_redeem_failure_serves_plain_panel() {
+        // Serialised + clean, or a sibling's redemption refuses this one's and the redeem
+        // stub is never contacted — which HANGS a test that awaits it (observed).
+        let _serial = grant_test_lock().lock().await;
+        crate::web::panel::reset_redeemed_grants_for_test();
         let mut cfg = Config::default();
         cfg.server.device_token = Some(TEST_TOKEN.into());
         let (base, handle) =
@@ -2294,6 +2444,10 @@ mod tests {
 
     #[tokio::test]
     async fn panel_grant_without_console_url_falls_back_to_plain_panel() {
+        // Serialised + clean, or a sibling's redemption refuses this one's and the redeem
+        // stub is never contacted — which HANGS a test that awaits it (observed).
+        let _serial = grant_test_lock().lock().await;
+        crate::web::panel::reset_redeemed_grants_for_test();
         // Pure-local device: no console binding → nothing to redeem with, so
         // ?grant= is simply invalid (existing bad-token behavior) and NO
         // network call is possible (no stub exists to answer one).
