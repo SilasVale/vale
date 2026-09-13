@@ -12,9 +12,15 @@
  */
 
 import { getGlobalSetting, globalSettingEnabled } from "../store.ts";
+import { providerKey } from "../store/providers.ts";
 import { toOpenAIRequest } from "../anthropic-translate.ts";
 import { fetchWithTimeout, upstreamTimeoutMs } from "../reliability.ts";
-import { pickRoute, passthroughHeaders, stripBracket, opencodeSessionHeader } from "../upstream.ts";
+import {
+  resolveRoute,
+  passthroughHeaders,
+  stripBracket,
+  opencodeSessionHeader,
+} from "../upstream.ts";
 
 export function isVisionCapable(model: string, upstreamModel: string, env: any): boolean {
   const list = String(env.VISION_CAPABLE_MODELS || "")
@@ -31,9 +37,16 @@ export async function preprocessImages(
   model: string,
   upstreamModel: string,
   uid: string,
+  /** The target model is DECLARED to see images itself (a custom provider's
+   *  `input: [text, image]`). Describing the picture for a model that can look
+   *  at it would replace it with a lossy summary AND cost an upstream call, so
+   *  declared vision short-circuits the whole pass. */
+  declaredVision = false,
 ): Promise<{ messages: any[]; changed: boolean }> {
   if (!Array.isArray(messages)) return { messages, changed: false };
-  if (isVisionCapable(model, upstreamModel, env)) return { messages, changed: false };
+  if (declaredVision || isVisionCapable(model, upstreamModel, env)) {
+    return { messages, changed: false };
+  }
   const visionModel = env.VISION_MODEL || "og/mimo-v2.5";
   let changed = false;
   const out: any[] = [];
@@ -173,7 +186,16 @@ export async function describeImage(
     }
   }
   const prefix = visionModel.split("/")[0] || "";
-  const route = pickRoute(prefix, env, globalSettingEnabled(usProxyRaw) ? "1" : null);
+  // resolveRoute, NOT pickRoute: VISION_MODEL may name a CUSTOM provider's model
+  // (VISION_MODEL is operator-configurable). pickRoute would not know the prefix
+  // and would silently fall through to the DEFAULT channel — describing the
+  // image at Command Code with the user's CMD key, for a model the operator
+  // never pointed at. resolveRoute either finds the provider (served below) or
+  // reports an unroutable record, which fails cleanly instead of misrouting.
+  const route = await resolveRoute(env, prefix, globalSettingEnabled(usProxyRaw) ? "1" : null);
+  if (route.type === "error") {
+    return `(图片描述失败：${route.reason || `${prefix} 路由不可用`})`;
+  }
   const upstreamModel = stripBracket(
     route.stripPrefix ? visionModel.slice(prefix.length + 1) : visionModel,
   );
@@ -209,11 +231,19 @@ export async function describeImage(
     commandgoat: { key: "CMD_API_KEY", shape: "openai" },
     nvidia: { key: "NVAPI_KEY", shape: "openai" },
     gmi: { key: "GMI_API_KEY", shape: "openai" },
+    // A custom provider serves its models through the OpenAI-compatible dialect
+    // this gateway registers (store/providers.ts), and its key comes from its own
+    // record rather than from `ukeys` — so `key` is unused for this kind.
+    custom: { key: "", shape: "openai" },
   };
   const backend = VISION_BACKENDS[route.kind];
   if (!backend) return "(图片描述失败：视觉模型后端不支持)";
-  const bearerKey = ukeys[backend.key];
-  if (!bearerKey) return `(图片描述失败：${backend.key} 未配置)`;
+  const bearerKey = route.kind === "custom" ? providerKey(env, route.provider) : ukeys[backend.key];
+  if (!bearerKey) {
+    return route.kind === "custom"
+      ? `(图片描述失败：${route.provider?.prefix || "custom provider"} 未配置 key)`
+      : `(图片描述失败：${backend.key} 未配置)`;
+  }
 
   if (backend.shape === "anthropic") {
     // Anthropic-format upstream: text lives in content[] blocks.

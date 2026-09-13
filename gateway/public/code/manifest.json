@@ -186,6 +186,11 @@
       "group": "vale-gate"
     },
     {
+      "name": "src/store/providers.ts",
+      "path": "files/vale-gate/src/store/providers.ts",
+      "group": "vale-gate"
+    },
+    {
       "name": "src/store/regkeys.ts",
       "path": "files/vale-gate/src/store/regkeys.ts",
       "group": "vale-gate"

@@ -7,6 +7,13 @@ import {
   putCustomModel,
   setModelDisabled,
 } from "../store/models.ts";
+import {
+  customProviders,
+  deleteCustomProvider,
+  parseProviderSpec,
+  publicProvider,
+  putCustomProvider,
+} from "../store/providers.ts";
 import { safeEq } from "../auth.ts";
 /**
  * Vale gateway plugin: admin — /api/admin/* (console admin APIs).
@@ -167,6 +174,67 @@ async function adminModelState(request: Request, env: Env): Promise<Response> {
     custom: (await customModels(env)).map((m) => m.id),
     disabled: [...(await disabledModels(env))],
   });
+}
+
+/* ---- Custom PROVIDERS: add / list / delete ----
+ *
+ * THE CHANNELS ARE DATA TOO. The model handlers above close "adding a model
+ * means editing channels.ts"; these close the layer under them — a whole new
+ * provider (prefix + endpoint + protocol + key) was still code in
+ * `ROUTE_TABLE`/`ROUTE_INFO`. `store/providers.ts` holds the record; these three
+ * routes are its only writer, so every guard an operator needs to hear about
+ * (reserved prefix, non-https or private baseURL, unsupported protocol, missing
+ * key) is a 4xx HERE rather than a 502 on the first request.
+ *
+ * Admin-only, exactly like the model handlers: `requireAdmin` is the first
+ * statement of every handler, and `model-catalogue-e2e.test.mjs` pins the
+ * unauthenticated answer for all three (401) — a previous round shipped an
+ * unauthenticated admin surface by omitting it once already.
+ *
+ * The response NEVER carries an inline key: `publicProvider` reduces it to
+ * maskKey(value), the same rule the model handlers' user list follows.
+ */
+
+async function adminListProviders(request: Request, env: Env): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+  const providers = await customProviders(env);
+  return jsonOk({ providers: providers.map((p) => publicProvider(p, env)) });
+}
+
+async function adminAddProvider(request: Request, env: Env): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  const { spec, error, status } = parseProviderSpec(await readJson(request));
+  if (error || !spec)
+    return jsonError(status || 400, error || "invalid provider", "invalid_request");
+  // Upsert by prefix, like putCustomModel is by id: re-posting a prefix is how
+  // an operator edits the provider they own. A built-in prefix never gets here
+  // (parseProviderSpec refuses it with 409), so this cannot shadow a channel.
+  const next = await putCustomProvider(env, spec);
+  return jsonOk({
+    ok: true,
+    provider: publicProvider(spec, env),
+    providers: next.map((p) => p.prefix),
+  });
+}
+
+async function adminDeleteProvider(request: Request, env: Env, prefix: string): Promise<Response> {
+  const gate = await requireAdmin(request, env);
+  if (gate instanceof Response) return gate;
+
+  let decoded: string;
+  try {
+    decoded = decodeURIComponent(prefix);
+  } catch {
+    return jsonError(400, "Invalid provider prefix", "invalid_request");
+  }
+  const bare = decoded.replace(/\/+$/, "");
+  if (!bare) return jsonError(400, "A provider prefix is required", "invalid_request");
+  const removed = await deleteCustomProvider(env, bare);
+  if (!removed) return jsonError(404, `No custom provider ${bare}/`, "not_found_error");
+  return jsonOk({ ok: true, removed: bare + "/" });
 }
 
 /* ---- Cloudflare tunnel API token — account-level credential the install
@@ -335,6 +403,20 @@ export default {
       match: (m, p) =>
         m === "PUT" && p.startsWith(`${ADMIN_BASE}/models/`) && p.endsWith("/enabled"),
       handler: (req: Request, env: Env) => adminEnableModel(req, env, request_admin_model_id(req)),
+    });
+    add("GET", `${ADMIN_BASE}/providers`, adminListProviders);
+    add("POST", `${ADMIN_BASE}/providers`, adminAddProvider);
+    // Dynamic: DELETE /api/admin/providers/{prefix}. The prefix ends in a slash
+    // ("my/"), so it is read off the path (encoded or bare) rather than split —
+    // and a bare "my" is accepted too, which is how a CLI user types it.
+    ctx.routes.push({
+      match: (m, p) => m === "DELETE" && p.startsWith(`${ADMIN_BASE}/providers/`),
+      handler: (req: Request, env: Env) =>
+        adminDeleteProvider(
+          req,
+          env,
+          new URL(req.url).pathname.slice(`${ADMIN_BASE}/providers/`.length),
+        ),
     });
     add("GET", `${ADMIN_BASE}/password`, adminGetPassword);
     add("PUT", `${ADMIN_BASE}/password`, adminPutPassword);

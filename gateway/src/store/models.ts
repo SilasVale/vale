@@ -29,7 +29,12 @@
  */
 import { cget, cset, cdel, type Env } from "./cache.ts";
 import { MODEL_REGISTRY, ROUTE_INFO, type ModelSpec } from "../channels.ts";
-import { advertisedProviderModels, barePrefix, customProviders } from "./providers.ts";
+import {
+  advertisedProviderModels,
+  barePrefix,
+  customProviders,
+  SUPPORTED_PROVIDER_APIS,
+} from "./providers.ts";
 
 const CUSTOM_KEY = "models:custom";
 const DISABLED_KEY = "models:disabled";
@@ -174,6 +179,40 @@ export async function catalogue(env: Env): Promise<{
         models: [bare],
       });
     }
+  }
+
+  // CUSTOM PROVIDERS get a route card too: the console's "model routing"
+  // section is built from this list, and a provider whose models are advertised
+  // by /v1/models but appear under no channel is the exact drift ROUTE_INFO's
+  // header records (an advertised id the console cannot explain). ROUTE_INFO
+  // itself stays the BUILT-IN registry — providers are runtime data, so they are
+  // merged here rather than appended to a compile-time constant.
+  for (const p of providers) {
+    if (!p || typeof p !== "object" || !barePrefix(p.prefix)) continue;
+    const prefix = barePrefix(p.prefix) + "/";
+    const models = provided
+      .filter((m) => barePrefix(m.provider?.prefix) === barePrefix(prefix))
+      .map((m) => m.wire);
+    let host = String(p.baseURL || "");
+    try {
+      host = new URL(host).host;
+    } catch {
+      /* a hand-edited record: show the raw string rather than dropping the card */
+    }
+    const join = Object.prototype.hasOwnProperty.call(SUPPORTED_PROVIDER_APIS, String(p.api))
+      ? (SUPPORTED_PROVIDER_APIS[String(p.api)] as string)
+      : "";
+    const card = {
+      prefix,
+      backend: String(p.label || barePrefix(prefix)),
+      desc: `Custom provider — ${host} via ${String(p.api || "?")}; requests go to ${String(
+        p.baseURL || "",
+      )}${join}`,
+      models,
+    };
+    const existing = routes.find((r) => r.prefix === card.prefix);
+    if (!existing) routes.push(card);
+    else for (const m of models) if (!existing.models.includes(m)) existing.models.push(m);
   }
 
   return { models: ids, routes };

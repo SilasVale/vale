@@ -21,7 +21,8 @@
  * just the entry points.
  */
 
-import { advertisedIds, customModels } from "../store/models.ts";
+import { advertisedIds, extraModelEntries } from "../store/models.ts";
+import { providerKey, providerModelVision, type ProviderSpec } from "../store/providers.ts";
 import { findUserByToken, getUserKeys, getGlobalSetting, globalSettingEnabled } from "../store.ts";
 import {
   toOpenAIRequest,
@@ -65,6 +66,7 @@ import {
 // valeProbe — the copies had drifted on the or/ US_PROXY behavior).
 import {
   pickRoute,
+  resolveRoute,
   passthroughHeaders,
   stripBracket,
   opencodeSessionHeader,
@@ -192,6 +194,22 @@ const KEY_MISSING_MESSAGES: Record<string, string> = {
 export function keyMissingError(kind: string): Response | null {
   const msg = KEY_MISSING_MESSAGES[kind];
   return msg ? jsonError(502, msg, "config_error") : null;
+}
+
+/** Missing-key 502 for a CUSTOM provider.
+ *
+ * `keyMissingError`'s table is keyed by built-in route kinds, and a custom
+ * provider's credential comes from its own record (an inline value, or a named
+ * Worker secret resolved against this deployment's env) — so the message must
+ * name the provider and the exact thing an operator has to set. The alternative
+ * is the request going out HEADERLESS and coming back as a bare "Upstream 401"
+ * from a host the operator may not control. */
+export function providerKeyMissingError(provider: ProviderSpec | undefined): Response {
+  const name = provider?.prefix || "custom provider";
+  const hint = provider?.apiKeyEnv
+    ? `${provider.apiKeyEnv} is not set in this deployment — add the Worker secret, or re-register the provider with an inline apiKey`
+    : "the provider record carries no key — re-register it with apiKey or apiKeyEnv";
+  return jsonError(502, `${name}: no provider key — ${hint}`, "config_error");
 }
 
 /**
@@ -689,18 +707,26 @@ async function handleGatewayImpl(
   if (method === "GET" && path.endsWith("/models")) {
     // THE ADVERTISED SET, not the compiled constant: models disabled or added from
     // the console must appear here immediately, because this is what clients read
-    // before they choose anything.
+    // before they choose anything. Custom PROVIDER models come through the same
+    // merge (store/models.ts's extraModelEntries), so the ids a client reads and
+    // the ids a route can be set to cannot drift apart.
     const live = await advertisedIds(env);
     const off = new Set(MODELS.map((m) => m.id).filter((id) => !live.includes(id)));
-    const extra = (await customModels(env)).map((m) => ({ id: m.id, owned_by: m.ownedBy }));
+    const extra = await extraModelEntries(env);
     const entries = [...MODELS.filter((m) => !off.has(m.id)), ...extra];
     return jsonOk({
       object: "list",
-      data: entries.map((m, i) => ({
+      data: entries.map((m: any, i) => ({
         id: m.id,
         object: "model",
         created: 1785000000 + i,
         owned_by: m.owned_by,
+        // Facets only a CUSTOM PROVIDER model declares. A client can use them
+        // (DSH's discovery reads context_window/max_tokens off this listing);
+        // built-in entries stay exactly as they were.
+        ...(m.name ? { name: m.name } : {}),
+        ...(m.context_window ? { context_window: m.context_window } : {}),
+        ...(m.max_tokens ? { max_tokens: m.max_tokens } : {}),
       })),
     });
   }
@@ -797,7 +823,11 @@ async function handleGatewayImpl(
   // round-94: normalize — an explicit OFF is persisted as "0" (truthy as a
   // string); raw truthiness would treat it as ON.
   const usProxy = forceUsProxy || globalSettingEnabled(usProxyRaw) ? "1" : null;
-  const baseRoute = pickRoute(prefix2, env, usProxy);
+  // CUSTOM PROVIDERS live one layer below ROUTE_TABLE (see upstream.ts's
+  // resolveRoute): a built-in prefix resolves exactly as before and costs no
+  // registry read; a prefix only a `providers:custom` record knows resolves to
+  // that record; anything else keeps falling through to defaultRoute.
+  const baseRoute = await resolveRoute(env, prefix2, usProxy);
   let upstreamModel = wireModelName(
     prefix2,
     stripBracket(baseRoute.stripPrefix ? effectiveModel.slice(prefix2.length + 1) : effectiveModel),
@@ -817,6 +847,20 @@ async function handleGatewayImpl(
     baseRoute.kind === "opencode" && OG_NATIVE_ANTHROPIC.has(upstreamModel) && !usProxy
       ? { ...baseRoute, type: "passthrough", upstream: OG_ZEN_ANTHROPIC }
       : baseRoute;
+
+  // An UNROUTABLE custom-provider record fails LOUDLY, before any arm can dial
+  // anything. resolveRoute refuses to fall through to the default channel for
+  // such a record (see providerRoute): silently sending the model to the
+  // built-in default would answer from a channel the caller never asked for,
+  // under a key it never configured. This is the only place the refusal becomes
+  // a response, and it happens before the body, the key and the upstream.
+  if (route.type === "error") {
+    return jsonError(
+      502,
+      route.reason || `custom provider ${prefix2} is misconfigured`,
+      "config_error",
+    );
+  }
 
   // zen/go requires a stable per-conversation x-opencode-session on every
   // request (2026-09-05+; 400 "Request is missing x-opencode-session"
@@ -935,7 +979,12 @@ async function handleGatewayImpl(
       body.tool_choice = { type: "tool", name: "web_search" };
     }
     const webSearchToolChoice = isForcedWebSearch(body?.tool_choice);
-    if (webSearchToolChoice && body && route.kind !== "commandgoat") {
+    // The swap below re-points the request at zen/go (og/ Flash lane) and
+    // rewrites route.kind to "opencode". A CUSTOM provider must never be part of
+    // that: its operator declared the endpoint, and hijacking the request to
+    // zen would send the user's OpenCode key to answer a question addressed to
+    // their own provider. Same reason commandgoat is excluded.
+    if (webSearchToolChoice && body && route.kind !== "commandgoat" && route.kind !== "custom") {
       // A caller that already names a search-capable Flash-line model KEEPS it
       // (2026-09-10): zen/go runs web_search natively on the version-less lane
       // slug `deepseek-flash` that og/deepseek-v4.1-flash remaps to
@@ -984,6 +1033,10 @@ async function handleGatewayImpl(
     // answer image questions. count_tokens skips this. (body is null when the
     // raw scan found no web_search/image triggers — nothing to preprocess.)
     if (body) {
+      // A custom provider's own model record may DECLARE image input (DSH's
+      // `input: [text, image]`). Describing the image with the gateway's vision
+      // model would then replace a picture the target model can see itself with
+      // a lossy summary — and cost an extra upstream call to do it.
       const prep = await preprocessImages(
         body.messages,
         env,
@@ -991,6 +1044,7 @@ async function handleGatewayImpl(
         model,
         upstreamModel,
         user?.id || "",
+        route.kind === "custom" && providerModelVision(route.provider, upstreamModel),
       );
       if (prep.changed) body.messages = prep.messages;
     }
@@ -1008,22 +1062,31 @@ async function handleGatewayImpl(
   }
   // ds / no prefix use this user's DeepSeek key; qw/ uses their Qwen key;
   // og/ (translate or native) uses their OpenCode Go key — never the DeepSeek key.
+  //
+  // CUSTOM providers come FIRST and deliberately: their credential is the
+  // operator's (the record's inline key or the named Worker secret), never one
+  // of the user's BYOK keys. Falling into the chain below would send this user's
+  // DeepSeek key to a third-party endpoint the operator pointed the prefix at —
+  // a credential leak to an arbitrary host, which is why this branch is not
+  // merely a default.
   const bearerKey =
-    route.kind === "openrouter"
-      ? byok.openRouter
-      : route.kind === "commandgoat"
-        ? byok.cmd
-        : route.kind === "qwen"
-          ? byok.qwen
-          : route.kind === "nvidia"
-            ? byok.nv
-            : route.kind === "gmi"
-              ? byok.gmi
-              : route.kind === "amd"
-                ? byok.amd
-                : route.kind === "opencode"
-                  ? byok.opencodeGo
-                  : byok.deepseek;
+    route.kind === "custom"
+      ? providerKey(env, route.provider)
+      : route.kind === "openrouter"
+        ? byok.openRouter
+        : route.kind === "commandgoat"
+          ? byok.cmd
+          : route.kind === "qwen"
+            ? byok.qwen
+            : route.kind === "nvidia"
+              ? byok.nv
+              : route.kind === "gmi"
+                ? byok.gmi
+                : route.kind === "amd"
+                  ? byok.amd
+                  : route.kind === "opencode"
+                    ? byok.opencodeGo
+                    : byok.deepseek;
 
   // ---- POST /v1/chat/completions (OpenAI format passthrough) ----
   // Accepts OpenAI-format requests directly and forwards to the upstream
@@ -1038,6 +1101,8 @@ async function handleGatewayImpl(
         return keyMissingError(kind) as Response;
       }
     }
+    // A custom provider with no resolvable key would go out headerless.
+    if (route.kind === "custom" && !bearerKey) return providerKeyMissingError(route.provider);
     {
       const dg = await channelDegradedError(env, route.kind);
       if (dg) return dg;
@@ -1379,11 +1444,31 @@ async function handleGatewayImpl(
   // reasoning param — mirror the or/ rule on this translate path: respect a
   // client-sent reasoning, else default effort=max (2026-08-22). Claude Code's
   // Anthropic `thinking` param is not mapped; the default covers it.
-  if (reasoningMaxParsedFor(upstreamModel) && openaiReq.reasoning === undefined) {
+  //
+  // NOT for a custom provider: these facets are looked up BY WIRE NAME
+  // (channels.ts's wireSpec strips the channel), so a provider model that
+  // happens to reuse an og/ wire spelling would inherit that og/ model's
+  // reasoning default. A provider-declared route carries no built-in facets.
+  if (
+    route.kind !== "custom" &&
+    reasoningMaxParsedFor(upstreamModel) &&
+    openaiReq.reasoning === undefined
+  ) {
     openaiReq.reasoning = { effort: "max" };
   }
-  const translateKey = route.kind === "commandgoat" ? byok.cmd : byok.opencodeGo;
-  const translateLabel = route.kind === "commandgoat" ? "cm" : "og";
+  const translateKey =
+    route.kind === "custom" ? bearerKey : route.kind === "commandgoat" ? byok.cmd : byok.opencodeGo;
+  // Same rule as the bearer chain above: a custom provider is its own channel,
+  // so its label must name it (the label rides every upstream-error message this
+  // arm produces) instead of claiming to be og/ or cm/.
+  const translateLabel =
+    route.kind === "custom"
+      ? route.provider?.prefix || "custom"
+      : route.kind === "commandgoat"
+        ? "cm"
+        : "og";
+  // Headerless guard for the same reason as the chat arm's.
+  if (route.kind === "custom" && !translateKey) return providerKeyMissingError(route.provider);
   const { response: upstream, detail } = await fetchWithRetry(
     route.upstream,
     {

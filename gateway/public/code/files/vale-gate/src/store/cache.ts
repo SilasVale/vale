@@ -42,6 +42,13 @@ const AUTH_PREFIXES = [
   "devices:",
   "plugins:",
   "cf:",
+  // "providers:" (2026-09-13): a custom provider record carries a credential and
+  // an egress DESTINATION. A deleted or re-pointed provider must stop being
+  // dialled within a minute on every isolate, not within a day — the same
+  // argument that put devices:/plugins: here. The read cost is bounded because
+  // resolveRoute only consults this key for prefixes the built-in ROUTE_TABLE
+  // does not know, so no built-in traffic pays for it.
+  "providers:",
 ];
 const __c = new Map<string, { v: any; exp: number }>(); // kvKey -> { v, exp }; v may be null (cached "not found")
 export function cget(k: string): any {
