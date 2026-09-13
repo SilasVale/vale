@@ -519,7 +519,49 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 94 (a leaked panel grant could be redeemed TWICE — and the
+Last updated: 2026-09-13 round 95 (THE AUDIT IS EXHAUSTED — the last substantive finding
+from the two subagent audits: the SSRF guard stack DOCUMENTED a suffix allowlist that never
+ran at dial time).
+Commit: ce6b217c (DEPLOYED, verified live). CI green.
+  (1) `device-fetch.ts`'s OWN DOCSTRING lists the guard stack as authority-prefix
+  sanitization -> parsed-hostname equality -> private-IP blocklist -> THE SUFFIX ALLOWLIST
+  (DEVICE_HOST_SUFFIX) -> header hygiene -> bounded fetch. That plank was never there:
+  `deviceFetch(_env, ...)` took the env and NEVER USED IT. The allowlist ran only at
+  REGISTRATION — which is precisely how it failed, since two admin write paths skipped even
+  that (round 89), so a record with a hostile hostname could exist and the dialler would
+  send the device's token to it. One `hostAllowError(device.hostname, env)` at the top of the
+  dial path now: the check that cannot be bypassed by a path someone forgot to guard.
+  (2) IT MOVED MODULE, and that was the point: the guard lived in `plugins/devices.ts`, and
+  `device-fetch.ts` is the leaf that devices.ts imports — so importing it back would be a
+  cycle in the one module whose docstring exists to say it keeps the graph acyclic. It lives
+  in device-fetch.ts now and devices.ts imports it: the guard belongs with the dialler. Its
+  unit test follows it rather than duplicating it.
+  (3) THE STALE PARAGRAPH BESIDE IT WAS WRONG IN THE OTHER DIRECTION TOO — "known
+  characteristic, accepted: fetch follows redirects, so a device could 302 the gateway
+  toward another PUBLIC host". Round 90 made that false, and the reasoning was wrong anyway:
+  Cloudflare forwards Authorization to a cross-host Location, so the risk was the device's
+  TOKEN, not merely the destination.
+  (4) MUTATION TESTING FOUND MY TEST PROVING NOTHING FOR THE THIRD TIME THIS SESSION: the
+  first version of the new test passed with the check DISABLED, because I had made the
+  fixture a VALID hostname — so nothing exercised the refusal. The real test is the LEGACY
+  RECORD case (a record outside the allowlist must not be dialled at all, and the refusal
+  REJECTS with the reason rather than silently no-opping), plus a positive case. Disabling
+  the guard fails it (20/1); restoring passes (21/0).
+  (5) TWO EXISTING FIXTURES HAD TO CHANGE because they were unrealistic: a real device cannot
+  be registered under `example.com`, and `mcp-browser.test.mjs`'s fixture was
+  `d1.example.com`. The new check made that visible.
+  (6) THE AUDIT IS NOW EXHAUSTED. Every finding from both subagent audits has a fix or a
+  recorded verdict. The only item never actioned is panel F5 (the host allowlist is a family
+  match — `devil.agent.saisi.online` passes), recorded as HARDENING ONLY: exploiting it needs
+  control of the saisisi.online DNS zone, and the device's own hostname is on disk
+  (`paths::hostname_file()`) if an exact match is ever wanted.
+  (7) STILL UNRELEASED from rounds 94-95: the device-side grant replay guard and this
+  dial-time guard (the gateway half is deployed; nothing in these two rounds touched the
+  agent, so d1's 1.2.360 remains correct for now).
+  Gates: gateway 794 (was 792) + lint + typecheck + format + mirror, DEPLOYED and verified
+  live; CI green; d1 on 1.2.360.
+
+Previous round: 2026-09-13 round 94 (a leaked panel grant could be redeemed TWICE — and the
 gateway cannot stop that, the device can — plus two things the tests taught, one of which
 was that my first test proved nothing).
 Commit: b7195329. CI green. NOT released.
