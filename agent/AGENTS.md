@@ -519,7 +519,58 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 95 (THE AUDIT IS EXHAUSTED — the last substantive finding
+Last updated: 2026-09-13 round 96 (RELEASED 1.2.361 with the grant replay guard, and TWO
+FRESH subagent audits of surfaces nobody had touched — the memory plugin and the `index/`
+worker — which found a silent TOTAL DATA LOSS, an unpinned binary the installer stages, and
+turned up a foundation crate whose tests CI never ran).
+Commits: 8e801e97 (release), b96462c1 (index), 0fc74e6b (agent-core). Tag v1.2.361;
+release.yml + CI green; audit CLEAN; keep-latest applied (v1.2.361 alone); d1 on 1.2.361.
+  (1) INDEX (audit 4) — `/vale-agent/cloudflared.exe` PROXIED GITHUB `releases/latest`. The
+  bytes of a binary `winmain.rs` SPAWNS were chosen by whatever GitHub marked latest, while
+  the agent's `CLOUDFLARED_SHA256` pin only holds "while `latest` stays 2026.8.3" (that
+  file's own admission). Upstream moving a release made the proxy serve bytes the pin
+  rejects: the ON-DEMAND path failed closed, and the INSTALLER staged them unverified —
+  `Download-File` accepts any non-empty body, `vale.ts` copies on `existsSync`, and
+  `grep Get-FileHash agent/deploy scripts/` returns ZERO hits. It now uses the VERSIONED
+  asset path, which GitHub guarantees is immutable. VERIFIED LIVE: the proxy serves
+  54,841,128 bytes hashing to
+  `83e726ed18ea78c5ad5213c4c3a3a27051393950d2bc8ed4de69bec12d14eaae` — EXACTLY the agent's
+  pin. Two tests, both mutation-proven: one forbids `releases/latest`, one READS
+  `agent/src/tunnel.rs` and requires the two `CLOUDFLARED_VERSION` constants to be equal,
+  because a drift IS the bug.
+  (2) MEMORY (audit 3) — `retention_days: 0` SILENTLY DELETED THE WHOLE STORE. The
+  zero-means-absent rule applied to `max_entries` and `max_bytes` and NOT to
+  `retention_days`: cutoff becomes NOW, every record is tombstoned, and the startup
+  `compact()` rewrites the file from survivors — permanent. `retention_days: 0` is the
+  NATURAL way to write "keep forever", and the settings API already agreed it means absent.
+  The same family's `days * 86400` overflow (panics in debug, WRAPS in release: 2^57 days is
+  exactly 0 mod 2^64) is now `.min(36_500).saturating_mul(86_400)`.
+  (3) THE BIGGER FINDING UNDERNEATH IT: CI RAN `cargo test -p vale-agent` AND NEVER
+  `-p vale-agent-core`, a crate AGENTS.md names as a FOUNDATION module. Its 29 tests reported
+  nothing, and this round showed what had accumulated: a STALE ASSERTION pinning
+  `ServerConfig::default().host == "127.0.0.2"` — a claim the code's own comment 240 lines
+  above records as DISPROVEN (`netstat` on d1 shows the listener on 127.0.0.1:18080), the
+  code corrected and the test left behind, failing unrun — and a clippy failure
+  (`assert!` on constants, now a `const { assert!(..) }`, which is better: the build should
+  fail rather than a test someone may not be running). CI now tests AND lints both crates.
+  (4) VERIFIED ON THE DEVICE: `release: 1.2.361`, `this device is current`.
+  (5) STILL OPEN from these two audits, ranked: memory F1 the sanitizer detects credential
+  NAMES but no credential SHAPES (40-hex, JWT, PEM blocks, URL-embedded passwords, AKIA,
+  ghp_, unmarked base64 all stored raw) and the JSON fast path RETURNS EARLY at
+  `sanitize.rs:74`, suppressing a detection the line pass would have made; memory F3
+  `max_bytes` caps the live-content ledger, not the file, so a repeatedly-edited record
+  grows the file unboundedly while `/api/status` reports the ledger, and one oversized entry
+  evicts the WHOLE store including itself while the tool returns `ok:true`; memory F4
+  `memory_export` is unsanitized and unbounded (up to ~320 MB while holding the store
+  mutex); memory F5 a failed append is reported as a successful save and an unreadable store
+  reads as EMPTY. Index F2 `vale-playwright.zip` (an executed artifact) is served
+  `public, max-age=86400` with no validator; index F3 the three proxy routes lack the file's
+  own failure envelope, so a throwing upstream returns 500 HTML instead of the documented 502.
+  Gates: index 75 (was 73) + deployed; agent-core 29 (was 28 passing / 1 FAILING) + agent
+  memory:: 46 + clippy both crates + fmt + xwin check; release audit CLEAN; CI + release.yml
+  green; d1 on 1.2.361.
+
+Previous round: 2026-09-13 round 95 (THE AUDIT IS EXHAUSTED — the last substantive finding
 from the two subagent audits: the SSRF guard stack DOCUMENTED a suffix allowlist that never
 ran at dial time).
 Commit: ce6b217c (DEPLOYED, verified live). CI green.
