@@ -519,7 +519,41 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 98 (the memory sanitizer detected credential NAMES and no
+Last updated: 2026-09-13 round 99 (`memory_export` skipped the sanitizer entirely — so
+round 98's fix did not cover bytes that predate it — and could build ~320 MB while holding the
+store lock; and MY OWN new code was O(n²), which the test's wall-clock caught).
+Commit: 7adda2b5. CI green. NOT released.
+  (1) REDACTION HAPPENS AT SAVE TIME, SO EXPORT RE-SERVED WHAT IS ON DISK: records written
+  before the sanitizer learned credential SHAPES, records written by an older build, and
+  anything hand-edited into the file. A tool that hands the whole store to another AI client
+  was the ONE path that skipped the redaction the store advertises. It redacts title/content/
+  tags on the way out now — the only boundary that covers bytes predating the check.
+  (2) AND IT WAS UNBOUNDED: one `memory_export` could build ~320 MB inside a single tool
+  result WHILE HOLDING THE STORE GUARD, blocking every writer and `/api/status`. Capped at
+  4 MB, with the truncation REPORTED in the payload (`{"truncated":true,...}`) — a reader must
+  be able to tell a short store from a clipped one.
+  (3) `memory_list`'s `limit` had NO CEILING while `memory_search` has clamped to 50 all
+  along: `{"limit": 10000000}` returned every record's full content. Clamped to the same 50.
+  (4) MY OWN NEW CODE WAS O(n²) AND THE TEST CAUGHT IT: `redact_shapes` called
+  `rest.find("://")` at EVERY position, rescanning the whole remainder each time — 4 MB of
+  content took **113 seconds of CPU** and the suite went 0.04s -> 113s. A scheme is a short
+  alphabetic run, so scanning forward at most 12 bytes is sufficient and linear: **3.34s**, a
+  34x speedup. Every large `memory_save` would have paid it, and only the test's own
+  wall-clock would have said so.
+  (5) MY FIRST MUTATION MISSED: I disabled `title` sanitization while the test's credential
+  lives in `content`, so the suite stayed green and proved nothing. Mutating the field the
+  test checks fails with the leaked token printed (51/1).
+  (6) THE BOUND TEST SEEDS THE FILE DIRECTLY rather than through 131 inserts — filling a 4 MB
+  export that way took 113 seconds on its own (the per-insert path is dominated by
+  `sync_all`), and seeding is the truer model: a store that grew over months, opened once.
+  (7) STILL OPEN from these two audits: memory F5 a failed append is reported as a successful
+  save and an unreadable store reads as EMPTY. Index F2 `vale-playwright.zip` (an executed
+  artifact) is served `public, max-age=86400` with no validator; index F3 the three proxy
+  routes lack the file's own failure envelope.
+  Gates: agent memory:: 52 (was 50) + clippy -D warnings + fmt; agent-core 29; CI green;
+  d1 on 1.2.361.
+
+Previous round: 2026-09-13 round 98 (the memory sanitizer detected credential NAMES and no
 credential SHAPES — while its tool description TELLS THE AI that credential-shaped values are
 redacted — and GitHub's own push protection then caught my test, which is that thesis
 proving itself).
