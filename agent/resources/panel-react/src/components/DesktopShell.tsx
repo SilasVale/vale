@@ -8,11 +8,11 @@
 //
 // The header card and content card sit on a softly-tinted canvas with
 // rounded corners + shadow — the desktop app reads as surfaces, not bars.
-import { releaseVersion } from "../lib/agentVersion";
 import { useEffect, useRef, useState } from "react";
 import { pendingApprovalCount, type Session } from "../hooks/useSessions";
 import { useActiveTabVisible } from "../hooks/useActiveTabVisible";
-import { callApi } from "../lib/api";
+import { useAgentVitals } from "../hooks/useAgentVitals";
+import { VitalsDial } from "./VitalsDial";
 import { IconRail, PAGE_ICONS } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
@@ -132,45 +132,11 @@ export function DesktopShell({
   // overflow arrives sooner.
   const openTabs = sessions.filter((s) => !s.closed);
   const tabsRef = useActiveTabVisible(activeSid, openTabs.length);
-  // stage-n: agent version + vitals for the status strip — /api/status is
-  // polled every 15 s (the electron tray shows the same data; CPU% is a
-  // server-side delta metric so it needs repeated samples to appear).
-  const [agentVersion, setAgentVersion] = useState("");
-  const [agentUptime, setAgentUptime] = useState("");
-  const [agentCpu, setAgentCpu] = useState<number | null>(null);
-  const [agentMem, setAgentMem] = useState<number | null>(null);
-  useEffect(() => {
-    let alive = true;
-    const fmtUptime = (secs: number): string => {
-      if (secs < 60) return `${secs}s`;
-      if (secs < 3600) return `${Math.floor(secs / 60)}m ${secs % 60}s`;
-      if (secs < 86400)
-        return `${Math.floor(secs / 3600)}h ${Math.floor((secs % 3600) / 60)}m`;
-      return `${Math.floor(secs / 86400)}d ${Math.floor((secs % 86400) / 3600)}h`;
-    };
-    const tick = async () => {
-      try {
-        const j = await callApi("/api/status");
-        if (!alive || !j) return;
-        // ONE COPY OF THE RULE now — see lib/agentVersion.ts for why `release` wins
-        // and what happens when two callers each decide for themselves.
-        const v = releaseVersion(j);
-        if (v) setAgentVersion(v);
-        if (typeof j.uptime_secs === "number")
-          setAgentUptime(fmtUptime(j.uptime_secs));
-        if (typeof j.cpu_pct === "number") setAgentCpu(j.cpu_pct);
-        if (typeof j.mem_pct === "number") setAgentMem(j.mem_pct);
-      } catch {
-        /* keep last values — vitals are a nicety */
-      }
-    };
-    void tick();
-    const t = window.setInterval(tick, 15000);
-    return () => {
-      alive = false;
-      window.clearInterval(t);
-    };
-  }, []);
+  // Agent version + vitals for the status strip. THE POLL LIVES IN THE HOOK NOW:
+  // the panel's instrument line reads the same values, and two copies of this fetch
+  // would be two places for the `release` rule to drift — the single defect
+  // lib/agentVersion.ts exists to prevent.
+  const vitals = useAgentVitals();
   // stage-n: native menu page navigation — the electron menu sends
   // vale-menu commands for pages too (open-memory / open-settings /
   // open-plugins); route them to the page state.
@@ -450,9 +416,15 @@ export function DesktopShell({
           )}
           {!showStatus && (
             <div className="desktop-status idle">
+              {/* The dial reads the same vitals the sentence spells out. Two
+                  densities, ONE instrument — the desktop strip is a footer rather
+                  than an instrument line, so the arcs sit beside the text instead of
+                  replacing it. The sentence keeps every value, so nothing here is
+                  colour-only. */}
+              <VitalsDial cpu={vitals.cpu} mem={vitals.mem} size={18} />
               <span className="desktop-status-msg">
                 {connected
-                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${agentVersion ? ` · v${agentVersion}` : ""}${agentUptime ? ` · up ${agentUptime}` : ""}${agentCpu !== null ? ` · CPU ${Math.round(agentCpu)}%` : ""}${agentMem !== null ? ` · MEM ${Math.round(agentMem)}%` : ""}`
+                  ? `${liveCount} session${liveCount === 1 ? "" : "s"}${vitals.release ? ` · v${vitals.release}` : ""}${vitals.uptime ? ` · up ${vitals.uptime}` : ""}${vitals.cpu !== null ? ` · CPU ${Math.round(vitals.cpu)}%` : ""}${vitals.mem !== null ? ` · MEM ${Math.round(vitals.mem)}%` : ""}`
                   : "connecting…"}
               </span>
               <WaitingChip sessions={sessions} />

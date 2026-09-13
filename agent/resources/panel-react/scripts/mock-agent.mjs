@@ -95,7 +95,19 @@ const server = http.createServer((req, res) => {
   if (p === "/api/settings" && req.method === "GET") return json(res, { buffer_mb: 8, console_url: "https://ai.saisi.online", tunnel_configured: true, tunnel_running: true });
   if (p === "/api/settings" && req.method === "PUT") return json(res, { ok: true });
   if (p === "/api/gateway/connect") return json(res, { ok: true, registered: true, tunnel: "running" });
-  if (p === "/api/status") return json(res, { ok: true, version: "1.0.110", serial_ports: [] });
+  // Vitals ride the same payload the real agent sends (`agent/src/metrics.rs`):
+  // cpu_pct is a server-side DELTA, so a first-sample gap is the real behaviour and
+  // the instrument must be judged with a populated one.
+  if (p === "/api/status")
+    return json(res, {
+      ok: true,
+      version: "1.0.110",
+      release: "1.2.361",
+      uptime_secs: 8040,
+      cpu_pct: 23.4,
+      mem_pct: 61.2,
+      serial_ports: [],
+    });
 
   // ---- static panel ----
   let file = p === "/" || p === "/panel" || p === "/panel/" || p === "/desktop" || p === "/desktop/" ? "/index.html" : p;

@@ -2356,7 +2356,12 @@
   .traj-round,
   .traj-round-head,
   .traj-chev,
-  .traj-ev-dot { transition: none; animation: none; }
+  .traj-ev-dot,
+  /* The instrument's arcs ease to a new reading; under reduced motion they jump,
+     which is exactly as informative and costs nothing. Listed explicitly because an
+     un-listed transition is how the state palette once ended up with three dots that
+     differed ONLY by animation (round-161). */
+  .dial-arc { transition: none; animation: none; }
 }
 
 /* ── Settings page (semantic rows; replaces the old inline styles) ── */

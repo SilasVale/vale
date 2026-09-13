@@ -18,7 +18,20 @@ const stylesDir = path.join(root, "src", "styles");
 // panel-react's PARENT (agent/resources/) panel dir.
 const outFile = path.join(root, "..", "panel", "panel.css");
 
-const ORDER = ["tokens.css", "base.css", "components.css", "layout.css", "desktop.css"];
+// Order matters and is not alphabetical: tokens define every custom property the
+// later sheets read, and the undefined-reference check below scans the FIRST :root
+// block, so a sheet listed before tokens.css would be checked against an empty
+// scale. dial.css sits with components — it is component-level styling — and
+// anything added here MUST also be added to this list or it never reaches the
+// output at all (the old inline copy block is gone; there is one pipeline).
+const ORDER = [
+  "tokens.css",
+  "base.css",
+  "components.css",
+  "dial.css",
+  "layout.css",
+  "desktop.css",
+];
 
 const parts = ORDER.map((f) => {
   const p = path.join(stylesDir, f);

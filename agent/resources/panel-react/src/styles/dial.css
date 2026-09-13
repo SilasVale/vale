@@ -1,0 +1,70 @@
+/* ============================================================
+   Instrument — the vitals dial and the line it sits on.
+   A separate sheet from components.css because it is a distinct
+   concern with its own vocabulary, and because the concatenation
+   ORDER in scripts/build-css.mjs is where a new sheet has to be
+   declared (an unlisted file simply never reaches the build).
+   ============================================================ */
+
+/* ── the instrument line (the bottom strip, panel density) ──────────────
+   It used to carry one sentence and a session count. It now reads like the
+   bottom of an instrument panel: the dial, the two readings in tabular
+   figures, then the human sentence. Nothing was removed — the status text and
+   the session count are still there, to the right. */
+.instrument {
+  display: inline-flex;
+  align-items: center;
+  gap: 10px;
+  margin-right: 4px;
+}
+.instrument-reading {
+  display: inline-flex;
+  align-items: baseline;
+  gap: 4px;
+}
+/* The label is chrome, the value is data: different sizes AND different weights, so
+   the pair reads as a caption over a number rather than as one grey sentence. */
+.instrument-label {
+  font-size: var(--fs-2xs);
+  font-weight: var(--fw-medium);
+  letter-spacing: var(--tracking-micro);
+  text-transform: uppercase;
+  /* --chrome-ink-dim, NOT --chrome-ink-faint: the faint weight is a MARK colour
+     (dots, borders) and is asserted unusable as text by themeContrast.test.ts. */
+  color: var(--chrome-ink-dim);
+}
+.instrument-value {
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
+  color: var(--chrome-ink);
+  font-variant-numeric: tabular-nums;
+}
+.instrument-divider {
+  width: 1px;
+  height: 12px;
+  background: var(--chrome-line);
+  flex: none;
+}
+
+/* ── the dial ─────────────────────────────────────────────────────────── */
+.vitals-dial {
+  display: inline-flex;
+  flex: none;
+}
+.dial-track {
+  stroke: var(--chrome-line);
+}
+.dial-arc {
+  stroke: var(--state-ok);
+  transition:
+    stroke-dashoffset var(--ds-transition-duration-slow) var(--ds-ease-in-out),
+    stroke var(--ds-transition-duration) var(--ds-ease-in-out);
+}
+/* Bands, not decoration: the arc's colour is a second channel over a value that is
+   also printed as a number, so losing the hues loses nothing. */
+.dial-arc[data-tone="warn"] {
+  stroke: var(--state-warn);
+}
+.dial-arc[data-tone="crit"] {
+  stroke: var(--state-fail);
+}

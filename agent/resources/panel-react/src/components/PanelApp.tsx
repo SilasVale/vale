@@ -8,6 +8,7 @@ import { IconRail } from "./IconRail";
 import { Shell, type Page } from "./Shell";
 import { ContextRail } from "./ContextRail";
 import { StatusBar } from "./StatusBar";
+import { useAgentVitals } from "../hooks/useAgentVitals";
 import { TerminalWorkspace, type CommandEvents } from "./TerminalWorkspace";
 import { ArchivePage } from "./ArchivePage";
 import { ActivityPage } from "./ActivityPage";
@@ -64,6 +65,8 @@ interface Props {
 }
 
 export function PanelApp(props: Props) {
+  // Device vitals for the instrument line: ONE owner for the poll (see the hook).
+  const vitals = useAgentVitals();
   const [page, setPage] = useState<Page>("terminal");
   const connected = props.sseState === "connected";
 
@@ -96,6 +99,7 @@ export function PanelApp(props: Props) {
             sessions={props.sessions}
             status={props.status}
             sseState={props.sseState as "connected" | "down" | "connecting"}
+            vitals={vitals}
           />
         }
         canvas={
