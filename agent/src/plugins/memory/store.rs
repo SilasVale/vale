@@ -180,6 +180,12 @@ struct Inner {
     /// Total content bytes (for max_bytes eviction).
     total_bytes: usize,
     dirty: bool,
+    /// THE FILE COULD NOT BE READ AT STARTUP. `load` used to treat ANY read error as "the
+    /// store is empty" — the "failed read reported as absence" family, and here it is
+    /// DESTRUCTIVE: the in-memory index is empty, and the next `compact()` rewrites the file
+    /// from that empty index, permanently ERASING a store that was merely unreadable
+    /// (EACCES, EBUSY, a share violation during a backup). Compaction is refused while set.
+    load_failed: bool,
 }
 
 /// What to search for. A STRUCT rather than positional arguments because
@@ -205,6 +211,8 @@ impl MemoryStore {
             dir,
             limits: RwLock::new(limits),
             inner: Mutex::new(Inner {
+                // Set by `load` when the file exists but cannot be read.
+                load_failed: false,
                 by_id: HashMap::new(),
                 order: Vec::new(),
                 tag_index: HashMap::new(),
@@ -256,8 +264,21 @@ impl MemoryStore {
         // A torn write can cut a multi-byte UTF-8 sequence in half — one
         // invalid byte must not hide the WHOLE store (read_to_string fails
         // then), so decode lossy and let the per-line parse skip junk.
-        let Ok(bytes) = std::fs::read(self.file_path()) else {
-            return;
+        let bytes = match std::fs::read(self.file_path()) {
+            Ok(b) => b,
+            Err(e) if e.kind() == std::io::ErrorKind::NotFound => return,
+            Err(e) => {
+                // UNREADABLE IS NOT EMPTY, and here the difference is destructive: the
+                // index stays empty and a later compact() would rewrite the file from it.
+                tracing::error!(
+                    "memory: could NOT read {} ({e}) -- treating the store as DEGRADED, not \
+                     empty; compaction is refused so an unreadable file is never overwritten",
+                    self.file_path().display()
+                );
+                let mut guard = recover_guard(&self.inner);
+                guard.load_failed = true;
+                return;
+            }
         };
         let text = String::from_utf8_lossy(&bytes);
         let mut guard = recover_guard(&self.inner);
@@ -312,8 +333,13 @@ impl MemoryStore {
         guard.dirty = false;
     }
 
-    /// Append one line to the JSONL (best-effort).
-    fn append_line(&self, line: &str) {
+    /// Append one line to the JSONL. Returns whether the record REACHED DISK.
+    ///
+    /// IT USED TO RETURN NOTHING and discarded every failure (`Err(_) => return`,
+    /// `let _ = writeln!`), so a save that only ever lived in memory answered
+    /// `{"ok":true,...}` and then vanished at the next restart. A store that cannot persist
+    /// must say so, and the tool result is where it says it.
+    fn append_line(&self, line: &str) -> bool {
         use std::io::Write;
         let path = self.file_path();
         let mut f = match std::fs::OpenOptions::new()
@@ -322,17 +348,31 @@ impl MemoryStore {
             .open(&path)
         {
             Ok(f) => f,
-            Err(_) => return,
+            Err(e) => {
+                tracing::error!("memory: could not open {} for append ({e})", path.display());
+                return false;
+            }
         };
         // Crash-safety rules (version header on a fresh file, torn-final-line
         // repair) are owned by crate::jsonl — see its header for the
         // fused-record incident that motivated them.
-        let _ = crate::jsonl::prepare_append(
+        if let Err(e) = crate::jsonl::prepare_append(
             &mut f,
             &path,
             &serde_json::json!({ "type": HEADER_TYPE, "version": HEADER_VERSION }),
-        );
-        let _ = writeln!(f, "{line}");
+        ) {
+            tracing::error!("memory: append preparation failed ({e})");
+            return false;
+        }
+        if let Err(e) = writeln!(f, "{line}") {
+            tracing::error!("memory: write failed ({e}) -- the record is NOT persisted");
+            return false;
+        }
+        if let Err(e) = f.flush() {
+            tracing::error!("memory: flush failed ({e}) -- the record is NOT persisted");
+            return false;
+        }
+        true
     }
 
     /// Compact when tombstones dominate (≥ half of all records) — the eager
@@ -361,8 +401,23 @@ impl MemoryStore {
     /// compact never truncates the store). The append-only file would
     /// otherwise grow forever with tombstones (stage-n; the header comment
     /// promised compaction but none existed).
+    /// True when the store could not be read at startup — see `Inner::load_failed`.
+    pub fn is_load_failed(&self) -> bool {
+        recover_guard(&self.inner).load_failed
+    }
+
     pub fn compact(&self) -> usize {
         let mut guard = recover_guard(&self.inner);
+        // NEVER REWRITE A FILE WE COULD NOT READ: the in-memory index is empty when the load
+        // failed, so a compaction would ERASE the store. Refusing is the point of the flag —
+        // a compact that ran anyway would make it decoration.
+        if guard.load_failed {
+            tracing::error!(
+                "memory: refusing to compact -- the store could not be read at startup, so \
+                 the in-memory index is empty and rewriting would ERASE the file"
+            );
+            return 0;
+        }
         let before = guard.by_id.len();
         // Drop deleted records from the index + tag index.
         let removed: Vec<String> = guard
@@ -440,7 +495,12 @@ impl MemoryStore {
     }
 
     /// Insert a new record; returns its id. Enforces content cap (truncate).
-    pub fn insert(&self, mut rec: MemoryRecord) -> String {
+    /// `None` means THE RECORD WAS NOT PERSISTED — it lives in memory only and disappears at
+    /// the next restart. The caller must not answer `ok:true` for it.
+    ///
+    /// Every append failure used to be discarded, so a save that never reached disk was
+    /// reported as a success and then silently lost.
+    pub fn insert(&self, mut rec: MemoryRecord) -> Option<String> {
         // TRUNCATE TO WHICHEVER CAP IS TIGHTER — the per-record one, or the store's whole
         // byte budget.
         //
@@ -462,13 +522,16 @@ impl MemoryStore {
         rec.tags.retain(|t| !t.trim().is_empty());
         let id = rec.id.clone();
         let line = serde_json::to_string(&rec).unwrap_or_default();
+        // Declared OUTSIDE the guard block: whether the append reached disk is what the
+        // caller must be told, and the guard's scope ends long before the return.
+        let durable;
         {
             let mut guard = recover_guard(&self.inner);
             // append inside the guard: a concurrent compact() renames the
             // file under its own lock — an append outside it could land on
             // the OLD inode and be destroyed while the record sits in memory
             // (lost at next restart).
-            self.append_line(&line);
+            durable = self.append_line(&line);
             if let Some(prev) = guard.by_id.insert(id.clone(), rec.clone()) {
                 Self::ledger_adjust(&mut guard, Some(&prev), Some(&rec));
             } else {
@@ -486,7 +549,7 @@ impl MemoryStore {
         // PROTECT the record just saved: a save must never evict its own result.
         self.enforce_limits_protecting(Some(id.as_str()));
         self.compact_if_tombstone_heavy();
-        id
+        durable.then_some(id)
     }
 
     /// Update an existing record's fields (title/content/tags/namespace).
@@ -550,9 +613,12 @@ impl MemoryStore {
             }
             guard.dirty = true;
         }
-        // Append the updated line (best-effort; index already updated).
+        // Append the updated line. The index is already updated either way, but a failed
+        // append means the edit is memory-only — say so rather than implying durability.
         let line = serde_json::to_string(&rec).unwrap_or_default();
-        self.append_line(&line);
+        if !self.append_line(&line) {
+            tracing::error!("memory: update of {id} is NOT persisted -- it exists in memory only");
+        }
         self.enforce_limits();
         // stage-n: tombstones reclaimed eagerly once they dominate — soft
         // deletes would otherwise accumulate in memory + JSONL forever
@@ -878,7 +944,12 @@ impl MemoryStore {
         }
         drop(guard);
         for line in persist {
-            self.append_line(&line);
+            if !self.append_line(&line) {
+                tracing::error!(
+                    "memory: a tombstone is NOT persisted -- an evicted record can RESURRECT \
+                     at the next load"
+                );
+            }
         }
     }
 }
@@ -903,6 +974,53 @@ fn truncate_utf8(s: &str, max: usize) -> String {
     // Boundary decision owned by crate::text (SOLID R105); the "…" marker is
     // this caller's wording.
     format!("{}…", crate::text::clip(s, max - MARKER.len()))
+}
+
+/// TEST-ONLY seams, in ONE `#[cfg(test)]` block so neither trait can be compiled without
+/// the other and a stray attribute cannot gate half of them. (The previous arrangement had
+/// `InsertOk` gated and `Degrade` not, which the lint caught immediately.)
+#[cfg(test)]
+pub(crate) mod test_support {
+    use super::*;
+
+    /// Save a record in a test, asserting it was PERSISTED.
+    ///
+    /// `insert` returns `Option` because a failed append must be visible to the caller.
+    /// Tests use ordinary temp dirs where persistence cannot fail, so this keeps them
+    /// readable — and the assertion is not decoration: a test that sets up an unwritable
+    /// store fails here rather than silently exercising the lost-record path.
+    pub(crate) trait InsertOk {
+        fn insert_ok(&self, rec: MemoryRecord) -> String;
+    }
+    impl InsertOk for MemoryStore {
+        fn insert_ok(&self, rec: MemoryRecord) -> String {
+            self.insert(rec)
+                .expect("the record must be PERSISTED in a test store")
+        }
+    }
+    /// Tests hold the store behind an `Arc` as often as not; a trait method does not
+    /// auto-deref for resolution.
+    impl InsertOk for std::sync::Arc<MemoryStore> {
+        fn insert_ok(&self, rec: MemoryRecord) -> String {
+            self.insert(rec)
+                .expect("the record must be PERSISTED in a test store")
+        }
+    }
+
+    /// Force the degraded state. The GUARD is a separate claim from "`load` detects a read
+    /// failure", and testing it through a real read failure does not work: the index is then
+    /// empty, so compaction has nothing to rewrite and would be a no-op even with the guard
+    /// removed — two earlier versions of that test passed under mutation for exactly that
+    /// reason.
+    pub(crate) trait Degrade {
+        fn mark_load_failed_for_test(&self);
+    }
+    impl Degrade for MemoryStore {
+        fn mark_load_failed_for_test(&self) {
+            let mut guard = recover_guard(&self.inner);
+            guard.load_failed = true;
+        }
+    }
 }
 
 #[cfg(test)]
@@ -943,9 +1061,9 @@ mod tests {
             updated_at: crate::unix_now(),
             deleted: false,
         };
-        store.insert(mk("alpha", &["net", "urgent"]));
-        store.insert(mk("beta", &["net"]));
-        store.insert(mk("gamma", &["db"]));
+        store.insert_ok(mk("alpha", &["net", "urgent"]));
+        store.insert_ok(mk("beta", &["net"]));
+        store.insert_ok(mk("gamma", &["db"]));
 
         let all = store.search(SearchQuery {
             text: "shared",
@@ -1004,7 +1122,7 @@ mod tests {
         std::fs::create_dir_all(&dir).unwrap();
         std::fs::write(dir.join("memory.jsonl"), b"{\"id\":\"m-a\",\"title\":\"hel").unwrap();
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        store.insert(rec("b", "body-b"));
+        store.insert_ok(rec("b", "body-b"));
         drop(store);
         // Reload: "b" must be present (its line survived the repair), the
         // torn fragment is simply skipped.
@@ -1069,9 +1187,9 @@ mod tests {
         let mut c = rec("newest", "N");
         c.updated_at = 300;
         c.created_at = 300;
-        store.insert(a);
-        store.insert(b);
-        store.insert(c);
+        store.insert_ok(a);
+        store.insert_ok(b);
+        store.insert_ok(c);
         let live_ids: Vec<String> = store
             .list(None, None, 50, false)
             .into_iter()
@@ -1124,7 +1242,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vale-mem-ledger-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        let id = store.insert(rec("doc", "abc"));
+        let id = store.insert_ok(rec("doc", "abc"));
         assert_eq!(store.total_bytes_live(), 3, "insert maintains it");
 
         // An edit that GROWS the content must raise the ledger with it.
@@ -1164,7 +1282,7 @@ mod tests {
         // invisible — mutation testing proved it: counting the `prev` term
         // regardless of its deleted flag left the suite GREEN until a live
         // record made the over-subtraction observable.
-        let bystander = store.insert(rec("bystander", "0123456789")); // 10 live bytes
+        let bystander = store.insert_ok(rec("bystander", "0123456789")); // 10 live bytes
         store.update(&id, None, None, None, None, Some(false)); // restore: +2
         assert_eq!(store.total_bytes_live(), 12, "2 restored + 10 bystander");
 
@@ -1217,15 +1335,15 @@ mod tests {
             retention_days: None,
         };
         let store = MemoryStore::new(dir.clone(), limits);
-        let a = store.insert(rec("keeper", "12345678")); // 8 bytes
-        let b = store.insert(rec("doomed", "12345678")); // 16 total
+        let a = store.insert_ok(rec("keeper", "12345678")); // 8 bytes
+        let b = store.insert_ok(rec("doomed", "12345678")); // 16 total
         assert_eq!(store.total_bytes_live(), 16);
 
         // B is soft-deleted. Real live usage is now 8, well under the cap.
         store.update(&b, None, None, None, None, Some(true));
 
         // Room for one more 8-byte record with 4 bytes to spare.
-        store.insert(rec("later", "12345678"));
+        store.insert_ok(rec("later", "12345678"));
 
         assert!(
             store.get(&a, false).is_some(),
@@ -1242,7 +1360,7 @@ mod tests {
         let dir = std::env::temp_dir().join(format!("vale-mem-total-{}", std::process::id()));
         let _ = std::fs::remove_dir_all(&dir);
         let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        let id = store.insert(rec("doc", "v1-content"));
+        let id = store.insert_ok(rec("doc", "v1-content"));
         for i in 0..10 {
             store.update(
                 &id,
@@ -1256,7 +1374,7 @@ mod tests {
         let expected = store.get(&id, false).unwrap().content.len();
         drop(store);
         let store2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
-        store2.insert(rec("probe", "x")); // touches enforce; total recomputed on load
+        store2.insert_ok(rec("probe", "x")); // touches enforce; total recomputed on load
         let live_total = store2.total_bytes_live();
         assert_eq!(
             live_total,
@@ -1284,7 +1402,7 @@ mod tests {
     #[test]
     fn insert_and_get() {
         let (s, dir) = tmp_store("insert_get");
-        let id = s.insert(rec("hello", "world"));
+        let id = s.insert_ok(rec("hello", "world"));
         assert_eq!(s.get(&id, false).unwrap().title, "hello");
         assert_eq!(s.len(), 1);
         // Persisted to file.
@@ -1296,7 +1414,7 @@ mod tests {
     #[test]
     fn reload_from_disk() {
         let (s, dir) = tmp_store("reload_from_disk");
-        let id = s.insert(rec("persist", "content"));
+        let id = s.insert_ok(rec("persist", "content"));
         drop(s);
         let s2 = MemoryStore::new(dir.clone(), MemoryLimits::default());
         assert_eq!(s2.get(&id, false).unwrap().content, "content");
@@ -1313,7 +1431,7 @@ mod tests {
         let (s, dir) = tmp_store("run_id_round_trip");
         let mut stamped = rec("from a run", "learned mid-execution");
         stamped.run_id = clean_run_id(Some("  run-1000-abc123  "));
-        let id = s.insert(stamped);
+        let id = s.insert_ok(stamped);
         assert_eq!(
             s.get(&id, false).unwrap().run_id.as_deref(),
             Some("run-1000-abc123"),
@@ -1330,7 +1448,7 @@ mod tests {
         // Every char is 3 bytes, so a byte cut lands inside 汉.
         let mut huge = rec("huge id", "body");
         huge.run_id = clean_run_id(Some(&"汉".repeat(5_000)));
-        let huge_id = s2.insert(huge);
+        let huge_id = s2.insert_ok(huge);
         let stored = s2.get(&huge_id, false).unwrap().run_id.unwrap();
         assert!(
             stored.len() <= RUN_ID_MAX_BYTES,
@@ -1355,7 +1473,7 @@ mod tests {
     #[test]
     fn an_absent_or_blank_run_id_leaves_no_key_at_all() {
         let (s, dir) = tmp_store("run_id_absent");
-        let id = s.insert(rec("no run", "body"));
+        let id = s.insert_ok(rec("no run", "body"));
         assert!(s.get(&id, false).unwrap().run_id.is_none());
         assert_eq!(clean_run_id(None), None);
         assert_eq!(clean_run_id(Some("")), None);
@@ -1413,7 +1531,7 @@ mod tests {
             "an old record must export without the key: {exported}"
         );
         // A mixed log — the old line plus a newly written one — parses whole.
-        store.insert(rec("after", "new body"));
+        store.insert_ok(rec("after", "new body"));
         drop(store);
         let reopened = MemoryStore::new(dir.clone(), MemoryLimits::default());
         assert!(reopened.get("m-old", false).is_some());
@@ -1426,8 +1544,8 @@ mod tests {
         let (s, dir) = tmp_store("search_matches_title_content_tags");
         let mut a = rec("Alpha", "the quick brown fox");
         a.tags = vec!["net".to_string()];
-        let _ = s.insert(a);
-        let _ = s.insert(rec("Beta", "unrelated"));
+        let _ = s.insert_ok(a);
+        let _ = s.insert_ok(rec("Beta", "unrelated"));
         assert_eq!(
             s.search(SearchQuery {
                 text: "quick",
@@ -1476,8 +1594,8 @@ mod tests {
         let (s, dir) = tmp_store("search_multi_word_and_matching");
         let mut a = rec("ConPTY exit", "shell exits hang the session until timeout");
         a.tags = vec!["windows".to_string(), "terminal".to_string()];
-        let _ = s.insert(a);
-        let _ = s.insert(rec("ConPTY resize", "window reflow handling"));
+        let _ = s.insert_ok(a);
+        let _ = s.insert_ok(rec("ConPTY resize", "window reflow handling"));
         // Two terms in different fields (title + content) → match (AND).
         assert_eq!(
             s.search(SearchQuery {
@@ -1554,7 +1672,7 @@ mod tests {
     #[test]
     fn soft_delete_and_restore() {
         let (s, dir) = tmp_store("soft_delete_and_restore");
-        let id = s.insert(rec("doomed", "x"));
+        let id = s.insert_ok(rec("doomed", "x"));
         assert!(s.delete(&id));
         assert!(s.get(&id, false).is_none());
         assert!(s.get(&id, true).is_some());
@@ -1572,7 +1690,7 @@ mod tests {
         // reclaims whatever remains (1) and must be idempotent after.
         let mut ids = Vec::new();
         for i in 0..5 {
-            ids.push(s.insert(rec(&format!("r{i}"), &format!("content{i}"))));
+            ids.push(s.insert_ok(rec(&format!("r{i}"), &format!("content{i}"))));
         }
         for id in &ids[1..] {
             assert!(s.delete(id));
@@ -1609,7 +1727,7 @@ mod tests {
         let (s, dir) = tmp_store("tombstone_restore_threshold");
         // 3 records (below the threshold of 4): a delete stays restorable.
         let ids: Vec<String> = (0..3)
-            .map(|i| s.insert(rec(&format!("small{i}"), "x")))
+            .map(|i| s.insert_ok(rec(&format!("small{i}"), "x")))
             .collect();
         s.delete(&ids[0]);
         assert!(
@@ -1624,7 +1742,7 @@ mod tests {
         // "recoverable ... until compaction" is true only in this sense.
         let (s2, dir2) = tmp_store("tombstone_compacts_at_four");
         let ids2: Vec<String> = (0..4)
-            .map(|i| s2.insert(rec(&format!("big{i}"), "x")))
+            .map(|i| s2.insert_ok(rec(&format!("big{i}"), "x")))
             .collect();
         s2.delete(&ids2[0]);
         s2.delete(&ids2[1]); // 2 of 4 deleted => majority
@@ -1650,9 +1768,9 @@ mod tests {
                 ..Default::default()
             },
         );
-        let a = s.insert(rec("a", "1"));
-        let b = s.insert(rec("b", "2"));
-        let c = s.insert(rec("c", "3"));
+        let a = s.insert_ok(rec("a", "1"));
+        let b = s.insert_ok(rec("b", "2"));
+        let c = s.insert_ok(rec("c", "3"));
         // max_entries=2: the newest (c) and (b) survive; the oldest (a) is
         // soft-deleted.
         assert!(s.get(&a, false).is_none(), "oldest entry must be evicted");
@@ -1670,7 +1788,7 @@ mod tests {
     fn content_truncation() {
         let (s, dir) = tmp_store("content_truncation");
         let long = "x".repeat(DEFAULT_MAX_CONTENT_BYTES + 100);
-        let id = s.insert(rec("t", &long));
+        let id = s.insert_ok(rec("t", &long));
         let rec = s.get(&id, false).unwrap();
         // Truncated to the cap with a "…" suffix (UTF-8 3 bytes).
         assert!(
@@ -1732,8 +1850,8 @@ mod tests {
         // Round-357: the retention branch had ZERO tests — the policy was
         // documented but unreachable in production (config never wired).
         let (s, dir) = retention_store("retention_on_insert", 30);
-        let stale = s.insert(old_rec("stale", 40 * 86400));
-        let fresh = s.insert(rec("fresh", "live body"));
+        let stale = s.insert_ok(old_rec("stale", 40 * 86400));
+        let fresh = s.insert_ok(rec("fresh", "live body"));
         assert!(
             s.get(&stale, false).is_none(),
             "40d-old record must retire under 30d retention"
@@ -1761,7 +1879,7 @@ mod tests {
         // Seed under default limits (no retention): the old record is live.
         let id = {
             let s = MemoryStore::new(dir.clone(), MemoryLimits::default());
-            let id = s.insert(old_rec("stale", 40 * 86400));
+            let id = s.insert_ok(old_rec("stale", 40 * 86400));
             assert!(
                 s.get(&id, false).is_some(),
                 "no retention → old record live"
@@ -1788,7 +1906,7 @@ mod tests {
     fn retention_none_keeps_old_records() {
         // Opt-in documented: default config (retention None) never retires.
         let (s, dir) = tmp_store("retention_none");
-        let id = s.insert(old_rec("ancient", 400 * 86400));
+        let id = s.insert_ok(old_rec("ancient", 400 * 86400));
         assert!(
             s.get(&id, false).is_some(),
             "without retention even year-old records stay live"
@@ -1831,11 +1949,11 @@ fn a_record_bigger_than_the_whole_budget_loses_only_its_tail_not_the_store() {
     };
 
     // Two normal records first: these are what the bug used to erase.
-    let keep_a = store.insert(mk("keeper-a", "aaa".to_string()));
-    let keep_b = store.insert(mk("keeper-b", "bbb".to_string()));
+    let keep_a = store.insert_ok(mk("keeper-a", "aaa".to_string()));
+    let keep_b = store.insert_ok(mk("keeper-b", "bbb".to_string()));
 
     // Now one whose content dwarfs the entire budget.
-    let big = store.insert(mk("huge", "x".repeat(8 * 1024)));
+    let big = store.insert_ok(mk("huge", "x".repeat(8 * 1024)));
 
     let _ = (&keep_a, &keep_b); // evicting them is CORRECT: 1024 + 6 > 1024
 
@@ -1885,8 +2003,8 @@ fn export_redacts_records_stored_before_the_sanitizer_knew_shapes() {
     };
     // Stored AS IF by an older build: the shape is unredacted ON DISK.
     let legacy = format!("ghp_{}", "16C7e42F292c6912E7710c838347Ae178B4a");
-    store.insert(mk("old", legacy.clone()));
-    store.insert(mk(
+    store.insert_ok(mk("old", legacy.clone()));
+    store.insert_ok(mk(
         "old2",
         "postgres://user:s3cret@10.0.0.5:5432/db".to_string(),
     ));
@@ -1948,4 +2066,112 @@ fn export_is_bounded_and_reports_truncation() {
         "naming how many records were left out"
     );
     let _ = std::fs::remove_dir_all(&dir);
+}
+
+#[cfg(test)]
+use self::test_support::{Degrade, InsertOk};
+
+#[cfg(test)]
+mod trailing_tests {
+    use super::*;
+
+    #[test]
+    #[cfg(unix)]
+    fn a_save_that_cannot_be_persisted_reports_that_instead_of_succeeding() {
+        let base = std::env::temp_dir().join(format!("vale-mem-rodir-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&base);
+        std::fs::create_dir_all(&base).unwrap();
+        // `memory.jsonl` must live under a FILE, so opening it for append cannot succeed.
+        let blocked_parent = base.join("not-a-directory");
+        std::fs::write(&blocked_parent, b"x").unwrap();
+        let store = MemoryStore::new(blocked_parent.clone(), MemoryLimits::default());
+
+        let blocked = store.insert(MemoryRecord {
+            id: "blocked".into(),
+            title: "blocked".into(),
+            content: "cannot be written".into(),
+            tags: vec![],
+            namespace: "shared".into(),
+            source: "test".into(),
+            run_id: None,
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
+            deleted: false,
+        });
+        assert!(
+            blocked.is_none(),
+            "a save whose append FAILED must report that, not return an id: the caller turns \
+             Some into ok:true"
+        );
+        let _ = std::fs::remove_dir_all(&base);
+    }
+
+    /// AN UNREADABLE STORE IS NOT AN EMPTY ONE — and here the difference is destructive.
+    ///
+    /// `load` treated ANY read error as "no records", so the index was empty; the next
+    /// `compact()` would then rewrite the file from that empty index and PERMANENTLY ERASE a
+    /// store that was merely unreadable (EACCES, EBUSY, a share violation during a backup).
+    #[test]
+    #[cfg(unix)]
+    fn an_unreadable_store_is_marked_degraded_not_empty() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-unreadable-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let path = dir.join("memory.jsonl");
+        // A directory where the JSONL should be: the read fails with EISDIR for every uid.
+        std::fs::create_dir_all(&path).unwrap();
+
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        assert!(
+            store.is_load_failed(),
+            "an unreadable store must be marked DEGRADED -- treating it as empty is what lets a \
+             later compaction erase it"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
+
+    /// THE GUARD ITSELF: once degraded, `compact` must not rewrite the file. Tested through the
+    /// seam rather than a real read failure, because a failed load leaves the index EMPTY — so
+    /// compaction would be a no-op whether or not the guard exists, and an assertion on its
+    /// return value would pass under mutation. This one seeds a record first, so a compaction
+    /// that ran WOULD overwrite the file.
+    #[test]
+    fn a_degraded_store_never_compacts_over_the_file() {
+        let dir = std::env::temp_dir().join(format!("vale-mem-degraded-{}", std::process::id()));
+        let _ = std::fs::remove_dir_all(&dir);
+        std::fs::create_dir_all(&dir).unwrap();
+        let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+        let mk = |id: &str| MemoryRecord {
+            id: id.to_string(),
+            title: id.to_string(),
+            content: "important".to_string(),
+            tags: vec![],
+            namespace: "shared".to_string(),
+            source: "test".to_string(),
+            run_id: None,
+            created_at: crate::unix_now(),
+            updated_at: crate::unix_now(),
+            deleted: false,
+        };
+        store.insert_ok(mk("keep"));
+        // A TOMBSTONE, so compaction has genuine work: it rewrites the file from the surviving
+        // records. Without this the index has nothing to remove and `compact` returns early
+        // WITHOUT writing — which is why the first two versions of this test passed under
+        // mutation and asserted nothing.
+        store.insert_ok(mk("goner"));
+        assert!(store.delete("goner"), "the soft delete must land");
+        store.mark_load_failed_for_test();
+        let before = std::fs::read(dir.join("memory.jsonl")).unwrap();
+
+        let removed = store.compact();
+
+        assert_eq!(removed, 0, "a degraded store must not compact");
+        assert_eq!(
+            before,
+            std::fs::read(dir.join("memory.jsonl")).unwrap(),
+            "and the file must be byte-identical: rewriting it from a half-known state is the \
+             destructive outcome this guard exists to prevent"
+        );
+        let _ = std::fs::remove_dir_all(&dir);
+    }
 }

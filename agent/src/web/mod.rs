@@ -5057,8 +5057,14 @@ mod tests {
             updated_at: crate::unix_now(),
             deleted: false,
         };
-        let a = store.insert(mk("alpha", "0123456789")); // 10 bytes
-        store.insert(mk("beta", "abc")); // 3 bytes
+        // `insert` returns Option (a failed append must be visible); this test store is
+        // writable, so unwrap with the reason.
+        let a = store
+            .insert(mk("alpha", "0123456789"))
+            .expect("the record must be PERSISTED in a test store"); // 10 bytes
+        store
+            .insert(mk("beta", "abc"))
+            .expect("the record must be PERSISTED in a test store"); // 3 bytes
         store.update(&a, None, Some("0123456789ABCDEF".into()), None, None, None); // -> 16
 
         let v = json_body(handle_request(req("GET", "/api/settings"), st.clone()).await).await;

@@ -157,7 +157,16 @@ fn tool_save(store: Arc<MemoryStore>) -> ToolDef {
                     updated_at: now,
                     deleted: false,
                 };
-                let id = store.insert(rec);
+                // A RECORD THAT DID NOT REACH DISK IS NOT A SUCCESSFUL SAVE. The append's
+                // failure used to be discarded, so `ok:true` was returned for a record that
+                // lived only in memory and vanished at the next restart.
+                let Some(id) = store.insert(rec) else {
+                    return Ok(json!({
+                        "ok": false,
+                        "error": "the record could not be written to disk; it was NOT saved",
+                        "hint": "check free space and that the memory directory is writable",
+                    }));
+                };
                 Ok(json!({"ok": true, "id": id}))
             }
         },

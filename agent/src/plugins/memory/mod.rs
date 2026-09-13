@@ -62,6 +62,7 @@ pub fn default_memory_dir() -> std::path::PathBuf {
 
 #[cfg(test)]
 mod tests {
+    use super::store::test_support::InsertOk;
     use super::*;
     use store::MemoryLimits;
 
@@ -124,8 +125,8 @@ mod tests {
             updated_at: crate::unix_now(),
             deleted: false,
         };
-        store.insert(mk("alpha", &["net"]));
-        store.insert(mk("beta", &["db"]));
+        store.insert_ok(mk("alpha", &["net"]));
+        store.insert_ok(mk("beta", &["db"]));
 
         let p = MemoryPlugin::new(store);
         let tools = p.tools();
@@ -251,7 +252,7 @@ mod tests {
             deleted: false,
         };
         // `insert` takes ownership and mints the id, so keep it separately.
-        let id = store.insert(rec);
+        let id = store.insert_ok(rec);
         assert!(store.update(&id, Some("t2".into()), None, None, None, None));
         assert_eq!(
             store.get(&id, false).expect("record").source,
@@ -291,7 +292,7 @@ mod tests {
         // `insert` keys the record by its OWN id (it does not mint one), so the
         // two records in this test need distinct ids — a shared key would make
         // the second insert silently replace the first.
-        let id = store.insert(stamped.clone());
+        let id = store.insert_ok(stamped.clone());
         assert!(store.update(&id, None, Some("revised".into()), None, None, None));
         assert_eq!(
             store.get(&id, false).expect("record").run_id.as_deref(),
@@ -301,7 +302,7 @@ mod tests {
 
         stamped.id = "m-plain".into();
         stamped.run_id = None;
-        let plain = store.insert(stamped);
+        let plain = store.insert_ok(stamped);
         assert!(store.update(&plain, None, Some("revised again".into()), None, None, None));
         assert_eq!(
             store.get(&plain, false).expect("record").run_id,
