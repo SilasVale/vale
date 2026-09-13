@@ -436,8 +436,23 @@ impl MemoryStore {
 
     /// Insert a new record; returns its id. Enforces content cap (truncate).
     pub fn insert(&self, mut rec: MemoryRecord) -> String {
-        if rec.content.len() > DEFAULT_MAX_CONTENT_BYTES {
-            rec.content = truncate_utf8(&rec.content, DEFAULT_MAX_CONTENT_BYTES);
+        // TRUNCATE TO WHICHEVER CAP IS TIGHTER — the per-record one, or the store's whole
+        // byte budget.
+        //
+        // Capping at the budget is what stops a TOTAL LOSS that was reported as success: the
+        // byte-cap loop in `enforce_limits` evicts oldest-first until the ledger fits, and
+        // NOTHING exempted the record just inserted (it is merely evicted last, being
+        // newest). So `max_bytes: 1024` plus a 2 KB save tombstoned the ENTIRE store,
+        // including that record, while `memory_save` answered `{"ok":true,...}`.
+        //
+        // Truncation rather than a refusal, because that is already this store's contract
+        // for oversized content (the line below has always done it at 32 KB) and it keeps
+        // `ok:true` TRUE: the record IS saved, holding what the operator said there was room
+        // for. A refusal would have to change `insert`'s signature and every caller's error
+        // handling for a case that is a configuration mistake, not an attack.
+        let cap = DEFAULT_MAX_CONTENT_BYTES.min(self.limits().max_bytes);
+        if rec.content.len() > cap {
+            rec.content = truncate_utf8(&rec.content, cap);
         }
         rec.tags.retain(|t| !t.trim().is_empty());
         let id = rec.id.clone();
@@ -463,7 +478,8 @@ impl MemoryStore {
             }
             guard.dirty = true;
         }
-        self.enforce_limits();
+        // PROTECT the record just saved: a save must never evict its own result.
+        self.enforce_limits_protecting(Some(id.as_str()));
         self.compact_if_tombstone_heavy();
         id
     }
@@ -733,11 +749,26 @@ impl MemoryStore {
     /// the victim-selection + tombstone logic used to be copy-pasted
     /// between them and would have drifted apart on any eviction-policy
     /// change.
-    fn evict_oldest_live(guard: &mut Inner, persist: &mut Vec<String>) -> Option<usize> {
+    /// `protect` is the record the caller JUST SAVED, and it must never be the victim of its
+    /// own save.
+    ///
+    /// This is not hypothetical: `updated_at` has SECOND granularity, so a record saved in
+    /// the same second as others ties on the primary key and the tie-break is "smallest id"
+    /// — which means a record whose id happens to sort early was evicted FIRST, before the
+    /// genuinely older records it was supposed to outlive. Observed in
+    /// `a_record_bigger_than_the_whole_budget_loses_only_its_tail_not_the_store`: ids
+    /// `huge`, `keeper-a`, `keeper-b` all shared one second, so `huge` — the record being
+    /// saved — went first.
+    fn evict_oldest_live(
+        guard: &mut Inner,
+        persist: &mut Vec<String>,
+        protect: Option<&str>,
+    ) -> Option<usize> {
         let victim = guard
             .by_id
             .iter()
             .filter(|(_, r)| !r.deleted)
+            .filter(|(id, _)| protect != Some(id.as_str()))
             .min_by(|(ia, ra), (ib, rb)| ra.updated_at.cmp(&rb.updated_at).then_with(|| ia.cmp(ib)))
             .map(|(id, _)| id.clone())?;
         let content_len = guard
@@ -756,6 +787,11 @@ impl MemoryStore {
     /// (`updated_at`; reads do not move it, so this is not LRU)
     /// until under max_entries / max_bytes.
     fn enforce_limits(&self) {
+        self.enforce_limits_protecting(None);
+    }
+
+    /// `protect` is an id that must survive this pass — see `evict_oldest_live`.
+    fn enforce_limits_protecting(&self, protect: Option<&str>) {
         self.rebuild_order();
         let mut guard = recover_guard(&self.inner);
         let limits = self.limits();
@@ -767,7 +803,7 @@ impl MemoryStore {
         // record (smallest updated_at; ties by smallest id) — NOT the last
         // of `order`, which is newest-first for query display.
         while guard.by_id.values().filter(|r| !r.deleted).count() > limits.max_entries {
-            if Self::evict_oldest_live(&mut guard, &mut persist).is_none() {
+            if Self::evict_oldest_live(&mut guard, &mut persist, protect).is_none() {
                 break;
             }
             Self::recount_total_bytes(&mut guard);
@@ -775,7 +811,8 @@ impl MemoryStore {
         // Evict while over byte cap (same oldest-first victim).
         while guard.total_bytes > limits.max_bytes {
             // Exact subtract keeps the ledger in sync without a full recount.
-            let Some(content_len) = Self::evict_oldest_live(&mut guard, &mut persist) else {
+            let Some(content_len) = Self::evict_oldest_live(&mut guard, &mut persist, protect)
+            else {
                 break;
             };
             guard.total_bytes = guard.total_bytes.saturating_sub(content_len);
@@ -815,9 +852,21 @@ fn truncate_utf8(s: &str, max: usize) -> String {
     if s.len() <= max {
         return s.to_string();
     }
+    // THE RESULT MUST FIT `max` — the ellipsis is 3 UTF-8 bytes and used to be added ON TOP,
+    // so this returned max + 3. That was invisible at the 32 KB per-record cap (the store's
+    // budget is far larger) and FATAL at the byte cap: a record clipped to exactly
+    // `max_bytes` was still 3 bytes over, so `enforce_limits` kept evicting and took the
+    // record the caller had just saved — the whole store gone for a save that reported
+    // `ok:true`. A function named `truncate_utf8(s, max)` that returns more than `max` is the
+    // defect; the caller should not have to know about the marker.
+    const MARKER: &str = "…";
+    if max <= MARKER.len() {
+        // Too small for a marker: return a bare clip rather than exceeding the budget.
+        return crate::text::clip(s, max).to_string();
+    }
     // Boundary decision owned by crate::text (SOLID R105); the "…" marker is
     // this caller's wording.
-    format!("{}…", crate::text::clip(s, max))
+    format!("{}…", crate::text::clip(s, max - MARKER.len()))
 }
 
 #[cfg(test)]
@@ -1710,4 +1759,69 @@ mod tests {
         );
         let _ = std::fs::remove_dir_all(&dir);
     }
+}
+
+/// AN OVERSIZED SAVE USED TO DESTROY THE WHOLE STORE AND REPORT SUCCESS.
+///
+/// The byte-cap loop in `enforce_limits` evicts oldest-first until the ledger fits and
+/// NOTHING exempted the record just inserted — it is merely evicted last, being newest
+/// by `updated_at`. So a `max_bytes` smaller than one record's content tombstoned EVERY
+/// record, including that one, and `memory_save` still answered `{"ok":true,...}`.
+///
+/// The fix truncates to whichever cap is tighter (the per-record 32 KB, or the store's
+/// whole budget), which is already this store's contract for oversized content — so
+/// `ok:true` stays TRUE and prior records SURVIVE.
+#[test]
+fn a_record_bigger_than_the_whole_budget_loses_only_its_tail_not_the_store() {
+    let dir = std::env::temp_dir().join(format!("vale-mem-test-oversized-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let limits = MemoryLimits {
+        max_bytes: 1024, // far smaller than one record's content below
+        ..MemoryLimits::default()
+    };
+    let store = MemoryStore::new(dir.clone(), limits);
+
+    let mk = |id: &str, content: String| MemoryRecord {
+        id: id.to_string(),
+        title: id.to_string(),
+        content,
+        tags: vec![],
+        namespace: "shared".to_string(),
+        source: "test".to_string(),
+        run_id: None,
+        created_at: crate::unix_now(),
+        updated_at: crate::unix_now(),
+        deleted: false,
+    };
+
+    // Two normal records first: these are what the bug used to erase.
+    let keep_a = store.insert(mk("keeper-a", "aaa".to_string()));
+    let keep_b = store.insert(mk("keeper-b", "bbb".to_string()));
+
+    // Now one whose content dwarfs the entire budget.
+    let big = store.insert(mk("huge", "x".repeat(8 * 1024)));
+
+    let _ = (&keep_a, &keep_b); // evicting them is CORRECT: 1024 + 6 > 1024
+
+    // THE PROPERTY THAT WAS BROKEN: the record the caller just saved still exists.
+    // Before the fix the eviction loop took it too — it was merely evicted last — so the
+    // caller got `ok:true` for a store that no longer held the record or anything else.
+    let saved = store
+        .get(&big, false)
+        .expect("the newly saved record must SURVIVE its own save — the bug evicted it too");
+    assert!(
+        saved.content.len() <= 1024,
+        "and its content is capped at the tighter of the two limits, got {}",
+        saved.content.len()
+    );
+    assert!(
+        !store.list(None, None, 100, false).is_empty(),
+        "the store must not be left EMPTY by a save that reported success"
+    );
+    assert_eq!(
+        store.limits().max_bytes,
+        1024,
+        "the cap itself is untouched"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
 }
