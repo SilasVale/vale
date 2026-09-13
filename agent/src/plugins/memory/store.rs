@@ -782,7 +782,13 @@ impl MemoryStore {
         }
         // Retention days: soft-delete records older than retention_days.
         if let Some(days) = limits.retention_days {
-            let cutoff = crate::unix_now().saturating_sub(days * 86400);
+            // SATURATING, and capped. `days` is a u64 from config or PUT /api/settings with
+            // no upper bound: in DEBUG a large value panics on the multiply, and in RELEASE
+            // it WRAPS — `days = 2^57` is exactly 0 mod 2^64, so the cutoff became NOW and
+            // the whole store was retired. A century is far past any real retention and
+            // makes the arithmetic total.
+            let secs = days.min(36_500).saturating_mul(86_400);
+            let cutoff = crate::unix_now().saturating_sub(secs);
             let ids: Vec<String> = guard
                 .by_id
                 .iter()

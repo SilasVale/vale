@@ -103,8 +103,18 @@ pub struct MemoryConfig {
 }
 
 impl MemoryConfig {
-    /// Resolve to concrete limits. Zero entries/bytes are treated as absent
-    /// (a `max_entries: 0` config would otherwise evict EVERYTHING on boot).
+    /// Resolve to concrete limits. ZERO IS ABSENT, FOR ALL THREE FIELDS — a
+    /// `max_entries: 0` would evict everything on boot, and a `retention_days: 0` is
+    /// strictly worse: the cutoff becomes NOW, every record is tombstoned, and the startup
+    /// compact then rewrites the file from survivors, so the whole knowledge base is
+    /// PERMANENTLY deleted rather than soft-deleted.
+    ///
+    /// `retention_days` was the one field this did not filter — the rule above already said
+    /// "zero entries/bytes" and applied to two of the three. `retention_days: 0` is also the
+    /// NATURAL way to write "keep forever", and the settings API agrees it means absent
+    /// (`web/mod.rs`'s handler filters `> 0`), so only the config-file path could destroy a
+    /// store.
+    ///
     /// The literals twin vale-agent's MemoryLimits::default — pinned by the
     /// `memory_limits_default_matches_config_effective` test over in the
     /// agent crate (this crate cannot import it; core is the dependency).
@@ -114,7 +124,7 @@ impl MemoryConfig {
             self.max_bytes
                 .filter(|&n| n > 0)
                 .unwrap_or(64 * 1024 * 1024),
-            self.retention_days,
+            self.retention_days.filter(|&n| n > 0),
         )
     }
 }
@@ -391,7 +401,36 @@ mod tests {
         // The two windows are deliberately DIFFERENT: the runs log is the
         // index of the evidence and must outlive it. If they ever agree, the
         // reasoning in DEFAULT_RUNS_RETENTION_DAYS has been lost.
-        assert!(DEFAULT_RUNS_RETENTION_DAYS > DEFAULT_EVIDENCE_RETENTION_DAYS);
+        // ZERO IS ABSENT FOR ALL THREE FIELDS, and `retention_days` was the one that was
+        // not filtered. `retention_days: 0` is the NATURAL way to write "keep forever", and
+        // it was strictly worse than the caps it sat beside: the cutoff becomes NOW, every
+        // record is tombstoned, and the store's startup compact then rewrites the file from
+        // survivors — so a config-file typo DELETED the whole knowledge base. The settings
+        // API already agreed 0 means absent; only this path disagreed.
+        let zeroed = MemoryConfig {
+            max_entries: Some(0),
+            max_bytes: Some(0),
+            retention_days: Some(0),
+        };
+        assert_eq!(
+            zeroed.effective(),
+            (10_000, 64 * 1024 * 1024, None),
+            "0 in any of the three must mean ABSENT, not 'delete everything'"
+        );
+        // And a real value still survives.
+        let set = MemoryConfig {
+            max_entries: Some(7),
+            max_bytes: Some(1024),
+            retention_days: Some(30),
+        };
+        assert_eq!(set.effective(), (7, 1024, Some(30)));
+
+        // A COMPILE-TIME assertion, which is what clippy asks for and what this wants to
+        // be: if the two constants ever agree, the build should FAIL rather than a test
+        // somebody may not be running. (This crate's tests were not run by CI until the
+        // same round that added this — an ungated crate is how a stale assertion below sat
+        // failing unnoticed.)
+        const { assert!(DEFAULT_RUNS_RETENTION_DAYS > DEFAULT_EVIDENCE_RETENTION_DAYS) };
     }
 
     // SOLID Round-11 (contract completion): ensure_token is the credential
@@ -469,7 +508,13 @@ mod tests {
         assert_eq!(cfg.platform.console_url, None);
         assert_eq!(cfg.platform.download_url, None);
         // Loopback + canonical port (tunnel ingress 18080; never 0.0.0.0).
+        //
+        // 127.0.0.1, AND THIS ASSERTION USED TO SAY 127.0.0.2 — the disproven claim the
+        // comment 240 lines up records: the tunnel provisioning writes 127.0.0.1, `netstat`
+        // on d1 shows the listener on 127.0.0.1:18080, and 127.0.0.2 is not bound at all.
+        // The CODE was corrected; this assertion was left behind, and it failed silently
+        // because CI ran `cargo test -p vale-agent` and never this crate (now fixed too).
         let d = ServerConfig::default();
-        assert_eq!((d.host.as_str(), d.port), ("127.0.0.2", 18080));
+        assert_eq!((d.host.as_str(), d.port), ("127.0.0.1", 18080));
     }
 }

@@ -109,10 +109,19 @@ jobs:
         with:
           workspaces: agent
       - name: Tests
-        run: cargo test -p vale-agent --features terminal,keyring
+        # BOTH crates. `vale-command-core` is a FOUNDATION module (per AGENTS.md) and its
+        # 29 tests were never run here — which is how a stale assertion sat failing for
+        # however long: it pinned `127.0.0.2` as ServerConfig's default while the code (and
+        # `netstat` on d1) say `127.0.0.1`, a claim this very file records as disproven.
+        # An ungated foundation crate is a test suite that reports nothing.
+        run: |
+          cargo test -p vale-agent --features terminal,keyring
+          cargo test -p vale-agent-core
         working-directory: agent
       - name: Clippy (zero warnings)
-        run: cargo clippy -p vale-agent --features terminal,keyring --all-targets -- -D warnings
+        run: |
+          cargo clippy -p vale-agent --features terminal,keyring --all-targets -- -D warnings
+          cargo clippy -p vale-agent-core --all-targets -- -D warnings
         working-directory: agent
       - name: Format check
         run: cargo fmt --all -- --check
