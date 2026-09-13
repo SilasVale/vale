@@ -519,7 +519,42 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-12 round 92 (THE HIGHEST-SEVERITY panel finding fixed: the loopback
+Last updated: 2026-09-13 round 93 (RELEASED 1.2.360 — four agent fixes had accumulated
+unreleased, two of them SECURITY, and the panel ships inside the exe, so unshipped meant
+unfixed. Verified on the device, including the one thing the fix could have broken).
+Commit: e5b28f31, tag v1.2.360. release.yml + CI green. Audit CLEAN. keep-latest applied
+(v1.2.360 alone). d1 on 1.2.360.
+  (1) WHAT SHIPPED: `9ff38858` a BLANK configured token authenticated every route;
+  `50c99b4d` the grant shape check contradicted its own comment + a redemption left no
+  trace; `945de7ab` the loopback token handout trusted a client-supplied `Host` header;
+  `402595c9` the wiring proof for that last one.
+  (2) THE EXE PROVABLY CONTAINS THEM, verified by TIMESTAMP rather than by `strings`:
+  `strings` was the wrong instrument for the loopback fix because its marker is a COMMENT
+  and comments are compiled out (it found the two string-bearing fixes and reported 0 for
+  the comment-bearing one). The exe is 07:43 and the last source fix 07:36, and
+  `publish-release.sh` is fail-closed on exactly that (it refuses an exe older than its
+  newest exe-input commit) — which is why it published at all.
+  (3) VERIFIED ON THE DEVICE, and the third check is the important one: `vale status` ->
+  `release: 1.2.360`, `this device is current`; and
+  `(Invoke-WebRequest http://127.0.0.1:18080/panel/).Content -match 'window.__PANEL_TOKEN__'`
+  -> **True**. That is the on-device proof that the `ConnectInfo` wiring works on Windows
+  and that the peer check did NOT break the panel for the operator — the regression that
+  would have been invisible to every unit test, since they all insert the extension by
+  hand. The DENY half (a non-loopback peer sending `Host: 127.0.0.1`) is pinned by unit
+  test and mutation-proven, which is the right split: the device proves the ALLOW path,
+  the tests prove the DENY path.
+  (4) `vale update` DEMONSTRATED ITSELF: it printed "swap launched -- waiting for the
+  device to confirm" (round 80's read-back) instead of returning at the handoff, then the
+  PTY dropped with the swap as documented.
+  (5) STILL OPEN: gateway F3 `deviceFetch` never applies the suffix allowlist at dial time
+  (`_env` unused) though its docstring lists it as part of the stack; panel F2's other half
+  — the grant is not single-use over eventually-consistent KV (the fix pattern already
+  exists here: the single-flight claim keys `regclaim2:` / `regclaim:`); panel F5 the host
+  allowlist is a family match (`devil.agent.saisi.online` passes).
+  Gates: panel 524 + build; agent web:: 78 + mcp_client_integration 3 + clippy -D warnings
+  + fmt + xwin check; release audit CLEAN; CI + release.yml green; d1 on 1.2.360.
+
+Previous round: 2026-09-12 round 92 (THE HIGHEST-SEVERITY panel finding fixed: the loopback
 token handout trusted a client-supplied `Host` header — and the fix's own worst regression
 is now proven absent, because it would have broken the panel for every operator).
 Commits: 945de7ab, 402595c9. CI green. NOT released (the panel ships inside the exe).
