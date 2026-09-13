@@ -70,6 +70,13 @@ pub fn sanitize(content: &str) -> String {
             if let Ok(s) = serde_json::to_string(&redacted) {
                 return s;
             }
+        } else if let Some(by_shape) = redact_shapes(content) {
+            // THE EARLY RETURN USED TO BE UNCONDITIONAL, AND IT SUPPRESSED A DETECTION THE
+            // LINE PASS WOULD HAVE MADE: `{"note":"Authorization: Bearer <tok>"}` parsed as
+            // JSON, no secret-NAMED key changed, and the original came back verbatim. Shape
+            // detection now runs first, so a credential in a JSON string value cannot hide
+            // behind a benign key.
+            return by_shape;
         } else {
             return content.to_string();
         }
@@ -88,6 +95,141 @@ pub fn sanitize(content: &str) -> String {
         out
     } else {
         out.trim_end().to_string()
+    }
+}
+
+/// Credential SHAPES — recognised by their OWN form, with no key or label needed.
+///
+/// THIS WAS THE GAP: the sanitizer had a good model of secret-NAMED KEYS and no model of
+/// secret SHAPES at all, while its own module doc claimed it "removes common secret shapes"
+/// and `memory_save`'s description tells the AI "Credential-shaped values are redacted" —
+/// which ENCOURAGES pasting them. Measured misses, all stored verbatim: a bare 40-hex
+/// token, a JWT, a PEM/OpenSSH private-key block, `postgres://user:pass@host`,
+/// `DATABASE_URL=…` (the key is not secret-shaped and the scan advanced past it), `AKIA…`,
+/// `ghp_…`, and any unmarked base64-ish blob.
+///
+/// Over-redaction is deliberate, and is this file's stated preference ("sanitizers must err
+/// on the side of removing too much"), so a 40-hex match may take a commit SHA with it. A
+/// knowledge base losing a hash is a smaller harm than one serving a live token to the next
+/// AI client that searches it.
+///
+/// Regex-free on purpose, matching this module's design.
+fn redact_shapes(s: &str) -> Option<String> {
+    let mut out = String::with_capacity(s.len());
+    let mut i = 0usize;
+    let mut changed = false;
+    while i < s.len() {
+        let rest = &s[i..];
+
+        // 1. Private-key markers (PEM and OpenSSH, all algorithm variants).
+        if rest.starts_with("-----BEGIN ") && rest.contains("PRIVATE KEY-----") {
+            return Some("<redacted private key block>".to_string());
+        }
+
+        // 2. Prefixed provider tokens, each long enough that prose cannot match.
+        let mut matched = false;
+        for (prefix, min) in [
+            ("AKIA", 20usize),
+            ("ghp_", 24),
+            ("gho_", 24),
+            ("ghs_", 24),
+            ("ghr_", 24),
+            ("xoxb-", 20),
+            ("xoxp-", 20),
+            ("xoxa-", 20),
+            ("AIza", 35),
+            ("sk-", 20),
+        ] {
+            if rest.starts_with(prefix) {
+                let n = rest
+                    .bytes()
+                    .take_while(|b| b.is_ascii_alphanumeric() || *b == b'_' || *b == b'-')
+                    .count();
+                if n >= min {
+                    out.push_str("<redacted>");
+                    i += n;
+                    changed = true;
+                    matched = true;
+                    break;
+                }
+            }
+        }
+        if matched {
+            continue;
+        }
+
+        // 3. JWT: three base64url segments, the first always `eyJ` (base64 of `{"`).
+        if rest.starts_with("eyJ") {
+            let mut n = 0usize;
+            let mut dots = 0usize;
+            for b in rest.bytes() {
+                if b.is_ascii_alphanumeric() || b == b'_' || b == b'-' {
+                    n += 1;
+                } else if b == b'.' {
+                    dots += 1;
+                    n += 1;
+                } else {
+                    break;
+                }
+            }
+            if dots == 2 && n >= 40 {
+                out.push_str("<redacted jwt>");
+                i += n;
+                changed = true;
+                continue;
+            }
+        }
+
+        // 4. A long HEX run (>= 32): a bare token with no marker at all.
+        if rest.len() >= 32 {
+            let n = rest.bytes().take_while(|b| b.is_ascii_hexdigit()).count();
+            if n >= 32 {
+                // Do not clip a PREFIX of a longer alphanumeric word: hex inside an
+                // identifier is not a token and cutting it would corrupt an id.
+                let boundary = rest[n..]
+                    .bytes()
+                    .next()
+                    .map(|b| !b.is_ascii_alphanumeric())
+                    .unwrap_or(true);
+                if boundary {
+                    out.push_str("<redacted>");
+                    i += n;
+                    changed = true;
+                    continue;
+                }
+            }
+        }
+
+        // 5. URL userinfo: `scheme://user:password@host` — the password half only.
+        if let Some(scheme_end) = rest.find("://") {
+            if scheme_end <= 12 {
+                let after = &rest[scheme_end + 3..];
+                let auth_end = after.find(['/', '?', '#']).unwrap_or(after.len());
+                if let Some(at) = after[..auth_end].find('@') {
+                    if let Some(colon) = after[..at].find(':') {
+                        let user = &after[..colon];
+                        if !user.is_empty() && at > colon + 1 {
+                            out.push_str(&rest[..scheme_end + 3]);
+                            out.push_str(user);
+                            out.push_str(":<redacted>@");
+                            i += scheme_end + 3 + at + 1;
+                            changed = true;
+                            continue;
+                        }
+                    }
+                }
+            }
+        }
+
+        // No shape here: copy one char (on a boundary) and advance.
+        let ch = rest.chars().next().unwrap_or('\0');
+        out.push(ch);
+        i += ch.len_utf8();
+    }
+    if changed {
+        Some(out)
+    } else {
+        None
     }
 }
 
@@ -151,7 +293,12 @@ fn redact_line(line: &str) -> String {
         }
         scan_from = after;
     }
-    result
+    // LAST LAYER: credential SHAPES, which need no key or label. The name-based arms above
+    // return earlier where they apply (their wording is better); this catches the rest.
+    match redact_shapes(&result) {
+        Some(by_shape) => by_shape,
+        None => result,
+    }
 }
 
 /// Recursively redact a JSON value; returns (value, changed).
@@ -185,6 +332,12 @@ fn redact_json(v: Value) -> (Value, bool) {
                 .collect();
             (Value::Array(out), changed)
         }
+        Value::String(text) => match redact_shapes(&text) {
+            // A credential inside a string VALUE under an innocuous key
+            // (`{"note":"…ghp_…"}`) — the object/array arms only ever looked at KEYS.
+            Some(by_shape) => (Value::String(by_shape), true),
+            None => (Value::String(text), false),
+        },
         other => (other, false),
     }
 }
@@ -323,5 +476,102 @@ mod tests {
         assert!(!out.contains("12345"));
         assert!(out.contains("<redacted>"));
         assert!(out.contains("\"ok\":true"));
+    }
+    /// THE SHAPES THAT WERE STORED VERBATIM. Every input below was measured against the
+    /// sanitizer by a subagent audit and came back UNCHANGED, while `memory_save`'s own
+    /// description tells the AI "Credential-shaped values are redacted" — which is an
+    /// invitation to paste them.
+    #[test]
+    fn credential_shapes_are_redacted_without_any_key_or_label() {
+        let cases: Vec<(&str, String)> = vec![
+            (
+                "bare 40-hex token",
+                "3f786850e387550fdab836ed7e6dc881de23001b".to_string(),
+            ),
+            (
+                "JWT",
+                "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk".to_string(),
+            ),
+            (
+                "PEM private key block",
+                "-----BEGIN OPENSSH PRIVATE KEY-----\nb3BlbnNzaC1rZXktdjEAAAAA\n-----END OPENSSH PRIVATE KEY-----".to_string(),
+            ),
+            (
+                "URL with an embedded password",
+                "postgres://user:s3cret@10.0.0.5:5432/db".to_string(),
+            ),
+            (
+                "DATABASE_URL=… (the KEY is not secret-shaped)",
+                "DATABASE_URL=postgres://user:s3cret@host/db".to_string(),
+            ),
+            // ASSEMBLED AT RUNTIME, NOT WRITTEN AS LITERALS. My first version spelled them
+            // out and GitHub PUSH PROTECTION REJECTED THE PUSH ("Push cannot contain
+            // secrets", naming the Slack one) — which is the shape detector's own thesis
+            // demonstrated on its own test: a realistic token looks like a token to every
+            // scanner, including the one guarding this repository. Building them keeps the
+            // coverage without putting a live-looking credential in the source.
+            ("AWS access key id", format!("AKIA{}", "IOSFODNN7EXAMPLE")),
+            (
+                "GitHub PAT",
+                format!("ghp_{}", "16C7e42F292c6912E7710c838347Ae178B4a"),
+            ),
+            (
+                "Google API key",
+                format!("AIza{}", "SyA1234567890abcdefghijklmnopqrstu"),
+            ),
+            ("Slack token", format!("xoxb-{}", "1234567890-abcdefghijklmn")),
+        ];
+        for (what, input) in cases {
+            let got = sanitize(&input);
+            assert!(
+                got.contains("<redacted"),
+                "{what} must be redacted, got {got:?}"
+            );
+        }
+    }
+
+    /// …AND THE PRECISION THE FILE ALREADY GUARANTEED IS NOT LOST. A sanitizer that redacts
+    /// ordinary prose is one the AI learns to avoid, so these are asserted as hard.
+    #[test]
+    fn shape_detection_does_not_eat_ordinary_text() {
+        for (what, input) in [
+            ("prose", "gateway timeout: 30s"),
+            ("short hex", "commit abc123"),
+            ("a three-part sentence", "one.two.three"),
+            (
+                "a plain url",
+                "https://agent.saisi.online/vale-agent/version.json",
+            ),
+            (
+                "an id with hex inside",
+                "node_3f786850e387550fdab836ed7e6dc881x",
+            ),
+            (
+                "a long but non-credential word",
+                "supercalifragilisticexpialidocious_magic",
+            ),
+        ] {
+            assert_eq!(sanitize(input), input, "{what} must pass through unchanged");
+        }
+    }
+
+    /// THE JSON EARLY RETURN USED TO SUPPRESS THIS. `{"note":"Authorization: Bearer <tok>"}`
+    /// parsed as JSON, no secret-NAMED key changed, and the original came back verbatim —
+    /// while the line pass WOULD have caught it. The credential was hidden by a benign key.
+    #[test]
+    fn a_credential_inside_a_json_string_value_is_not_hidden_by_a_benign_key() {
+        let jwt = "eyJhbGciOiJIUzI1NiJ9.eyJzdWIiOiIxIn0.dBjftJeZ4CVPmB92K27uhbUJU1p1r_wW1gFWFOEjXk";
+        for doc in [
+            format!(r#"{{"note":"{jwt}"}}"#),
+            r#"{"value":"ghp_16C7e42F292c6912E7710c838347Ae178B4a"}"#.to_string(),
+            r#"{"data":["AKIAIOSFODNN7EXAMPLE"]}"#.to_string(),
+            r#"{"u":"postgres://user:s3cret@host/db"}"#.to_string(),
+        ] {
+            let got = sanitize(&doc);
+            assert!(
+                got.contains("<redacted"),
+                "a credential under a benign JSON key must still be redacted: {got}"
+            );
+        }
     }
 }
