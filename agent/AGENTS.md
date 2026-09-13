@@ -519,7 +519,51 @@ release (not the Cargo version).
 > read this first, then update it at the end of its round (replace the
 > "last updated" line + append to Recent / In progress / Next).
 
-Last updated: 2026-09-13 round 97 (a save larger than the whole byte budget destroyed the
+Last updated: 2026-09-13 round 98 (the memory sanitizer detected credential NAMES and no
+credential SHAPES — while its tool description TELLS THE AI that credential-shaped values are
+redacted — and GitHub's own push protection then caught my test, which is that thesis
+proving itself).
+Commit: 20c8282f. CI green. NOT released.
+  (1) A FALSE CLAIM THAT SHAPES BEHAVIOUR: `memory_save`'s description says "Credential-shaped
+  values are redacted", so the AI is ENCOURAGED to paste them — and eight of the nine shapes
+  the audit tested came back verbatim. `redact_line` had exactly three arms (`Authorization:`/
+  `x-api-key:`, a line starting `Bearer `, a secret-NAMED key before `=`/`": "`) while the
+  module doc claimed it "removes common secret shapes". A line with no separator never looked
+  at its value at all.
+  (2) MEASURED MISSES, all stored verbatim and served back by search/list/export: a bare
+  40-hex token, a JWT, a PEM/OpenSSH key block, `postgres://user:pass@host`,
+  `DATABASE_URL=…` (the key is not secret-shaped and the scan advanced past it), `AKIA…`,
+  `ghp_…`, and an unmarked base64 blob.
+  (3) ONE `redact_shapes`, applied at THREE points: the line pass as its last layer (so the
+  name-based arms keep their better wording), JSON string VALUES (the object arm only ever
+  looked at KEYS), and the JSON early-return path.
+  (4) THAT EARLY RETURN WAS ITS OWN DEFECT: `{"note":"Authorization: Bearer <tok>"}` parsed as
+  JSON, no secret-named key changed, and the original was returned at `sanitize.rs:74` — while
+  the LINE PASS WOULD HAVE CAUGHT IT. The fast path SUPPRESSED a detection rather than merely
+  failing to add one. This is the case the audit marked with a star.
+  (5) OVER-REDACTION IS DELIBERATE and is the file's own stated preference ("sanitizers must
+  err on the side of removing too much"), so a 40-hex match may take a commit SHA with it. The
+  hex rule refuses to clip a PREFIX of a longer alphanumeric word so ids cannot be corrupted.
+  Precision is asserted AS HARD AS recall: prose, a short hex, `one.two.three`, a plain URL,
+  hex inside an identifier and a long non-credential word all pass through unchanged.
+  (6) MUTATION-PROVEN: disabling `redact_shapes` fails two tests, naming the misses exactly
+  (48/2); restoring passes (50/50).
+  (7) AND GITHUB PUSH PROTECTION REJECTED MY FIRST PUSH — "Push cannot contain secrets",
+  naming `sanitize.rs:513` and the SLACK token. My test spelled the provider tokens as
+  literals, and a realistic token looks like a token to EVERY scanner, including the one
+  guarding this repository. The cases are assembled at runtime now
+  (`format!("xoxb-{}", "…")`): coverage intact, no credential-shaped literal in the source.
+  The push was BLOCKED, not merged, so nothing reached the remote before the fix. Worth
+  recording because it is `custom-prop-check`'s "a generated artifact is not a source" shape
+  once more — a check that rejected my own work for the right reason.
+  (8) STILL OPEN from these two audits: memory F4 `memory_export` is unsanitized and unbounded
+  (up to ~320 MB while holding the store mutex); memory F5 a failed append is reported as a
+  successful save and an unreadable store reads as EMPTY. Index F2 `vale-playwright.zip` (an
+  executed artifact) is served `public, max-age=86400` with no validator; index F3 the three
+  proxy routes lack the file's own failure envelope.
+  Gates: agent memory:: 50 (was 47) + clippy -D warnings + fmt; agent-core 29; CI green.
+
+Previous round: 2026-09-13 round 97 (a save larger than the whole byte budget destroyed the
 entire memory store and reported SUCCESS — and writing its test uncovered two more defects
 underneath, including one the audit had only half seen).
 Commit: 65d8fafd. CI green. NOT released.
