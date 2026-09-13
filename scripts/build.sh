@@ -158,10 +158,30 @@ deploy_worker() {
     # NOTE: wrangler resolves the worker from the cwd's wrangler.jsonc —
     # this MUST run inside $ROOT/$dir (repo root has no config and the
     # command fails silently into 2>/dev/null, aborting every deploy).
+    # round-546: ONE `wrangler secret list`, parsed once — and "cannot read the
+    # list" is NOT "the secret is absent". This used to call the API once per
+    # secret inside the loop with stderr discarded, so a single throttled or
+    # transient failure produced an empty list and the deploy aborted with
+    # "worker secret ADMIN_PASSWORD 未配置" while the secret was right there
+    # (observed 2026-09-13: all three secrets listed by a direct call, and an
+    # immediate re-run of the same deploy passed). A missing-secret verdict may
+    # only come from a list that was actually READ.
+    local secret_json="" secret_rc=1 secret_attempt s
+    for secret_attempt in 1 2; do
+      secret_json="$( cd "$ROOT/$dir" \
+        && CLOUDFLARE_API_TOKEN="$CF_TOKEN" wrangler secret list 2>&1 )"
+      secret_rc=$?
+      [[ "$secret_rc" == 0 ]] && break
+      [[ "$secret_attempt" == 1 ]] \
+        && { echo "  .. wrangler secret list failed (rc=$secret_rc) — retrying once" >&2; sleep 3; }
+    done
+    if [[ "$secret_rc" != 0 ]]; then
+      echo "  !! abort: cannot READ this worker's secret list (wrangler rc=$secret_rc), so a missing secret cannot be told from an unreadable one — this is NOT a missing-secret verdict. wrangler said:" >&2
+      printf '%s\n' "$secret_json" | tail -3 >&2
+      return 1
+    fi
     for s in DO_AUTH SESSION_SECRET ADMIN_PASSWORD; do
-      if ! ( cd "$ROOT/$dir" \
-        && CLOUDFLARE_API_TOKEN="$CF_TOKEN" wrangler secret list 2>/dev/null \
-        | grep -qE "(^|[\"' ])${s}([\"' ]|$)" ); then
+      if ! printf '%s\n' "$secret_json" | grep -qE "(^|[\"' ])${s}([\"' ]|$)"; then
         echo "  !! abort: worker secret $s 未配置 — 先执行 wrangler secret put $s (gateway fail-closed)" >&2
         return 1
       fi
@@ -186,7 +206,13 @@ deploy_worker() {
   # live-vs-repo parity is the deploy's own success criterion. Sleep for
   # edge propagation, then fail the step on any drift.
   if [[ "$dir" == "gateway" ]]; then
-    sleep 8
+    # round-546: the propagation retry lives INSIDE the probe now (the shape
+    # smoke-index.sh has had since round-59) instead of a fixed `sleep 8` here.
+    # That sleep assumed the edge was caught up in 8 s; on the 2026-09-13
+    # provider deploy it took ~2 min, so the probe compared against the
+    # PREVIOUS assets, printed 9 "DRIFT" lines, and this step reported a deploy
+    # that had SUCCEEDED as a failure — the one verdict a deploy gate must not
+    # get wrong. See check-live-parity.sh (PARITY_ATTEMPTS/PARITY_RETRY_SLEEP).
     bash "$ROOT/gateway/scripts/check-live-parity.sh" \
       || { echo "  !! live parity check failed — live worker differs from repo" >&2; return 1; }
   fi
