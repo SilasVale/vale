@@ -32,23 +32,80 @@ body {
   flex-direction: column;
   background: var(--bg);
   color: var(--ink);
-  font: 13px/1.5 var(--font);
+  font: var(--fs-base) / 1.5 var(--font);
+  /* DIGITS SHARE ONE WIDTH. This is a machine console: session counts, byte
+     budgets, uptimes, exit codes, port numbers and timestamps all sit in columns
+     and all change while you watch. With proportional digits every update
+     re-flows the row around it and no two rows align; tabular figures are the
+     difference between a table and a jumble. Applied on body rather than per
+     component because in this product it is the rule, not the exception. */
+  font-variant-numeric: tabular-nums;
 }
 
-/* ---- aurora wash ----
-   The iridescent light behind everything. It is a FIXED pseudo-element rather than a
-   background-image on `body` so it never scrolls with content and never sits under a
-   stacking context that would repaint it; `pointer-events: none` keeps it out of the
-   way of every control. Because it is decorative and stays BELOW all surfaces, no
-   text colour changes and every contrast measurement is unaffected. */
+/* Display sizes get slightly tightened; micro sizes slightly opened. See the
+   tracking tokens for why both directions exist. */
+.modal-card h2,
+.plug-title,
+.desktop-settings h2,
+.app-crash-card h1,
+#conn-form h1,
+.empty-mark,
+.app-crash-mark {
+  letter-spacing: var(--tracking-display);
+}
+
+/* ---- the ground: paper, not a light show ----
+   HISTORY, because it explains the vocabulary. An iridescent layer entered this
+   design from a request for a 炫彩 art direction, and the session that built it
+   chose AURORA as the concrete form. Aurora was that session's interpretation,
+   never the ask, and it is gone — mark and backdrop both.
+
+   WHAT REPLACED IT, AND WHY THERE IS NO COLOUR HERE. "Glass" and "materiality"
+   are not the same request, and conflating them is what made two passes fail in
+   opposite directions. Translucency and blur are only perceptible when there is
+   DETAIL behind them: over a flat or smoothly graded field a frosted pane
+   differs from an opaque one by a couple of percent of luminance and blurs
+   nothing at all. The previous pass "fixed" that by saturating the backdrop,
+   which is exactly the 炫彩 that was NOT wanted.
+
+   So the ground is a MATERIAL instead: a warm paper whose depth comes from a
+   barely-there vertical light and a visible grain, not from hue. The panes above
+   it then read as physical objects through their edges and their shadows — see
+   the --glass-* tokens, where that argument continues. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: var(--aura-wash);
-  opacity: 0.9;
+  background:
+    radial-gradient(76rem 44rem at 14% -12%, rgba(245, 159, 0, 0.05), transparent 62%),
+    radial-gradient(70rem 44rem at 88% 108%, rgba(120, 100, 80, 0.05), transparent 64%),
+    linear-gradient(180deg, #f1f0ee 0%, #f7f6f4 40%, #f3f1ee 100%);
+}
+/* Dark is the same paper after dark: no hue, just a warmer black than the panes
+   so the panes still separate from the ground. */
+body[data-theme="dark"]::before {
+  background:
+    radial-gradient(76rem 44rem at 14% -12%, rgba(245, 159, 0, 0.045), transparent 62%),
+    linear-gradient(180deg, #121316 0%, #16171b 44%, #111215 100%);
+}
+
+/* ---- grain ----
+   A 140px fractal-noise tile at 4%. Real frosted glass has texture, and this is what
+   keeps a large soft gradient from banding into visible rings on an 8-bit panel —
+   both reasons are practical, neither is decoration. It sits ABOVE the field and
+   BELOW every surface (z-index 0 vs the `body > *` rule), so it is only visible
+   through the translucent panes and never over text. `--grain-opacity: 0` disables it. */
+body::after {
+  content: "";
+  position: fixed;
+  inset: 0;
+  z-index: 0;
+  pointer-events: none;
+  opacity: var(--grain-opacity);
+  background-image: url("data:image/svg+xml,%3Csvg xmlns='http://www.w3.org/2000/svg' width='140' height='140'%3E%3Cfilter id='n'%3E%3CfeTurbulence type='fractalNoise' baseFrequency='0.85' numOctaves='3' stitchTiles='stitch'/%3E%3C/filter%3E%3Crect width='140' height='140' filter='url(%23n)'/%3E%3C/svg%3E");
+  background-size: 140px 140px;
 }
 /* Content rides above the wash. The rail and the workspace already establish their
    own stacking; this only guarantees the wash is never on top. */

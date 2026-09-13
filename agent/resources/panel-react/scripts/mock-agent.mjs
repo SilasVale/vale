@@ -109,4 +109,10 @@ const server = http.createServer((req, res) => {
   res.writeHead(404); res.end("not found");
 });
 
-server.listen(PORT, () => console.log(`mock agent on http://127.0.0.1:${PORT} (panel: /panel/ | desktop: /desktop/)`));
+// BOUND TO LOOPBACK EXPLICITLY. `listen(PORT)` with no host binds 0.0.0.0 (and
+// ::), publishing a mock agent that serves the panel and stubs every API to the
+// whole network — on a dev box whose standing rule is that nothing outside
+// 127.0.0.1/::1 may listen at all. The harness only ever dials 127.0.0.1.
+server.listen(PORT, "127.0.0.1", () =>
+  console.log(`mock agent on http://127.0.0.1:${PORT} (panel: /panel/ | desktop: /desktop/)`),
+);

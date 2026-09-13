@@ -1,86 +1,39 @@
 <svg xmlns="http://www.w3.org/2000/svg" width="48" height="48" viewBox="0 0 48 48">
-  <!--
-    Vale brand mark — "Aurora Vale".
-    Same silhouette as the sunrise mark (near hill, far ridge, light over the pass),
-    relit as an iridescent sky. The geometry is unchanged on purpose — the mark stays
-    recognisable and only the light moves.
-
-    v2, after looking at v1 at 140/72/40/22px: the first attempt read as a purple sky
-    over a FLAT ORANGE BAND — the horizon was a stripe rather than a sunrise, and the
-    ribbons were too faint to say "aurora" at icon size. This version peaks the warmth
-    AT the horizon and lets it fall away below, raises the ribbons into the upper half
-    where there is room to see them, and adds a rim light for the glass quality.
-  -->
+  <!-- Vale brand mark: the vale at sunrise — near hill, far ridge, signal over the pass.
+       THE ONE MARK. It is 16–30px in real life (Windows tray 16, rail 20/26, console 30),
+       so it is drawn for that: three gradients, no scene. The iridescent variant that
+       replaced it for three days put twelve gradients and a whole sky into the same
+       space; at 16–26px its ribbons collapsed into a smear. Reverted.
+       Copies kept in step by src/ui/__tests__/Icon.test.tsx: this file, the panel's
+       BrandMark, the console favicon and the landing page's data-URI. -->
   <defs>
-    <!-- Night at the top, brand sunrise peaking at the horizon, cooling below it. -->
-    <linearGradient id="valeSky" x1="0" y1="0" x2="0.25" y2="1">
-      <stop offset="0" stop-color="#120a2e"/>
-      <stop offset=".30" stop-color="#331a63"/>
-      <stop offset=".55" stop-color="#6d2a72"/>
-      <stop offset=".76" stop-color="#c2430f"/>
-      <stop offset=".88" stop-color="#f2760f"/>
-      <stop offset="1" stop-color="#a8330c"/>
+    <linearGradient id="vale-sky" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#f59f00"/>
+      <stop offset="1" stop-color="#e8590c"/>
     </linearGradient>
-
-    <!-- Aurora ribbons: teal -> violet -> magenta. Two passes, offset, so the band
-         has depth instead of being one flat smear. -->
-    <linearGradient id="valeAurora" x1="0" y1="0" x2="1" y2="0">
-      <stop offset="0" stop-color="#22d3ee" stop-opacity="0"/>
-      <stop offset=".18" stop-color="#22d3ee" stop-opacity=".90"/>
-      <stop offset=".44" stop-color="#818cf8" stop-opacity=".85"/>
-      <stop offset=".70" stop-color="#c084fc" stop-opacity=".75"/>
-      <stop offset=".88" stop-color="#f472b6" stop-opacity=".55"/>
-      <stop offset="1" stop-color="#f472b6" stop-opacity="0"/>
-    </linearGradient>
-    <linearGradient id="valeAurora2" x1="1" y1="0" x2="0" y2="0">
-      <stop offset="0" stop-color="#5eead4" stop-opacity="0"/>
-      <stop offset=".25" stop-color="#5eead4" stop-opacity=".60"/>
-      <stop offset=".6" stop-color="#a78bfa" stop-opacity=".50"/>
-      <stop offset="1" stop-color="#a78bfa" stop-opacity="0"/>
-    </linearGradient>
-
-    <!-- The sun's bloom at the pass. -->
-    <radialGradient id="valeGlow" cx=".5" cy=".5" r=".5">
-      <stop offset="0" stop-color="#fffdf5" stop-opacity="1"/>
-      <stop offset=".35" stop-color="#ffe9b8" stop-opacity=".60"/>
-      <stop offset="1" stop-color="#ffb066" stop-opacity="0"/>
+    <radialGradient id="vale-glow" cx=".5" cy=".5" r=".5">
+      <stop offset="0" stop-color="#fff8e1" stop-opacity=".55"/>
+      <stop offset="1" stop-color="#ffe8a3" stop-opacity="0"/>
     </radialGradient>
-
-    <!-- Glass: highlight at the top, shadow at the base, plus a rim. -->
-    <linearGradient id="valeSheen" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity=".26"/>
-      <stop offset=".38" stop-color="#ffffff" stop-opacity="0"/>
-      <stop offset="1" stop-color="#2b0f3a" stop-opacity=".30"/>
+    <!-- The material: light gathers at the top edge, the base sits in its own shadow.
+         This is what makes the tile read as an object rather than a sticker. -->
+    <linearGradient id="vale-sheen" x1="0" y1="0" x2="0" y2="1">
+      <stop offset="0" stop-color="#ffffff" stop-opacity=".25"/>
+      <stop offset=".45" stop-color="#ffffff" stop-opacity="0"/>
+      <stop offset="1" stop-color="#7c2d12" stop-opacity=".10"/>
     </linearGradient>
-    <linearGradient id="valeRim" x1="0" y1="0" x2="0" y2="1">
-      <stop offset="0" stop-color="#ffffff" stop-opacity=".55"/>
-      <stop offset=".5" stop-color="#ffffff" stop-opacity=".06"/>
-      <stop offset="1" stop-color="#ffffff" stop-opacity=".18"/>
-    </linearGradient>
-
-    <clipPath id="valeTile">
-      <rect width="48" height="48" rx="11"/>
-    </clipPath>
   </defs>
 
-  <g clip-path="url(#valeTile)">
-    <rect width="48" height="48" fill="url(#valeSky)"/>
+  <rect width="48" height="48" rx="11" fill="url(#vale-sky)"/>
 
-    <!-- aurora ribbons, upper half where there is room to read them -->
-    <path fill="url(#valeAurora)" d="M-4 22C5 9 15 20 24 11S42 4 52 9V-4H-4Z"/>
-    <path fill="url(#valeAurora2)" d="M-4 17C9 6 17 16 28 7s18-1 28 1V-4H-4Z" opacity=".85"/>
-    <path fill="url(#valeAurora)" d="M-4 27C7 17 17 26 27 18s17-3 29 0V14H-4Z" opacity=".45"/>
+  <!-- signal rising over the pass -->
+  <circle cx="21" cy="14" r="7.5" fill="url(#vale-glow)"/>
+  <circle cx="21" cy="14" r="4" fill="#fff8e1"/>
 
-    <!-- the sun over the pass -->
-    <circle cx="21" cy="17" r="11" fill="url(#valeGlow)"/>
-    <circle cx="21" cy="17" r="3.4" fill="#fffdf5"/>
+  <!-- far ridge (haze) -->
+  <path fill="#ffffff" opacity=".78" d="M14 41Q26 16 44 41Z"/>
+  <!-- near hill (solid) -->
+  <path fill="#ffffff" d="M2 41Q12 20 24 41Z"/>
 
-    <!-- far ridge (haze) then near hill (solid) -->
-    <path fill="#ffffff" opacity=".82" d="M14 41Q26 16 44 41Z"/>
-    <path fill="#ffffff" d="M2 41Q12 20 24 41Z"/>
-
-    <!-- glass sheen + rim -->
-    <rect width="48" height="48" fill="url(#valeSheen)"/>
-    <rect x=".6" y=".6" width="46.8" height="46.8" rx="10.5" fill="none" stroke="url(#valeRim)" stroke-width="1.2"/>
-  </g>
+  <rect width="48" height="48" rx="11" fill="url(#vale-sheen)"/>
 </svg>

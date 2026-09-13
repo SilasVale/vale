@@ -3,7 +3,7 @@
 // helpers, no worker bindings — same pattern as ./claim.js.
 
 export const FAVICON =
-  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%20%3Cdefs%3E%20%3ClinearGradient%20id%3D%22valeSky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220.25%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23120a2e%22%2F%3E%20%3Cstop%20offset%3D%22.30%22%20stop-color%3D%22%23331a63%22%2F%3E%20%3Cstop%20offset%3D%22.55%22%20stop-color%3D%22%236d2a72%22%2F%3E%20%3Cstop%20offset%3D%22.76%22%20stop-color%3D%22%23c2430f%22%2F%3E%20%3Cstop%20offset%3D%22.88%22%20stop-color%3D%22%23f2760f%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a8330c%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeAurora%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%221%22%20y2%3D%220%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%2322d3ee%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%22.18%22%20stop-color%3D%22%2322d3ee%22%20stop-opacity%3D%22.90%22%2F%3E%20%3Cstop%20offset%3D%22.44%22%20stop-color%3D%22%23818cf8%22%20stop-opacity%3D%22.85%22%2F%3E%20%3Cstop%20offset%3D%22.70%22%20stop-color%3D%22%23c084fc%22%20stop-opacity%3D%22.75%22%2F%3E%20%3Cstop%20offset%3D%22.88%22%20stop-color%3D%22%23f472b6%22%20stop-opacity%3D%22.55%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23f472b6%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeAurora2%22%20x1%3D%221%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%220%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%235eead4%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%22.25%22%20stop-color%3D%22%235eead4%22%20stop-opacity%3D%22.60%22%2F%3E%20%3Cstop%20offset%3D%22.6%22%20stop-color%3D%22%23a78bfa%22%20stop-opacity%3D%22.50%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23a78bfa%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FlinearGradient%3E%20%3CradialGradient%20id%3D%22valeGlow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fffdf5%22%20stop-opacity%3D%221%22%2F%3E%20%3Cstop%20offset%3D%22.35%22%20stop-color%3D%22%23ffe9b8%22%20stop-opacity%3D%22.60%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffb066%22%20stop-opacity%3D%220%22%2F%3E%20%3C%2FradialGradient%3E%20%3ClinearGradient%20id%3D%22valeSheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.26%22%2F%3E%20%3Cstop%20offset%3D%22.38%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%232b0f3a%22%20stop-opacity%3D%22.30%22%2F%3E%20%3C%2FlinearGradient%3E%20%3ClinearGradient%20id%3D%22valeRim%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.55%22%2F%3E%20%3Cstop%20offset%3D%22.5%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.06%22%2F%3E%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.18%22%2F%3E%20%3C%2FlinearGradient%3E%20%3CclipPath%20id%3D%22valeTile%22%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%2F%3E%20%3C%2FclipPath%3E%20%3C%2Fdefs%3E%20%3Cg%20clip-path%3D%22url%28%23valeTile%29%22%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20fill%3D%22url%28%23valeSky%29%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora%29%22%20d%3D%22M-4%2022C5%209%2015%2020%2024%2011S42%204%2052%209V-4H-4Z%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora2%29%22%20d%3D%22M-4%2017C9%206%2017%2016%2028%207s18-1%2028%201V-4H-4Z%22%20opacity%3D%22.85%22%2F%3E%20%3Cpath%20fill%3D%22url%28%23valeAurora%29%22%20d%3D%22M-4%2027C7%2017%2017%2026%2027%2018s17-3%2029%200V14H-4Z%22%20opacity%3D%22.45%22%2F%3E%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2217%22%20r%3D%2211%22%20fill%3D%22url%28%23valeGlow%29%22%2F%3E%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2217%22%20r%3D%223.4%22%20fill%3D%22%23fffdf5%22%2F%3E%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.82%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20fill%3D%22url%28%23valeSheen%29%22%2F%3E%20%3Crect%20x%3D%22.6%22%20y%3D%22.6%22%20width%3D%2246.8%22%20height%3D%2246.8%22%20rx%3D%2210.5%22%20fill%3D%22none%22%20stroke%3D%22url%28%23valeRim%29%22%20stroke-width%3D%221.2%22%2F%3E%20%3C%2Fg%3E%20%3C%2Fsvg%3E";
+  "data:image/svg+xml,%3Csvg%20xmlns%3D%22http%3A%2F%2Fwww.w3.org%2F2000%2Fsvg%22%20width%3D%2248%22%20height%3D%2248%22%20viewBox%3D%220%200%2048%2048%22%3E%0A%20%20%3C%21--%20Vale%20brand%20mark%3A%20the%20vale%20at%20sunrise%20%E2%80%94%20near%20hill%2C%20far%20ridge%2C%20signal%20over%20the%20pass.%0A%20%20%20%20%20%20%20THE%20ONE%20MARK.%20It%20is%2016%E2%80%9330px%20in%20real%20life%20%28Windows%20tray%2016%2C%20rail%2020%2F26%2C%20console%2030%29%2C%0A%20%20%20%20%20%20%20so%20it%20is%20drawn%20for%20that%3A%20three%20gradients%2C%20no%20scene.%20The%20iridescent%20variant%20that%0A%20%20%20%20%20%20%20replaced%20it%20for%20three%20days%20put%20twelve%20gradients%20and%20a%20whole%20sky%20into%20the%20same%0A%20%20%20%20%20%20%20space%3B%20at%2016%E2%80%9326px%20its%20ribbons%20collapsed%20into%20a%20smear.%20Reverted.%0A%20%20%20%20%20%20%20Copies%20kept%20in%20step%20by%20src%2Fui%2F__tests__%2FIcon.test.tsx%3A%20this%20file%2C%20the%20panel%27s%0A%20%20%20%20%20%20%20BrandMark%2C%20the%20console%20favicon%20and%20the%20landing%20page%27s%20data-URI.%20--%3E%0A%20%20%3Cdefs%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22vale-sky%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23f59f00%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23e8590c%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%20%20%3CradialGradient%20id%3D%22vale-glow%22%20cx%3D%22.5%22%20cy%3D%22.5%22%20r%3D%22.5%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23fff8e1%22%20stop-opacity%3D%22.55%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%23ffe8a3%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%3C%2FradialGradient%3E%0A%20%20%20%20%3C%21--%20The%20material%3A%20light%20gathers%20at%20the%20top%20edge%2C%20the%20base%20sits%20in%20its%20own%20shadow.%0A%20%20%20%20%20%20%20%20%20This%20is%20what%20makes%20the%20tile%20read%20as%20an%20object%20rather%20than%20a%20sticker.%20--%3E%0A%20%20%20%20%3ClinearGradient%20id%3D%22vale-sheen%22%20x1%3D%220%22%20y1%3D%220%22%20x2%3D%220%22%20y2%3D%221%22%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%220%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%22.25%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%22.45%22%20stop-color%3D%22%23ffffff%22%20stop-opacity%3D%220%22%2F%3E%0A%20%20%20%20%20%20%3Cstop%20offset%3D%221%22%20stop-color%3D%22%237c2d12%22%20stop-opacity%3D%22.10%22%2F%3E%0A%20%20%20%20%3C%2FlinearGradient%3E%0A%20%20%3C%2Fdefs%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23vale-sky%29%22%2F%3E%0A%0A%20%20%3C%21--%20signal%20rising%20over%20the%20pass%20--%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%227.5%22%20fill%3D%22url%28%23vale-glow%29%22%2F%3E%0A%20%20%3Ccircle%20cx%3D%2221%22%20cy%3D%2214%22%20r%3D%224%22%20fill%3D%22%23fff8e1%22%2F%3E%0A%0A%20%20%3C%21--%20far%20ridge%20%28haze%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20opacity%3D%22.78%22%20d%3D%22M14%2041Q26%2016%2044%2041Z%22%2F%3E%0A%20%20%3C%21--%20near%20hill%20%28solid%29%20--%3E%0A%20%20%3Cpath%20fill%3D%22%23ffffff%22%20d%3D%22M2%2041Q12%2020%2024%2041Z%22%2F%3E%0A%0A%20%20%3Crect%20width%3D%2248%22%20height%3D%2248%22%20rx%3D%2211%22%20fill%3D%22url%28%23vale-sheen%29%22%2F%3E%0A%3C%2Fsvg%3E%0A";
 
 export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
   // P2-8: both URLs flow into HTML (href attributes + inline <code> text).
@@ -56,10 +56,12 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
        The same iridescent layer the console and the panel carry, expressed against
        THIS page's token names. Decorative only: nothing here ever supplies a text
        colour, so the page's contrast is unchanged. */
-    --aura-1: #22d3ee;
-    --aura-3: #c084fc;
-    --aura-4: #f472b6;
-    --aura-5: #f59f00;
+    /* Brand hues for the mote field: the SAME values the device panel declares, so
+       the two surfaces draw from one palette. Warm on purpose — the field is
+       sunlight in a room, not an aurora. */
+    --brand-grad-a: #f59f00;
+    --brand-grad-b: #e8590c;
+    --brand-grad-c: #ffd43b;
     --glass-blur: 14px;
     --dsw-shadow-lv1: 0 1px 2px rgba(0,0,0,0.06);
     --dsw-shadow-lv2: 0 4px 12px rgba(0,0,0,0.08);
@@ -100,14 +102,13 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     inset: 0;
     z-index: 0;
     pointer-events: none;
-    /* Composed HERE, not taken from a shared token: this page starts from a dark
-       background, so its wash carries lower alphas than the console's (#fafafa) — a
-       deliberate per-surface difference, and a shared name holding two values is what
-       the token contract exists to catch. */
+    /* The paper ground — the same material the two app surfaces sit on: warm, very
+       slightly graded, no colour of its own. The iridescent wash that used to be
+       composed here is retired with the rest of the aurora layer. */
     background:
-      radial-gradient(70rem 44rem at 8% -12%, color-mix(in srgb, var(--aura-3) 34%, transparent), transparent 62%),
-      radial-gradient(58rem 38rem at 96% 2%, color-mix(in srgb, var(--aura-1) 26%, transparent), transparent 60%),
-      radial-gradient(64rem 40rem at 50% 116%, color-mix(in srgb, var(--aura-5) 30%, transparent), transparent 64%);
+      radial-gradient(76rem 44rem at 14% -12%, rgba(245, 159, 0, 0.05), transparent 62%),
+      radial-gradient(70rem 44rem at 88% 108%, rgba(120, 100, 80, 0.05), transparent 64%),
+      linear-gradient(180deg, #f1f0ee 0%, #f7f6f4 40%, #f3f1ee 100%);
   }
   body > * { position: relative; z-index: 1; }
 
@@ -156,7 +157,7 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     display: block;
     width: 40px; height: 40px; border-radius: 10px;
     box-shadow: var(--dsw-shadow-lv1),
-                0 6px 22px -8px color-mix(in srgb, var(--aura-4) 55%, transparent);
+                0 6px 22px -8px color-mix(in srgb, var(--brand-grad-c) 55%, transparent);
   }
   .brand-text { display: flex; flex-direction: column; gap: 2px; }
   .brand-name { font-size: 16px; font-weight: 600; letter-spacing: -0.01em; color: var(--dsw-alias-label-primary); }
@@ -359,8 +360,9 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
 /* Particle field — decorative, below every surface, and a NO-OP under
    'prefers-reduced-motion' (the static wash stays; a decorative animation that ignores that
    setting is an accessibility defect, and the honest fallback is no animation rather than a
-   slower one). Hues are read from the SAME --aura-* tokens the wash uses, so the field
-   cannot drift from the palette. Alpha is kept low enough that the worst case is a tint
+   slower one). Hues are read from the SAME --brand-grad-* tokens the mark is drawn
+   from, so the field cannot drift from the palette — and they are WARM: this is
+   sunlight in a room, not an aurora. Alpha is kept low enough that the worst case is a tint
    behind existing surfaces, never a new contrast pair to measure.
    This page has no bundler, so the field is inlined here rather than imported. */
 (function () {
@@ -387,7 +389,7 @@ export const PAGE = (consoleUrl, installerUrl, setupUrl) => {
     return (h + 360) % 360;
   }
   function palette() {
-    return [hueOf('--aura-1', 190), hueOf('--aura-3', 280), hueOf('--aura-4', 330)];
+    return [hueOf('--brand-grad-a', 36), hueOf('--brand-grad-b', 22), hueOf('--brand-grad-c', 47)];
   }
 
   var hues = palette();

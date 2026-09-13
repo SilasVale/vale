@@ -391,7 +391,7 @@ for (const [label, gsel, psel] of cases) {
     // disagreement would actually be a defect (the art-direction palette, the type
     // stack), so require THOSE to be present; a parser reading some other block cannot
     // satisfy it by returning five unrelated tokens.
-    const REQUIRED = ["--aura-1", "--aura-3", "--ds-font-family"];
+    const REQUIRED = ["--glass-blur", "--ds-font-family"];
     const missing = REQUIRED.filter((t) => !lShared.includes(t));
     assert.ok(
       missing.length === 0,

@@ -10,7 +10,8 @@
     "preview": "vite preview",
     "test": "node --test",
     "smoke": "node render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)",
-    "smoke:devices": "node devices-render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)"
+    "smoke:devices": "node devices-render-smoke.mjs ../public/assets/$(grep -o 'index-[^\"]*\\.js' ../public/index.html | head -1)",
+    "screenshot": "node scripts/screenshot.mjs"
   },
   "dependencies": {
     "react": "^19.2.8",
@@ -24,6 +25,7 @@
     "@vitejs/plugin-react": "^6.0.4",
     "jsdom": "^30.0.1",
     "oxlint": "^1.75.0",
+    "playwright-core": "^1.61.1",
     "typescript": "~6.0.2",
     "vite": "^8.2.0"
   }

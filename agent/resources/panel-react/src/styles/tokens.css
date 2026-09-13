@@ -15,46 +15,6 @@
   --brand-grad-a: #f59f00;
   --brand-grad-b: #e8590c;
 
-  /* ---- aurora art direction ----
-     The iridescent layer. Every value here is DECORATIVE: it may sit behind text,
-     under a border, or inside a glow, but no TEXT colour is ever taken from it, so
-     the AA contrast of the surfaces above is unchanged by this whole block.
-     Names are shared with the console by scripts/test/token-contract-check.mjs, so
-     both products light up identically. */
-  --aura-1: #22d3ee; /* cyan   */
-  --aura-2: #818cf8; /* indigo */
-  --aura-3: #c084fc; /* violet */
-  --aura-4: #f472b6; /* pink   */
-  --aura-5: #f59f00; /* brand amber — anchors the sweep to the product colour */
-  /* The wash that sits on the app background. Kept LOW alpha on purpose: it must
-     never compete with content, and it is the only thing here that covers a large
-     area. */
-  --aura-wash:
-    radial-gradient(
-      70rem 44rem at 8% -12%,
-      color-mix(in srgb, var(--aura-3) 62%, transparent),
-      transparent 62%
-    ),
-    radial-gradient(
-      58rem 38rem at 96% 2%,
-      color-mix(in srgb, var(--aura-1) 48%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      64rem 40rem at 50% 116%,
-      color-mix(in srgb, var(--aura-5) 44%, transparent),
-      transparent 64%
-    ),
-    radial-gradient(
-      40rem 30rem at 78% 88%,
-      color-mix(in srgb, var(--aura-4) 30%, transparent),
-      transparent 66%
-    );
-  /* Depth: the shadow that makes a raised surface look lifted, tinted toward the
-     sweep rather than plain black. */
-  --aura-glow:
-    0 0 0 1px color-mix(in srgb, var(--aura-3) 22%, transparent),
-    0 6px 24px -8px color-mix(in srgb, var(--aura-2) 40%, transparent);
   /* Blur radius for frosted surfaces. A plain value, so it IS shared; the surface
      COLOUR is not, because the two frontends' surface roles hold different values. */
   --glass-blur: 14px;
@@ -200,13 +160,81 @@
   --shadow-lg: 0 12px 32px rgba(0, 0, 0, 0.12);
   --shadow-pop: 0 12px 32px rgba(0, 0, 0, 0.16), 0 0 0 1px rgba(0, 0, 0, 0.06);
 
+  /* ---- glass materials ----
+     A RULE AND SIX VALUES, not a texture pack.
+
+     THE RULE: glass belongs to the FRAME — shell, rails, cards, drawers, modals.
+     It never belongs to a surface that carries dense text (terminal, tables,
+     logs). A frosted pane under a wall of output is both harder to read and
+     more expensive to composite; the work surfaces stay essentially opaque and
+     the light comes through AROUND them.
+
+     WHY THESE EXIST: a translucent white pane over flat #fafafa has nothing to
+     diffuse, so it reads as dirty white — which is precisely what the light
+     theme used to measure as. The fix is not a stronger tint; it is (1) a FIELD
+     with structure to refract (painted in base.css) and (2) EDGES that say
+     "pane" when the tint alone cannot. On white, luminance has almost no room,
+     so the edge is the only channel that can still carry depth: a rim highlight
+     along the top, a hairline all round, and a COOL (never black) shadow.
+     `--glass-blur` is deliberately NOT redefined here — it is one of the tokens
+     the console shares (scripts/test/token-contract-check.mjs), so changing it
+     on one side only would fail that check. Backdrop saturation is per-surface
+     for the same reason: it is not a token. */
+  --glass-tint: rgba(255, 255, 255, 0.8);
+  --glass-tint-strong: rgba(252, 251, 250, 0.92);
+  --glass-rim: rgba(255, 255, 255, 0.9);
+  --glass-hairline: rgba(24, 32, 54, 0.07);
+  /* A LAYERED shadow, and the layering is the point: one tight contact shadow to
+     seat the pane on the paper, one mid shadow for body, one wide soft shadow for
+     the ambient occlusion that makes it look lifted rather than outlined. A single
+     hard box-shadow is the tell of a cheap surface; three cheap ones read as
+     material. All of them are COOL (24,32,54) — a neutral-black shadow on warm
+     paper greys the paper out. */
+  --glass-shadow:
+    0 1px 1px rgba(24, 32, 54, 0.04), 0 4px 10px -4px rgba(24, 32, 54, 0.06),
+    0 18px 40px -24px rgba(24, 32, 54, 0.2);
+  --grain-opacity: 0.06; /* 0 disables the paper texture (base.css) */
+  /* WHERE BLUR IS ALLOWED: only where something with detail passes BEHIND the
+     pane — drawers, modals, popovers. The static panes (cards, header, content)
+     deliberately carry no backdrop-filter: over the paper ground it changes
+     nothing the eye can see and costs a composite on every frame. Materiality
+     comes from the edge and the shadow; blur is for occlusion, not for texture. */
+
   /* ---- motion (dsh) ---- */
   --ds-ease-in-out: cubic-bezier(0.4, 0, 0.2, 1);
   --ds-transition-duration: 0.2s;
   --ds-transition-duration-fast: 0.1s;
   --ds-transition-duration-slow: 0.3s;
 
-  /* ---- typography ---- */
+  /* ---- typography ----
+     THE SCALE IS SEVEN STEPS, and getting there was the single biggest visual
+     repair in this pass. The sheet had EIGHTEEN font sizes, twelve of them inside
+     9–14px and separated by half a pixel (9, 9.5, 10, 10.5, 11, 11.5, 12, 12.5,
+     13, 13.5 …). That is not a scale, it is accretion — and it is most of why the
+     UI read as home-made: nothing lines up because nothing shares a size. The
+     half-pixel variants are gone (54 declarations normalised).
+
+     WEIGHTS ARE 400/500/600, plus 700 for the two display cases. 650 and 550 were
+     in use (32 declarations) and are NOT real weights in Segoe UI or in the CJK
+     fallbacks — the browser was synthesising or snapping them, and doing it
+     differently per platform, so "the same" UI weighed differently on Windows. */
+  --fs-2xs: 10px; /* micro labels, badge counts, dot-with-text */
+  --fs-xs: 11px; /* meta, timestamps, secondary lines */
+  --fs-sm: 12px; /* the workhorse: most UI text */
+  --fs-base: 13px; /* body, controls, terminal-adjacent prose */
+  --fs-md: 14px; /* card and list titles */
+  --fs-lg: 17px; /* modal titles, section heads */
+  --fs-xl: 22px; /* hero numbers, empty-state and crash titles */
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semi: 600;
+  --fw-bold: 700;
+  /* Large text gets tightened, small text gets opened. Both are fractions of a
+     pixel at these sizes and both are deliberate: display type at default
+     tracking looks loose, and 10px text at default tracking closes up. */
+  --tracking-display: -0.011em;
+  --tracking-micro: 0.014em;
+
   --font:
     -apple-system, "SF Pro Text", "PingFang SC", "Hiragino Sans GB",
     "Microsoft YaHei", "Segoe UI", Roboto, sans-serif;
@@ -277,6 +305,21 @@ body[data-theme="dark"] {
   --chrome-active-text: #ffffff;
   --chrome-glass: rgba(31, 32, 38, 0.94);
   --term-canvas-bg: #131418;
+
+  /* glass materials — the same panes after dark. Dark has luminance to spare, so
+     the pane is LIGHTER than the ground (a lit surface) and the rim does less work;
+     the shadow becomes a real black because there is nothing else to separate two
+     near-black panes. Restated here (not inherited) because these are plain colours
+     that would otherwise keep their LIGHT values in the dark theme — the same
+     computed-value trap --surface-recessed documents above. */
+  --glass-tint: rgba(32, 33, 39, 0.86);
+  --glass-tint-strong: rgba(26, 27, 32, 0.94);
+  --glass-rim: rgba(255, 255, 255, 0.06);
+  --glass-hairline: rgba(255, 255, 255, 0.08);
+  --glass-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.5), 0 6px 14px -6px rgba(0, 0, 0, 0.5),
+    0 22px 48px -28px rgba(0, 0, 0, 0.8);
+  --grain-opacity: 0.05;
 
   /* desktop rail inks (dark rail keeps its original vocabulary) */
   --rail-ink: #9a9aa0;

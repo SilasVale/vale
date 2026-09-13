@@ -15,7 +15,14 @@
   min-width: 0;
   display: flex;
   align-items: stretch;
-  background: var(--surface);
+  /* TRANSLUCENT, and that is the whole difference between "paper" and "glass".
+     An opaque --surface here hid the field completely — the aurora wash rendered
+     BEHIND this element and nobody could see it, which is why the light theme
+     measured as flat white-on-white. No backdrop-filter on purpose: the only
+     thing behind is the field, which is already soft, and blurring a full-viewport
+     pane costs a composite on every frame for no visible gain. Blur is spent where
+     detail actually passes underneath (cards, drawers, modals). */
+  background: var(--glass-tint-strong);
 }
 #icon-rail {
   flex: 0 0 52px;
@@ -25,7 +32,7 @@
   gap: 4px;
   padding: 10px 0 12px;
   /* midnight cockpit: the rail is the same dark chrome as the desktop rail */
-  background: var(--chrome-bg);
+  background: color-mix(in srgb, var(--chrome-bg) 88%, transparent);
   border-right: 1px solid var(--chrome-line);
 }
 #context-rail {
@@ -33,8 +40,10 @@
   display: flex;
   flex-direction: column;
   min-height: 0;
-  border-right: 1px solid var(--line);
-  background: var(--surface);
+  border-right: 1px solid var(--glass-hairline);
+  /* The second pane. One step LIGHTER than the shell so the two frame surfaces
+     read as separate planes without a hard border doing all the work. */
+  background: var(--glass-tint);
 }
 #canvas-host {
   flex: 1;
@@ -68,10 +77,10 @@
   padding: 0;
   border: none;
 }
-#canvas-top .tab { padding: 4px 8px; font-size: 12px; }
+#canvas-top .tab { padding: 4px 8px; font-size: var(--fs-sm); }
 #cmd-toggle {
   padding: 4px 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   border: 1px solid var(--chrome-line);
   border-radius: 7px;
   background: var(--chrome-bg-2);
@@ -126,15 +135,15 @@
   justify-content: space-between;
   padding: 8px 12px;
   border-bottom: 1px solid var(--line);
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
   color: var(--muted);
 }
 #drawer-head button {
   border: none;
   background: transparent;
   color: var(--muted);
-  font-size: 13px;
+  font-size: var(--fs-base);
   cursor: pointer;
   border-radius: 6px;
   padding: 2px 6px;
@@ -234,8 +243,8 @@
   padding: 32px 40px 28px;
 }
 #conn-form .conn-brand { margin-bottom: 6px; }
-#conn-form h1 { font-size: 22px; margin: 0 0 12px; font-weight: 650; letter-spacing: -0.01em; }
-#conn-form label { font-size: 12px; color: var(--muted); margin-top: 10px; }
+#conn-form h1 { font-size: var(--fs-xl); margin: 0 0 12px; font-weight: var(--fw-semi); letter-spacing: -0.01em; }
+#conn-form label { font-size: var(--fs-sm); color: var(--muted); margin-top: 10px; }
 #conn-form input {
   width: 320px;
   max-width: 90%;

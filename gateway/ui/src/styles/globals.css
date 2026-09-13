@@ -153,55 +153,94 @@
   --radius-xl: 20px;
   --radius-pill: 99px;
 
+  /* Channel identity colours — the routes and models views tint a lane by which
+     upstream it belongs to. Deliberately NOT named --lane-*: the device panel
+     already declares --lane-ds / --lane-or for TERMINAL lanes (SSH and serial tab
+     dots) with DIFFERENT values, and the token contract treats any name present on
+     both sides as shared, so borrowing that prefix here would either force the
+     panel's terminal colours onto model channels or fail the check. Same word, two
+     meanings, two surfaces: they get two names. */
+  --chan-og: var(--accent);
+  --chan-ds: #4f6bed;
+  --chan-or: #7048e8;
+
+  /* ---- type scale ----
+     SEVEN STEPS, reached by normalising NINETY-NINE declarations. The sheet carried
+     fourteen font sizes, three of them half-pixels (11.5, 12.5, 13.5) and six
+     competing display sizes (17/20/21/22/26/30). A scale with half-pixel steps is not
+     a scale, it is accretion — and it is most of why a dense UI reads as home-made:
+     nothing aligns because nothing shares a size. Display type collapses to 22px
+     EXCEPT the dashboard's hero number, which keeps a step of its own because
+     `.stat-value` is the one true display surface here.
+     Weights are 400/500/600/700; 650 was in use and is not a real weight in Segoe UI
+     or the CJK fallbacks, so the browser synthesised or snapped it — differently per
+     platform.
+     These names are shared with the device panel BY VALUE, though the token contract
+     does not police font sizes: the point is that both surfaces are built from one
+     scale. */
+  --fs-2xs: 10px; /* micro labels, badge counts */
+  --fs-xs: 11px; /* meta, timestamps, secondary */
+  --fs-sm: 12px; /* the workhorse: most UI text */
+  --fs-base: 13px; /* body, controls, form values */
+  --fs-md: 14px; /* card and list titles */
+  --fs-lg: 17px; /* section heads */
+  --fs-xl: 22px; /* page titles, empty states */
+  --fs-2xl: 30px; /* the dashboard hero number — no panel equivalent */
+  --fw-normal: 400;
+  --fw-medium: 500;
+  --fw-semi: 600;
+  --fw-bold: 700;
+  --tracking-display: -0.011em;
+  --tracking-micro: 0.014em;
+
   /* Shell */
   --sidebar-width: 248px;
-  /* ---- aurora art direction ----
-     The iridescent layer. Every value here is DECORATIVE: it may sit behind text,
-     under a border, or inside a glow, but no TEXT colour is ever taken from it, so
-     the AA contrast of the surfaces above is unchanged by this whole block.
-     Names are shared with the console by scripts/test/token-contract-check.mjs, so
-     both products light up identically. */
-  --aura-1: #22d3ee; /* cyan   */
-  --aura-2: #818cf8; /* indigo */
-  --aura-3: #c084fc; /* violet */
-  --aura-4: #f472b6; /* pink   */
-  --aura-5: #f59f00; /* brand amber — anchors the sweep to the product colour */
-  /* The wash that sits on the app background. Kept LOW alpha on purpose: it must
-     never compete with content, and it is the only thing here that covers a large
-     area. */
-  --aura-wash:
-    radial-gradient(
-      70rem 44rem at 8% -12%,
-      color-mix(in srgb, var(--aura-3) 62%, transparent),
-      transparent 62%
-    ),
-    radial-gradient(
-      58rem 38rem at 96% 2%,
-      color-mix(in srgb, var(--aura-1) 48%, transparent),
-      transparent 60%
-    ),
-    radial-gradient(
-      64rem 40rem at 50% 116%,
-      color-mix(in srgb, var(--aura-5) 44%, transparent),
-      transparent 64%
-    ),
-    radial-gradient(
-      40rem 30rem at 78% 88%,
-      color-mix(in srgb, var(--aura-4) 30%, transparent),
-      transparent 66%
-    );
-  /* Depth: the shadow that makes a raised surface look lifted, tinted toward the
-     sweep rather than plain black. */
-  --aura-glow:
-    0 0 0 1px color-mix(in srgb, var(--aura-3) 22%, transparent),
-    0 6px 24px -8px color-mix(in srgb, var(--aura-2) 40%, transparent);
-  /* Blur radius for frosted surfaces. A plain value, so it IS shared; the surface
-     COLOUR is not, because the two frontends' surface roles hold different values. */
+  /* ---- glass materials ----
+     NO COLOUR LIVES HERE, and that is the point. An iridescent "aurora" layer
+     (--aura-1..5, --aura-wash, --aura-glow) used to sit in this slot: it entered
+     the product as an interpretation of a request for a 炫彩 art direction, and it
+     is retired. What replaced it is a MATERIAL — a warm paper ground (base.css)
+     with panes above it whose depth comes from edges, layering and shadow.
+     "Glass" and "materiality" are not the same request: translucency is only
+     perceptible over detail, so where there is none the material has to carry it.
+
+     These values are deliberately IDENTICAL to the device panel's, so the two
+     frontends are one material rather than two that happen to be similar; the
+     shared names are pinned by scripts/test/token-contract-check.mjs. */
+  --glass-tint: rgba(255, 255, 255, 0.8);
+  --glass-tint-strong: rgba(252, 251, 250, 0.92);
+  --glass-rim: rgba(255, 255, 255, 0.9);
+  --glass-hairline: rgba(24, 32, 54, 0.07);
+  --glass-shadow:
+    0 1px 1px rgba(24, 32, 54, 0.04), 0 4px 10px -4px rgba(24, 32, 54, 0.06),
+    0 18px 40px -24px rgba(24, 32, 54, 0.2);
+  --grain-opacity: 0.06;
+  /* Blur radius for surfaces that occlude moving content (drawers, modals).
+     A plain value, so it IS shared with the panel. */
   --glass-blur: 14px;
 }
 
 /* Dark mode — body[data-theme="dark"], persisted in localStorage */
 body[data-theme="dark"] {
+  /* Glass materials — RESTATED HERE, and this is not optional. Custom properties
+     substitute at computed-value time on the element that DECLARES them and then
+     inherit as that value, so the light values in :root are what a dark-theme
+     element resolves to unless the dark block overrides them. Omitting this is a
+     measured defect, not a hypothetical one: the first cut of this material added
+     the tokens to :root only, and the dark theme rendered WHITE panes with light
+     text — a full contrast failure caught by looking at a screenshot, which no
+     gate here would have reported (the token contract compares names it finds on
+     BOTH sides; a name that is simply missing from the dark block is invisible to
+     it). Same trap the panel documents at --surface-recessed. */
+  --glass-tint: rgba(32, 33, 39, 0.86);
+  --glass-tint-strong: rgba(26, 27, 32, 0.94);
+  --glass-rim: rgba(255, 255, 255, 0.06);
+  --glass-hairline: rgba(255, 255, 255, 0.08);
+  --glass-shadow:
+    0 1px 1px rgba(0, 0, 0, 0.5), 0 6px 14px -6px rgba(0, 0, 0, 0.5),
+    0 22px 48px -28px rgba(0, 0, 0, 0.8);
+  --grain-opacity: 0.05;
+
   /* Aligned with the panel's midnight (#131418), not Mantine's #1a1b1e — the
      dark sets were already close, which is why their two remaining differences
      went unnoticed while light mode differed in twelve places. */
@@ -284,24 +323,33 @@ body,
 
 body {
   font-family: var(--ds-font-family);
-  font-size: 14px;
+  font-size: var(--fs-md);
   line-height: 1.55;
   -webkit-font-smoothing: antialiased;
 }
 
-/* ---- aurora wash ----
-   The iridescent light behind everything. Same mechanism as the panel's: a FIXED
+/* ---- the ground: paper, not a light show ----
+   A MATERIAL rather than a wash. The iridescent backdrop that used to live here
+   is retired with the rest of the aurora layer: what the panes need is something
+   with texture and a light direction to sit on, not colour to blur. A FIXED
    pseudo-element, so it never scrolls and never enters the layout; `pointer-events:
-   none` keeps it away from every control. Decorative and BELOW all surfaces, so no
-   text colour changes and no contrast measurement moves. */
+   none` keeps it away from every control, and because it is decorative and BELOW
+   all surfaces no contrast measurement moves. Identical to the panel's. */
 body::before {
   content: "";
   position: fixed;
   inset: 0;
   z-index: 0;
   pointer-events: none;
-  background: var(--aura-wash);
-  opacity: 0.9;
+  background:
+    radial-gradient(76rem 44rem at 14% -12%, rgba(245, 159, 0, 0.05), transparent 62%),
+    radial-gradient(70rem 44rem at 88% 108%, rgba(120, 100, 80, 0.05), transparent 64%),
+    linear-gradient(180deg, #f1f0ee 0%, #f7f6f4 40%, #f3f1ee 100%);
+}
+body[data-theme="dark"]::before {
+  background:
+    radial-gradient(76rem 44rem at 14% -12%, rgba(245, 159, 0, 0.045), transparent 62%),
+    linear-gradient(180deg, #121316 0%, #16171b 44%, #111215 100%);
 }
 #root {
   position: relative;
@@ -333,7 +381,7 @@ h2,
 h3,
 h4 {
   margin: 0;
-  font-weight: 600;
+  font-weight: var(--fw-semi);
 }
 p {
   margin: 0;
@@ -367,7 +415,7 @@ pre {
   padding: 14px 16px;
   border-radius: var(--radius-md);
   overflow-x: auto;
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.6;
   font-family: var(--ds-font-family-code);
   margin: 0;
@@ -472,7 +520,7 @@ pre code {
   /* The one place a gradient sits BEHIND text, so it is the one place that could move
      a contrast measurement. Kept as an inset RING (a shadow, not a background) so the
      text's own background is untouched. */
-  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--aura-3) 45%, transparent);
+  box-shadow: inset 0 0 0 1px color-mix(in srgb, var(--accent) 45%, transparent);
 }
 .rail-foot {
   display: flex;
@@ -552,12 +600,12 @@ pre code {
   border-bottom: 1px solid var(--border);
 }
 .user-pop-name {
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--text);
 }
 .user-pop-role {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 .user-pop-logout {
@@ -679,7 +727,7 @@ pre code {
   gap: 10px;
   padding: 8px 2px;
   border-bottom: 1px solid var(--border);
-  font-size: 12.5px;
+  font-size: var(--fs-base);
 }
 .ov-keyrow:last-child {
   border-bottom: none;
@@ -695,14 +743,14 @@ pre code {
   background: var(--success);
 }
 .ov-keyname {
-  font-weight: 650;
+  font-weight: var(--fw-semi);
   color: var(--text);
   min-width: 96px;
 }
 .ov-keystate {
   margin-left: auto;
   color: var(--text-secondary);
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
 }
 
 /* ── Overview dashboard: stat tiles ── */
@@ -721,10 +769,11 @@ pre code {
   display: flex;
   flex-direction: column;
   gap: 4px;
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  border: 1px solid color-mix(in srgb, var(--aura-3) 14%, var(--border));
+  background: var(--glass-tint);
+  border: 1px solid var(--glass-hairline);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    var(--glass-shadow);
   border-radius: var(--radius-lg);
   padding: 20px 22px 18px;
   text-decoration: none;
@@ -762,16 +811,16 @@ pre code {
   text-decoration: none;
 }
 .stat-value {
-  font-size: 30px;
-  font-weight: 700;
+  font-size: var(--fs-2xl);
+  font-weight: var(--fw-bold);
   letter-spacing: -0.03em;
   color: var(--text);
   font-variant-numeric: tabular-nums;
   line-height: 1.1;
 }
 .stat-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
   text-transform: uppercase;
   letter-spacing: 0.06em;
   color: var(--text-secondary);
@@ -779,8 +828,8 @@ pre code {
 
 /* card header link ("View all →") */
 .card-link {
-  font-size: 12.5px;
-  font-weight: 600;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--accent-on-soft);
   text-decoration: none;
 }
@@ -824,13 +873,13 @@ pre code {
   box-shadow: 0 0 6px rgba(47, 158, 68, 0.55);
 }
 .dev-mini-name {
-  font-size: 13px;
-  font-weight: 650;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--text);
 }
 .dev-mini-meta {
   margin-left: auto;
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   white-space: nowrap;
 }
@@ -846,7 +895,7 @@ pre code {
   gap: 10px;
   padding: 9px 2px;
   border-bottom: 1px solid var(--border);
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .health-row:last-child {
   border-bottom: none;
@@ -864,7 +913,7 @@ pre code {
   background: var(--error);
 }
 .health-id {
-  font-weight: 650;
+  font-weight: var(--fw-semi);
   color: var(--text);
   min-width: 110px;
 }
@@ -878,8 +927,8 @@ pre code {
   white-space: nowrap;
 }
 .health-state {
-  font-size: 12px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
 }
 .health-state.ok {
   color: var(--success-text);
@@ -898,15 +947,15 @@ pre code {
 }
 
 .page-title {
-  font-size: 22px;
-  font-weight: 700;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
   color: var(--text);
   letter-spacing: -0.02em;
   line-height: 30px;
 }
 
 .page-description {
-  font-size: 13.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-top: 5px;
   line-height: 21px;
@@ -917,14 +966,16 @@ pre code {
    ================================================================ */
 
 .card {
-  /* Glass. The surface is 84% of its own colour rather than opaque: at that ratio the
-     effective background barely moves (verified against the AA sweep, not assumed),
-     but the aurora wash is visible THROUGH the card. An opaque surface hides the wash
-     entirely, which is why the first pass of this theme looked like plain #fafafa. */
-  background: color-mix(in srgb, var(--bg) 84%, transparent);
-  -webkit-backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  backdrop-filter: blur(var(--glass-blur)) saturate(1.4);
-  border: 1px solid color-mix(in srgb, var(--aura-3) 14%, var(--border));
+  /* THE MATERIAL, shared with the device panel: a pane whose depth comes from an
+     edge and a layered shadow rather than from tinting the ground behind it. The
+     aurora wash this card used to let through is retired, and with it the reason
+     for a backdrop-filter here — nothing with detail passes behind a static card,
+     so the blur cost a composite per frame and changed nothing visible. */
+  background: var(--glass-tint);
+  border: 1px solid var(--glass-hairline);
+  box-shadow:
+    inset 0 1px 0 var(--glass-rim),
+    var(--glass-shadow);
   border-radius: var(--radius-lg);
   padding: 22px 24px;
   margin-bottom: 16px;
@@ -950,15 +1001,15 @@ pre code {
 }
 
 .card-title {
-  font-size: 11px;
-  font-weight: 650;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
   text-transform: uppercase;
   letter-spacing: 0.07em;
   color: var(--text-secondary);
 }
 
 .card-description {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-top: 3px;
   line-height: 19px;
@@ -973,8 +1024,8 @@ pre code {
   margin-bottom: 14px;
 }
 .card-head h2 {
-  font-size: 15px;
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
 }
 
 /* Grid of peer cards (API keys) */
@@ -997,8 +1048,8 @@ pre code {
   gap: 5px;
   padding: 2.5px 9px;
   border-radius: var(--radius-pill);
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
   line-height: 17px;
   white-space: nowrap;
 }
@@ -1041,8 +1092,8 @@ pre code {
   gap: 6px;
   padding: 3px 11px;
   border-radius: var(--radius-pill);
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   background: var(--bg-tertiary);
   color: var(--text-secondary);
   white-space: nowrap;
@@ -1121,8 +1172,8 @@ pre code {
   height: 32px;
   padding: 0 14px;
   border-radius: var(--radius-pill);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   cursor: pointer;
   border: none;
   transition: all var(--ds-dur) var(--ds-ease);
@@ -1139,9 +1190,19 @@ pre code {
   cursor: not-allowed;
 }
 
+/* The primary action is NEUTRAL (near-black on light, near-white on dark) rather
+   than brand-coloured, which is the current convention for tools of this class and
+   keeps the amber for the mark, links and state. What it was missing is the
+   material: a flat black rectangle reads as a placeholder next to panes that have
+   edges, so it gets the same treatment — a rim highlight along the top and a
+   contact shadow that lifts it off the paper. */
 .btn-primary {
   background: var(--text);
   color: var(--bg);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.16),
+    0 1px 2px rgba(24, 32, 54, 0.14),
+    0 6px 16px -10px rgba(24, 32, 54, 0.5);
 }
 .btn-primary:hover:not(:disabled) {
   opacity: 0.85;
@@ -1180,7 +1241,8 @@ pre code {
 
 .btn-accent {
   background: var(--accent);
-  box-shadow: var(--aura-glow);
+  box-shadow:
+    inset 0 1px 0 rgba(255, 255, 255, 0.22), 0 4px 14px -6px color-mix(in srgb, var(--accent) 55%, transparent);
   /* `--accent-fg`, not `#fff`. White on the dark theme's `--accent` (#ffa94d) is
      1.90:1 — the login button, the most important control on the site, failing AA by
      a factor of two. The dark value is #2b1a09 (8.80 base / 10.41 hover), which is
@@ -1195,12 +1257,12 @@ pre code {
 .btn-sm {
   height: 28px;
   padding: 0 11px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .btn-mini {
   height: 26px;
   padding: 0 10px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .btn-block {
   width: 100%;
@@ -1250,7 +1312,7 @@ a.btn-primary {
   border: 1px solid var(--border);
   border-radius: var(--radius-md);
   font-family: var(--ds-font-family-code);
-  font-size: 13px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   overflow: hidden;
   text-overflow: ellipsis;
@@ -1313,13 +1375,13 @@ a.btn-primary {
 }
 
 .list-title {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
   color: var(--text);
 }
 
 .list-sub {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   font-family: var(--ds-font-family-code);
   font-variant-numeric: tabular-nums;
@@ -1365,12 +1427,12 @@ a.btn-primary {
   flex-wrap: wrap;
 }
 .u-name {
-  font-size: 14px;
-  font-weight: 600;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-semi);
   color: var(--text);
 }
 .u-sub {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   font-family: var(--ds-font-family-code);
   margin-top: 2px;
@@ -1422,8 +1484,8 @@ a.btn-primary {
   align-items: center;
   justify-content: center;
   font-family: var(--ds-font-family-code);
-  font-weight: 700;
-  font-size: 12px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-sm);
   color: #fff;
   text-transform: uppercase;
 }
@@ -1432,10 +1494,10 @@ a.btn-primary {
   background: var(--accent);
 }
 .lane-ds .lane-port {
-  background: #4f6bed;
+  background: var(--chan-ds);
 }
 .lane-or .lane-port {
-  background: #7048e8;
+  background: var(--chan-or);
 }
 .lane-qw .lane-port {
   background: #c2255c;
@@ -1450,8 +1512,8 @@ a.btn-primary {
 }
 
 .lane-backend {
-  font-size: 13.5px;
-  font-weight: 600;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--text);
   font-family: var(--ds-font-family-code);
   overflow: hidden;
@@ -1460,7 +1522,7 @@ a.btn-primary {
 }
 
 .lane-desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin-top: 1px;
 }
@@ -1473,7 +1535,7 @@ a.btn-primary {
 
 .model-tag {
   font-family: var(--ds-font-family-code);
-  font-size: 11px;
+  font-size: var(--fs-xs);
   padding: 2px 8px;
   background: var(--bg-tertiary);
   border-radius: var(--radius-pill);
@@ -1488,8 +1550,8 @@ a.btn-primary {
 }
 
 .channel-label {
-  font-size: 11px;
-  font-weight: 600;
+  font-size: var(--fs-xs);
+  font-weight: var(--fw-semi);
   color: var(--text-secondary);
   text-transform: uppercase;
   letter-spacing: 0.06em;
@@ -1525,20 +1587,20 @@ a.btn-primary {
 
 .key-card-name {
   font-family: var(--ds-font-family-code);
-  font-weight: 600;
-  font-size: 13px;
+  font-weight: var(--fw-semi);
+  font-size: var(--fs-base);
   color: var(--text);
 }
 
 .key-card-desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin-top: 2px;
 }
 
 .key-card-value {
   font-family: var(--ds-font-family-code);
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   padding: 10px 12px;
   background: var(--bg-secondary);
@@ -1556,7 +1618,7 @@ a.btn-primary {
 }
 
 .test-result {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   line-height: 19px;
   padding: 10px 12px;
   border-radius: var(--radius-md);
@@ -1584,8 +1646,8 @@ a.btn-primary {
 }
 
 .form-label {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   color: var(--text-secondary);
 }
 
@@ -1595,7 +1657,7 @@ a.btn-primary {
   border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 13.5px;
+  font-size: var(--fs-base);
   transition:
     border-color var(--ds-dur) var(--ds-ease),
     box-shadow var(--ds-dur) var(--ds-ease);
@@ -1640,7 +1702,7 @@ a.btn-primary {
   border-radius: var(--radius-md);
   background: var(--bg);
   color: var(--text);
-  font-size: 13px;
+  font-size: var(--fs-base);
 }
 .key-edit-row input:focus,
 .device-form input:focus {
@@ -1656,7 +1718,7 @@ a.btn-primary {
 }
 
 .form-msg {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   margin-top: 10px;
   color: var(--error-text);
 }
@@ -1665,7 +1727,7 @@ a.btn-primary {
 }
 
 .form-message {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   padding: 8px 12px;
   border-radius: var(--radius-sm);
   margin-top: 10px;
@@ -1681,7 +1743,7 @@ a.btn-primary {
 
 .muted {
   color: var(--text-secondary);
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   line-height: 20px;
 }
 
@@ -1694,7 +1756,7 @@ a.btn-primary {
 
 /* ── Notes / callouts ── */
 .note {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   line-height: 20px;
   padding: 10px 14px;
   border-radius: var(--radius-md);
@@ -1768,7 +1830,7 @@ body[data-theme="dark"] .note.tip {
 .auth-pitch {
   position: relative;
   max-width: 30em;
-  font-size: 15px;
+  font-size: var(--fs-md);
   line-height: 1.7;
   color: var(--text-secondary);
 }
@@ -1835,20 +1897,20 @@ body[data-theme="dark"] .note.tip {
   display: flex;
   align-items: center;
   justify-content: center;
-  font-weight: 700;
-  font-size: 21px;
+  font-weight: var(--fw-bold);
+  font-size: var(--fs-xl);
   box-shadow: 0 4px 16px var(--accent-shadow);
   flex-shrink: 0;
 }
 
 .auth-brand h1 {
-  font-size: 20px;
-  font-weight: 700;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-bold);
   color: var(--text);
 }
 
 .auth-brand p {
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   margin-top: 1px;
 }
@@ -1868,8 +1930,8 @@ body[data-theme="dark"] .note.tip {
   border: none;
   background: transparent;
   border-radius: var(--radius-sm);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   color: var(--text-secondary);
   cursor: pointer;
   transition: all var(--ds-dur) var(--ds-ease);
@@ -1882,7 +1944,7 @@ body[data-theme="dark"] .note.tip {
 .auth-tab.active {
   background: var(--bg);
   color: var(--text);
-  font-weight: 600;
+  font-weight: var(--fw-semi);
   box-shadow: var(--shadow-sm);
 }
 
@@ -1899,8 +1961,8 @@ body[data-theme="dark"] .note.tip {
 }
 
 .auth-form label span {
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   color: var(--text-secondary);
 }
 
@@ -1910,7 +1972,7 @@ body[data-theme="dark"] .note.tip {
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
   color: var(--text);
-  font-size: 14px;
+  font-size: var(--fs-md);
   transition:
     border-color var(--ds-dur) var(--ds-ease),
     box-shadow var(--ds-dur) var(--ds-ease);
@@ -1961,13 +2023,13 @@ body[data-theme="dark"] .note.tip {
   display: inline-flex;
   align-items: center;
   gap: 5px;
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
   white-space: nowrap;
 }
 .models-hint {
   margin-top: 10px;
-  font-size: 12.5px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 /* A chip keeps its own shape; the remove control sits beside it, not on it. */
@@ -1985,7 +2047,7 @@ body[data-theme="dark"] .note.tip {
   /* TEXT weight: this glyph is 13px, so it needs 4.5:1 — `--error`, which is the
      MARK weight for the lanes below, would not do here. */
   color: var(--error-text);
-  font-size: 13px;
+  font-size: var(--fs-base);
   line-height: 1;
   cursor: pointer;
   padding: 0;
@@ -2035,10 +2097,10 @@ body[data-theme="dark"] .note.tip {
   border-left-color: var(--accent);
 }
 .models-prefix.lane-ds {
-  border-left-color: #4f6bed;
+  border-left-color: var(--chan-ds);
 }
 .models-prefix.lane-or {
-  border-left-color: #7048e8;
+  border-left-color: var(--chan-or);
 }
 .models-prefix.lane-qw {
   border-left-color: #c2255c;
@@ -2057,18 +2119,18 @@ body[data-theme="dark"] .note.tip {
 }
 
 .models-backend {
-  font-weight: 600;
+  font-weight: var(--fw-semi);
   color: var(--text);
 }
 .models-n {
-  font-size: 11.5px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
 .models-health {
   margin-left: auto;
-  font-size: 11.5px;
-  font-weight: 600;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-semi);
 }
 .models-health.ok {
   color: var(--success-text);
@@ -2079,11 +2141,11 @@ body[data-theme="dark"] .note.tip {
 /* Not probed is NOT the same as down, and must not borrow the colour of either. */
 .models-health.unknown {
   color: var(--text-secondary);
-  font-weight: 500;
+  font-weight: var(--fw-medium);
 }
 
 .models-desc {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   line-height: 1.55;
   color: var(--text-secondary);
   margin-bottom: 10px;
@@ -2115,7 +2177,7 @@ body[data-theme="dark"] .note.tip {
   background: var(--accent-light);
   border-color: var(--accent);
   color: var(--accent-on-soft);
-  font-weight: 600;
+  font-weight: var(--fw-semi);
 }
 .model-chip:disabled {
   opacity: 0.55;
@@ -2132,8 +2194,8 @@ body[data-theme="dark"] .note.tip {
   color: var(--text-secondary);
   border-radius: var(--radius-pill);
   padding: 4px 12px;
-  font-size: 12px;
-  font-weight: 500;
+  font-size: var(--fs-sm);
+  font-weight: var(--fw-medium);
   cursor: pointer;
   transition: all var(--ds-dur) var(--ds-ease);
 }
@@ -2176,14 +2238,14 @@ body[data-theme="dark"] .note.tip {
 }
 
 .modal-header h3 {
-  font-size: 16px;
-  font-weight: 600;
+  font-size: var(--fs-lg);
+  font-weight: var(--fw-semi);
 }
 
 .modal-code {
   font-family: var(--ds-font-family-code);
-  font-size: 26px;
-  font-weight: 600;
+  font-size: var(--fs-xl);
+  font-weight: var(--fw-semi);
   text-align: center;
   padding: 22px;
   background: var(--bg-secondary);
@@ -2214,8 +2276,8 @@ body[data-theme="dark"] .note.tip {
   background: var(--text);
   color: var(--bg);
   border-radius: var(--radius-md);
-  font-size: 13px;
-  font-weight: 500;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-medium);
   box-shadow: var(--shadow-lg);
   z-index: 2000;
   max-width: 90vw;
@@ -2269,7 +2331,7 @@ body[data-theme="dark"] .note.tip {
   padding: 28px 16px;
   text-align: center;
   color: var(--text-secondary);
-  font-size: 13px;
+  font-size: var(--fs-base);
   border: 1px dashed var(--border-strong);
   border-radius: var(--radius-md);
   background: var(--bg-secondary);
@@ -2329,11 +2391,11 @@ body[data-theme="dark"] .note.tip {
   display: flex;
   align-items: baseline;
   gap: 6px;
-  font-size: 13px;
+  font-size: var(--fs-base);
   color: var(--text-secondary);
 }
 .dev-stat b {
-  font-size: 17px;
+  font-size: var(--fs-lg);
   color: var(--text);
   font-variant-numeric: tabular-nums;
 }
@@ -2379,8 +2441,8 @@ body[data-theme="dark"] .note.tip {
   background: var(--text-faint);
 }
 .dev-name {
-  font-size: 15px;
-  font-weight: 700;
+  font-size: var(--fs-md);
+  font-weight: var(--fw-bold);
   color: var(--text);
 }
 .dev-card-ver {
@@ -2407,7 +2469,7 @@ body[data-theme="dark"] .note.tip {
   display: flex;
   align-items: center;
   gap: 8px;
-  font-size: 12px;
+  font-size: var(--fs-sm);
 }
 .dev-sig-label {
   color: var(--text-secondary);
@@ -2430,7 +2492,7 @@ body[data-theme="dark"] .note.tip {
 }
 .dev-sig-state {
   margin-left: auto;
-  font-weight: 600;
+  font-weight: var(--fw-semi);
 }
 .dev-sig-state.ok {
   color: var(--success-text);
@@ -2455,7 +2517,7 @@ body[data-theme="dark"] .note.tip {
   white-space: nowrap;
 }
 .dev-meta {
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
 }
 .dev-actions {
@@ -2466,7 +2528,7 @@ body[data-theme="dark"] .note.tip {
 }
 
 .muted-small {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
 }
 
@@ -2480,7 +2542,7 @@ body[data-theme="dark"] .note.tip {
   background: var(--error-bg);
   color: var(--error-text);
   border-radius: var(--radius-md);
-  font-size: 13px;
+  font-size: var(--fs-base);
   margin-bottom: 12px;
 }
 .banner-error .btn {
@@ -2522,8 +2584,8 @@ body[data-theme="dark"] .note.tip {
   flex-wrap: wrap;
 }
 .regkeys-title {
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--text-secondary);
 }
 
@@ -2536,8 +2598,8 @@ body[data-theme="dark"] .note.tip {
 .adv-block > summary {
   cursor: pointer;
   padding: 14px 18px;
-  font-size: 13px;
-  font-weight: 600;
+  font-size: var(--fs-base);
+  font-weight: var(--fw-semi);
   color: var(--text-secondary);
   list-style: none;
   display: flex;
@@ -2550,7 +2612,7 @@ body[data-theme="dark"] .note.tip {
 }
 .adv-block > summary::before {
   content: "▸";
-  font-size: 11px;
+  font-size: var(--fs-xs);
   color: var(--text-secondary);
   transition: transform var(--ds-dur) var(--ds-ease);
 }
@@ -2562,12 +2624,12 @@ body[data-theme="dark"] .note.tip {
 }
 
 .form-hint {
-  font-size: 12px;
+  font-size: var(--fs-sm);
   color: var(--text-secondary);
   margin: 0 0 10px;
 }
 .modal-strong {
-  font-weight: 600;
+  font-weight: var(--fw-semi);
   margin: 0 0 6px;
 }
 

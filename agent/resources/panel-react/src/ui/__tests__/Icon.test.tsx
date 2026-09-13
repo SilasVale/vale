@@ -56,19 +56,12 @@ describe("Icon", () => {
 });
 
 describe("BrandMark", () => {
-  it("renders the aurora mark with its gradient defs at the given size", () => {
+  it("renders the sunrise mark with its gradient defs at the given size", () => {
     const { container } = render(<BrandMark size={26} />);
     const svg = container.querySelector("svg")!;
     expect(svg.getAttribute("width")).toBe("26");
     expect(svg.getAttribute("viewBox")).toBe("0 0 48 48");
-    for (const id of [
-      "valeSky",
-      "valeAurora",
-      "valeAurora2",
-      "valeGlow",
-      "valeSheen",
-      "valeRim",
-    ]) {
+    for (const id of ["vale-sky", "vale-glow", "vale-sheen"]) {
       expect(
         svg.querySelector(`#${id}`),
         `missing gradient def #${id}`,
@@ -76,7 +69,7 @@ describe("BrandMark", () => {
     }
   });
 
-  it("matches the canonical mark in brand/logo-aurora.svg", () => {
+  it("matches the canonical mark in brand/logo.svg", () => {
     // THERE ARE THREE COPIES OF THIS MARK and nothing kept them together: this React
     // component, the console's `public/favicon.svg`, and the landing page's inline
     // data-URI. When the mark changed, two of the three were updated and the panel's
@@ -86,12 +79,18 @@ describe("BrandMark", () => {
     // This compares the STRUCTURE that makes the drawing (every gradient id, every
     // path shape, every stop colour) against the canonical file, so a change to one
     // copy that is not made to the other fails by name.
+    //
+    // THE ID PATTERN ALLOWS HYPHENS, and that is load-bearing: it was
+    // `[A-Za-z0-9]+`, which cannot match `id="vale-sky"`. Every extraction would
+    // have returned an EMPTY list on both sides, empty equals empty, and this
+    // contract test would have passed while the copies diverged — the exact
+    // failure it exists to prevent, reintroduced by a rename.
     const canonical = readFileSync(
-      resolve(process.cwd(), "../../../brand/logo-aurora.svg"),
+      resolve(process.cwd(), "../../../brand/logo.svg"),
       "utf8",
     );
     const ids = (src: string) =>
-      [...src.matchAll(/id="([A-Za-z0-9]+)"/g)].map((m) => m[1]).sort();
+      [...src.matchAll(/id="([A-Za-z0-9-]+)"/g)].map((m) => m[1]).sort();
     const shape = (src: string) =>
       [...src.matchAll(/ d="([^"]+)"/g)].map((m) => m[1]).sort();
     const stops = (src: string) =>
