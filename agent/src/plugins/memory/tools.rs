@@ -22,6 +22,10 @@ use super::store::SearchQuery;
 use serde_json::{json, Value};
 use vale_agent_core::ToolDef;
 
+/// Ceiling on `memory_list`. The same 50 `memory_search` has always used — a list that can
+/// return every record's full content in one result is a transport problem, not a feature.
+const MAX_LIST_LIMIT: u64 = 50;
+
 use crate::plugins::tool_error;
 
 use super::sanitize::sanitize;
@@ -222,7 +226,14 @@ fn tool_list(store: Arc<MemoryStore>) -> ToolDef {
             async move {
                 let namespace = params.get("namespace").and_then(|v| v.as_str());
                 let tag = params.get("tag").and_then(|v| v.as_str());
-                let limit = params.get("limit").and_then(|v| v.as_u64()).unwrap_or(50) as usize;
+                // CLAMPED, like `memory_search` already does at 50. `limit` had NO ceiling,
+                // so `{"limit": 10000000}` returned every record's FULL content in one
+                // result — up to ~320 MB from a single call, with the whole store cloned.
+                let limit = params
+                    .get("limit")
+                    .and_then(|v| v.as_u64())
+                    .unwrap_or(50)
+                    .min(MAX_LIST_LIMIT) as usize;
                 let include_deleted = params.get("include_deleted").and_then(|v| v.as_bool()).unwrap_or(false);
                 let rows = store.list(namespace, tag, limit, include_deleted);
                 Ok(json!({"ok": true, "results": rows}))

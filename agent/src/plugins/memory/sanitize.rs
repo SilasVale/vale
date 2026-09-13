@@ -201,8 +201,31 @@ fn redact_shapes(s: &str) -> Option<String> {
         }
 
         // 5. URL userinfo: `scheme://user:password@host` — the password half only.
-        if let Some(scheme_end) = rest.find("://") {
-            if scheme_end <= 12 {
+        //
+        // SCANNED FORWARD FROM HERE, NOT WITH `rest.find("://")`. That call searched the
+        // ENTIRE REMAINDER at every position, making this function O(n²): 4 MB of content
+        // took 113 seconds of CPU in the test suite, and every large `memory_save` would
+        // have paid it. A scheme is a short alphabetic run, so walking at most 12 bytes is
+        // both sufficient and linear.
+        let scheme_end = if rest.as_bytes()[0].is_ascii_alphabetic() {
+            let mut k = 0usize;
+            for b in rest.bytes().take(13) {
+                if b.is_ascii_alphanumeric() || b == b'+' || b == b'.' || b == b'-' {
+                    k += 1;
+                } else {
+                    break;
+                }
+            }
+            if k <= 12 && rest[k..].starts_with("://") {
+                Some(k)
+            } else {
+                None
+            }
+        } else {
+            None
+        };
+        if let Some(scheme_end) = scheme_end {
+            {
                 let after = &rest[scheme_end + 3..];
                 let auth_end = after.find(['/', '?', '#']).unwrap_or(after.len());
                 if let Some(at) = after[..auth_end].find('@') {

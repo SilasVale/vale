@@ -28,6 +28,11 @@ const HEADER_VERSION: u64 = 1;
 
 /// Default single-content cap (bytes) — matches the tool-level 32KB cap.
 pub const DEFAULT_MAX_CONTENT_BYTES: usize = 32 * 1024;
+
+/// Ceiling on ONE `memory_export` result. Large enough for a real store, small enough that
+/// the result is a tool response rather than a transport problem — and truncation is
+/// REPORTED in the payload, never silent.
+pub const MAX_EXPORT_BYTES: usize = 4 * 1024 * 1024;
 /// Default search snippet cap (bytes) returned to callers.
 pub const DEFAULT_SNIPPET_BYTES: usize = 4 * 1024;
 /// Longest `run_id` kept on a record, in bytes — the same budget
@@ -675,22 +680,53 @@ impl MemoryStore {
         out
     }
 
-    /// Export all records (including soft-deleted, flagged) as JSONL text.
-    /// Streams to avoid buffering max-capacity entries in memory (the old
-    /// Vec<String> + join could OOM at 10K × 32KB = 320MB).
+    /// Export records (including soft-deleted, flagged) as JSONL text.
+    ///
+    /// SANITIZED ON THE WAY OUT, AND BOUNDED — neither of which it used to be.
+    ///
+    /// Redaction happens at SAVE time, so exporting raw stored bytes re-serves whatever is
+    /// ON DISK: every record written before the sanitizer learned credential SHAPES, every
+    /// record written by an older build, and anything hand-edited into the file. A tool that
+    /// hands the store to another AI client must not be the one path that skips the
+    /// redaction the store advertises.
+    ///
+    /// The bound is not cosmetic either: with defaults this could build ~320 MB in ONE tool
+    /// result while holding the store guard, blocking every writer and `/api/status` for the
+    /// duration. Truncation is REPORTED rather than silent — a reader must be able to tell a
+    /// short store from a clipped one.
     pub fn export(&self, namespace: Option<&str>) -> String {
         self.rebuild_order();
         let guard = recover_guard(&self.inner);
         let mut out = String::new();
+        let mut omitted = 0usize;
         for id in &guard.order {
             let rec = &guard.by_id[id];
             if !ns_matches(rec, namespace) {
                 continue;
             }
-            if let Ok(line) = serde_json::to_string(rec) {
-                out.push_str(&line);
-                out.push('\n');
+            // Redact the same three fields `save`/`update` redact.
+            let mut safe = rec.clone();
+            safe.title = super::sanitize::sanitize(&safe.title);
+            safe.content = super::sanitize::sanitize(&safe.content);
+            safe.tags = safe
+                .tags
+                .iter()
+                .map(|t| super::sanitize::sanitize(t))
+                .collect();
+            let Ok(line) = serde_json::to_string(&safe) else {
+                continue;
+            };
+            if out.len() + line.len() + 1 > MAX_EXPORT_BYTES {
+                omitted += 1;
+                continue;
             }
+            out.push_str(&line);
+            out.push('\n');
+        }
+        if omitted > 0 {
+            out.push_str(&format!(
+                "{{\"truncated\":true,\"omitted_records\":{omitted},\"limit_bytes\":{MAX_EXPORT_BYTES}}}\n"
+            ));
         }
         out
     }
@@ -1822,6 +1858,94 @@ fn a_record_bigger_than_the_whole_budget_loses_only_its_tail_not_the_store() {
         store.limits().max_bytes,
         1024,
         "the cap itself is untouched"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// EXPORT RE-SERVES WHAT IS ON DISK, and redaction happens at SAVE time — so a record
+/// written by an OLDER build (before the sanitizer learned credential shapes), or
+/// hand-edited into the file, rode out of `memory_export` verbatim. Redaction at the
+/// boundary is not enough when the bytes predate it.
+#[test]
+fn export_redacts_records_stored_before_the_sanitizer_knew_shapes() {
+    let dir = std::env::temp_dir().join(format!("vale-mem-export-san-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+    let mk = |id: &str, content: String| MemoryRecord {
+        id: id.to_string(),
+        title: id.to_string(),
+        content,
+        tags: vec![],
+        namespace: "shared".to_string(),
+        source: "test".to_string(),
+        run_id: None,
+        created_at: crate::unix_now(),
+        updated_at: crate::unix_now(),
+        deleted: false,
+    };
+    // Stored AS IF by an older build: the shape is unredacted ON DISK.
+    let legacy = format!("ghp_{}", "16C7e42F292c6912E7710c838347Ae178B4a");
+    store.insert(mk("old", legacy.clone()));
+    store.insert(mk(
+        "old2",
+        "postgres://user:s3cret@10.0.0.5:5432/db".to_string(),
+    ));
+
+    let out = store.export(None);
+    assert!(
+        !out.contains(&legacy),
+        "export must not re-serve a credential that save() would now redact: {out}"
+    );
+    assert!(
+        !out.contains("s3cret"),
+        "nor a URL-embedded password: {out}"
+    );
+    assert!(
+        out.contains("<redacted"),
+        "and it says so rather than dropping the record: {out}"
+    );
+    let _ = std::fs::remove_dir_all(&dir);
+}
+
+/// THE EXPORT IS BOUNDED, AND SAYS WHEN IT CLIPPED. It used to be able to build ~320 MB in
+/// one tool result while holding the store guard — blocking every writer and
+/// `/api/status` — and a reader had no way to tell a short store from a clipped one.
+///
+/// THE FILE IS SEEDED DIRECTLY rather than through `insert`: filling a 4 MB export needs
+/// ~130 records, and 130 inserts took this ONE test 113 seconds (the per-insert path is
+/// dominated by durability work — `sync_all` per append). Seeding is also a truer model of
+/// what the bound must handle: a store that grew over months, opened once.
+#[test]
+fn export_is_bounded_and_reports_truncation() {
+    let dir = std::env::temp_dir().join(format!("vale-mem-export-bound-{}", std::process::id()));
+    let _ = std::fs::remove_dir_all(&dir);
+    std::fs::create_dir_all(&dir).unwrap();
+    let big = "y".repeat(DEFAULT_MAX_CONTENT_BYTES);
+    let n = (MAX_EXPORT_BYTES / DEFAULT_MAX_CONTENT_BYTES) + 2;
+    let mut seed = String::new();
+    for i in 0..n {
+        seed.push_str(&format!(
+            "{{\"id\":\"r{i}\",\"title\":\"t{i}\",\"content\":\"{big}\",\"tags\":[],\
+             \"namespace\":\"shared\",\"source\":\"test\",\"run_id\":null,\
+             \"created_at\":0,\"updated_at\":0,\"deleted\":false}}\n"
+        ));
+    }
+    std::fs::write(dir.join("memory.jsonl"), seed).unwrap();
+
+    let store = MemoryStore::new(dir.clone(), MemoryLimits::default());
+    let out = store.export(None);
+    assert!(
+        out.len() <= MAX_EXPORT_BYTES + 256,
+        "the export must respect its budget (got {} bytes)",
+        out.len()
+    );
+    assert!(
+        out.contains("\"truncated\":true"),
+        "and must REPORT the truncation rather than returning a silently short store"
+    );
+    assert!(
+        out.contains("omitted_records"),
+        "naming how many records were left out"
     );
     let _ = std::fs::remove_dir_all(&dir);
 }
