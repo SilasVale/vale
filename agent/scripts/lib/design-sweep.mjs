@@ -419,12 +419,25 @@ sideScrollers: [...new Set([...document.querySelectorAll(root + ' *')]
   // to it, and `#tabs` already carries `overflow-x: auto` — the assumption that the tab strip is the culprit is
   // therefore wrong, and nothing in the report says which element it actually is. This names them: anything whose box
   // leaves the viewport, with the width that did it.
+  //
+  // **AND THE FIRST VERSION OF THIS LIST WAS WRONG, WHICH THE FIRST RUN SHOWED.** It named `div.tab right=740`,
+  // `button.view-switch-btn right=494` and six more — every one of them content SCROLLED OUT of `#tabs`, whose
+  // `getBoundingClientRect()` reports its LAYOUT position and not where it is on screen. A rect outside the viewport
+  // is therefore two different facts: harmless (an element inside a scroll container, which cannot widen the document
+  // because the container clips it) and causal (an element whose ancestors all show their overflow). Only the second
+  // widens anything, so an element with a scrolling ancestor is excluded — `overflow-x` of `auto`, `scroll` or
+  // `hidden` on any ancestor between it and the root.
   overflowing: [...new Set([...document.querySelectorAll(root + ' *')]
     .filter((el) => {
       const st = getComputedStyle(el);
       if (st.display === 'none' || st.visibility === 'hidden') return false;
       const r = el.getBoundingClientRect();
-      return r.width >= 40 && r.height >= 20 && (r.right > window.innerWidth + 1 || r.left < -1);
+      if (!(r.width >= 40 && r.height >= 20 && (r.right > window.innerWidth + 1 || r.left < -1))) return false;
+      for (let p = el.parentElement; p && p !== document.documentElement; p = p.parentElement) {
+        const ps = getComputedStyle(p).overflowX;
+        if (ps === 'auto' || ps === 'scroll' || ps === 'hidden') return false;
+      }
+      return true;
     })
     .map((el) => {
       const r = el.getBoundingClientRect();
