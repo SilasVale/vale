@@ -1207,7 +1207,7 @@ const TIMING = P.timing;
       // does not satisfy. The probe only lists elements that are THEMSELVES horizontal scrollers
       // (`overflowX: auto|scroll`), so an element that is merely WIDE produces exactly that empty list. This prints the
       // count, because the excuse's premise has to be visible before anything is done about it.
-      reflow: (report.reflow || []).map((r) => `${r.width}:${r.docScrollsSideways ? "SCROLLS" : "ok"}/${(r.sideScrollers || []).length}sc`),
+      reflow: (report.reflow || []).map((r) => `${r.width}:${r.docScrollsSideways ? "SCROLLS" : "ok"}/${(r.sideScrollers || []).length}sc/${(r.overflowing || []).length}over`),
       nodes: (report.timing || []).map((t) => `${t.density}/${t.mode}:${t.nodes}`),
       sse: `${(report.sse || []).filter((s) => s.opened).length}open/${(report.sse || []).filter((s) => s.fail).length}fail`,
     };

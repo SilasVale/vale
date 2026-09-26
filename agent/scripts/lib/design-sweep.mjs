@@ -412,6 +412,24 @@ sideScrollers: [...new Set([...document.querySelectorAll(root + ' *')]
     return r.width >= 40 && r.height >= 20 && el.scrollWidth > el.clientWidth + 2 && (st.overflowX === 'auto' || st.overflowX === 'scroll');
   })
   .map((el) => el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/)[0] : '') + ' ' + el.clientWidth + '<' + el.scrollWidth))].slice(0, 8),
+  // WHAT WIDENS THE DOCUMENT, WHEN NOTHING SCROLLS (round 23 of the standing goal). The panel's 320px row reads
+  // `SCROLLS` with ZERO named scrollers, and its exemption excuses that by claiming "every offending scroller is a tab
+  // child" — a claim an EMPTY list satisfies vacuously. `sideScrollers` cannot see the real cause: it lists only
+  // elements that are THEMSELVES scrollers (`overflowX: auto|scroll`), so an element that is merely WIDE is invisible
+  // to it, and `#tabs` already carries `overflow-x: auto` — the assumption that the tab strip is the culprit is
+  // therefore wrong, and nothing in the report says which element it actually is. This names them: anything whose box
+  // leaves the viewport, with the width that did it.
+  overflowing: [...new Set([...document.querySelectorAll(root + ' *')]
+    .filter((el) => {
+      const st = getComputedStyle(el);
+      if (st.display === 'none' || st.visibility === 'hidden') return false;
+      const r = el.getBoundingClientRect();
+      return r.width >= 40 && r.height >= 20 && (r.right > window.innerWidth + 1 || r.left < -1);
+    })
+    .map((el) => {
+      const r = el.getBoundingClientRect();
+      return el.tagName.toLowerCase() + (typeof el.className === 'string' && el.className.trim() ? '.' + el.className.trim().split(/\\s+/)[0] : '') + ' right=' + Math.round(r.right) + ' w=' + Math.round(r.width);
+    }))].slice(0, 8),
 });
 }
 
@@ -1869,6 +1887,14 @@ export function judgeReport(report, opts = {}) {
     }
     // A toolbar-style scroller is WCAG 1.4.10's own exception; reported, not failed.
     if (r.sideScrollers.length) console.log(`note: scrollers at ${r.width}px (allowed for toolbars) — ${r.sideScrollers.join("; ")}`);
+    // AND WHAT WIDENS IT, WHEN NOTHING SCROLLS (round 23 of the standing goal). `sideScrollers` lists only elements
+    // that are THEMSELVES scrollers, so a document widened by a merely-WIDE element produced `SCROLLS` with an EMPTY
+    // scroller list — which is the state an exemption reading "every offending scroller is a tab child" satisfies
+    // vacuously. This names the elements whose box leaves the viewport, so the next reader does not have to guess
+    // which one it is (the panel's `#tabs` already carries `overflow-x: auto`, so the obvious guess was wrong).
+    if (r.docScrollsSideways && (r.overflowing || []).length) {
+      console.log(`note: the ${r.width}px overflow comes from — ${r.overflowing.join("; ")}`);
+    }
   }
   const kept = [];
   // WHICH EXEMPTIONS THIS RUN ACTUALLY NEEDED (round 22). `DECORATIVE` reports the entries no row matched; this is
