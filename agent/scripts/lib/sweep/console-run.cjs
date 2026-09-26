@@ -669,7 +669,7 @@ const fail = { api: false };
       // whose premise is "every offending scroller is X" is vacuously satisfied by an EMPTY list, so the count is part
       // of the verdict. This sweep's rows are the ones that DID name scrollers — `pre.mt-8 228<401`, `pre 240<311` —
       // which is why the notes in the log belong to it and not to the panel.
-      reflow: (report.reflow || []).map((r) => `${r.page}@${r.width}:${r.docScrollsSideways ? "SCROLLS" : "ok"}/${(r.sideScrollers || []).length}sc`),
+      reflow: (report.reflow || []).map((r) => `${r.page}@${r.width}:${r.docScrollsSideways ? "SCROLLS" : "ok"}/${(r.sideScrollers || []).length}sc/${(r.overflowing || []).length}over`),
       themes: (report.themeChecks || []).map((t) => `${t.page}:${t.stored || "-"}`),
       entry: report.entryCheck ? `${report.entryCheck.bytes}b/${report.entryCheck.stale ? "STALE" : "current"}` : "?",
     };
